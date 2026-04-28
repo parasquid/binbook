@@ -22,7 +22,12 @@ binbook = "binbook.cli:main"
 packages = ["binbook"]
 
 [tool.setuptools.package-data]
-binbook = ["assets/fonts/Literata/Literata.ttf", "assets/fonts/Literata/OFL.txt"]
+binbook = [
+  "assets/fonts/Literata/Literata.ttf",
+  "assets/fonts/Literata/OFL.txt",
+  "assets/fonts/OpenDyslexic/OpenDyslexic-Regular.otf",
+  "assets/fonts/OpenDyslexic/OFL.txt",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

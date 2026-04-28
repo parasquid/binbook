@@ -25,7 +25,7 @@ uv run pytest -q
 Run the CLI through `uv`:
 
 ```bash
-uv run binbook encode book.epub -o book.binbook --font-family literata
+uv run binbook encode book.epub -o book.binbook --font-family sans-serif
 uv run binbook encode-png-folder ./pages -o test.binbook
 uv run binbook inspect test.binbook --validate
 uv run binbook inspect test.binbook --validate --json
@@ -35,3 +35,5 @@ uv run binbook view test.binbook
 ```
 
 The desktop viewer uses Pygame for its window backend. Keyboard controls are right/down/space for next page, left/up/backspace for previous page, Home/End for first/last page, and Esc or `q` to quit.
+
+Bundled font families include `sans-serif`/`opendyslexic` and `literata`. The `sans-serif` family uses OpenDyslexic.
