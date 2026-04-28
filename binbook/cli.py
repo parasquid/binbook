@@ -6,6 +6,7 @@ import sys
 
 from .inspect import inspect_book
 from .reader import BinBookReader
+from .structs import HEADER_SIZE, BinBookHeader
 from .writer import encode_png_folder
 
 
@@ -26,6 +27,8 @@ def main(argv: list[str] | None = None) -> int:
     inspect = subparsers.add_parser("inspect", help="inspect a BinBook file")
     inspect.add_argument("input", type=Path)
     inspect.add_argument("--validate", action="store_true")
+    inspect.add_argument("--strict", action="store_true", help="report all validation errors detected by inspect")
+    inspect.add_argument("--json", action="store_true", help="emit JSON inspection output")
 
     args = parser.parse_args(argv)
     try:
@@ -34,13 +37,29 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "decode":
             BinBookReader.open(args.input).decode_page_to_png(args.page, args.output)
         elif args.command == "inspect":
-            print(inspect_book(BinBookReader.open(args.input), args.validate))
+            reader = _open_for_inspect(args.input, strict=args.strict)
+            result = inspect_book(reader, args.validate, json_output=args.json, strict=args.strict)
+            print(result.json_text if args.json else result.text)
+            if args.validate and not result.ok:
+                return 1
         else:
             parser.error("unknown command")
     except Exception as exc:
         print(f"binbook: error: {exc}", file=sys.stderr)
         return 1
     return 0
+
+
+def _open_for_inspect(path: Path, *, strict: bool) -> BinBookReader:
+    if not strict:
+        return BinBookReader.open(path)
+    data = path.read_bytes()
+    header = BinBookHeader.unpack(data[:HEADER_SIZE])
+    from .reader import _read_pages, _read_sections
+
+    sections = _read_sections(data, header)
+    pages = _read_pages(data, sections)
+    return BinBookReader(path, data, header, sections, pages)
 
 
 if __name__ == "__main__":

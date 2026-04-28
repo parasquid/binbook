@@ -24,5 +24,7 @@ Run the CLI through `uv`:
 ```bash
 uv run binbook encode-png-folder ./pages -o test.binbook
 uv run binbook inspect test.binbook --validate
+uv run binbook inspect test.binbook --validate --json
+uv run binbook inspect test.binbook --validate --strict
 uv run binbook decode test.binbook --page 0 -o page0.png
 ```
