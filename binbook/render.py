@@ -95,21 +95,33 @@ def _text_pages(text: str, profile: DisplayProfile, spine_index: int) -> list[En
 
 
 def _render_text_to_packed(text: str, profile: DisplayProfile) -> bytes:
-    image = Image.new("L", (profile.logical_width, profile.logical_height), 255)
+    # Supersample at 2x resolution for better antialiasing
+    supersample_factor = 2
+    supersampled_width = profile.logical_width * supersample_factor
+    supersampled_height = profile.logical_height * supersample_factor
+    
+    image = Image.new("L", (supersampled_width, supersampled_height), 255)
     draw = ImageDraw.Draw(image)
-    font = _font(24)
-    x = 24
-    y = 24
-    right = profile.logical_width - 24
-    line_height = 32
+    font = _font(24 * supersample_factor)  # Scale font size
+    x = 24 * supersample_factor
+    y = 24 * supersample_factor
+    right = supersampled_width - (24 * supersample_factor)
+    line_height = 32 * supersample_factor
+    
     for paragraph in text.splitlines() or [text]:
         for line in _wrap_text_to_width(paragraph, draw, font, right - x) or [""]:
-            if y + line_height > profile.logical_height - 24:
+            if y + line_height > supersampled_height - (24 * supersample_factor):
                 break
             draw.text((x, y), line, fill=0, font=font)
             y += line_height
-        y += 8
-    return pil_image_to_gray2_packed(image, profile)
+        y += 8 * supersample_factor
+    
+    # Downsample with high-quality filtering to preserve antialiasing
+    downsampled_image = image.resize(
+        (profile.logical_width, profile.logical_height), 
+        resample=Image.Resampling.LANCZOS
+    )
+    return pil_image_to_gray2_packed(downsampled_image, profile)
 
 
 def _wrap_text_to_width(text: str, draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont, max_width: int) -> list[str]:
