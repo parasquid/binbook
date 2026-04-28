@@ -16,6 +16,8 @@ from .profiles import DisplayProfile, get_profile
 from .rle import encode_packbits
 from .writer import BookInfo, EncodedPage, NavEntry, SourceInfo, build_binbook
 
+DEFAULT_FONT_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "Literata" / "Literata.ttf"
+
 
 @dataclass(frozen=True)
 class FlowItem:
@@ -167,9 +169,10 @@ def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont)
 
 def _font(size: int) -> ImageFont.ImageFont:
     for path in [
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/System/Library/Fonts/Supplemental/Helvetica.ttf",
-        "/Library/Fonts/Arial.ttf",
+        DEFAULT_FONT_PATH,
+        Path("/System/Library/Fonts/Supplemental/Times New Roman.ttf"),
+        Path("/System/Library/Fonts/Supplemental/Georgia.ttf"),
+        Path("/Library/Fonts/Georgia.ttf"),
     ]:
         try:
             return ImageFont.truetype(path, size)
