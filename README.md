@@ -11,6 +11,7 @@ The current POC supports:
 - viewing a `.binbook` in a Pygame desktop simulation viewer
 
 The first supported profile is `xteink-x4-portrait`, stored as canonical row-major `GRAY2_PACKED` pages at `480x800`.
+The default bundled reading font is Literata, licensed under the SIL Open Font License.
 
 ## Development
 

@@ -18,6 +18,12 @@ dev = ["pytest>=8"]
 [project.scripts]
 binbook = "binbook.cli:main"
 
+[tool.setuptools]
+packages = ["binbook"]
+
+[tool.setuptools.package-data]
+binbook = ["assets/fonts/Literata/Literata.ttf", "assets/fonts/Literata/OFL.txt"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
