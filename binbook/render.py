@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 import posixpath
-import textwrap
 import zipfile
 
 from PIL import Image, ImageDraw, ImageFont
@@ -101,15 +100,57 @@ def _render_text_to_packed(text: str, profile: DisplayProfile) -> bytes:
     font = _font(24)
     x = 24
     y = 24
+    right = profile.logical_width - 24
     line_height = 32
     for paragraph in text.splitlines() or [text]:
-        for line in textwrap.wrap(paragraph, width=36) or [""]:
+        for line in _wrap_text_to_width(paragraph, draw, font, right - x) or [""]:
             if y + line_height > profile.logical_height - 24:
                 break
             draw.text((x, y), line, fill=0, font=font)
             y += line_height
         y += 8
     return pil_image_to_gray2_packed(image, profile)
+
+
+def _wrap_text_to_width(text: str, draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont, max_width: int) -> list[str]:
+    words = text.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidates = _split_word_to_width(word, draw, font, max_width)
+        for candidate in candidates:
+            proposed = candidate if not current else f"{current} {candidate}"
+            if _text_width(draw, proposed, font) <= max_width:
+                current = proposed
+            else:
+                if current:
+                    lines.append(current)
+                current = candidate
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _split_word_to_width(word: str, draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont, max_width: int) -> list[str]:
+    if _text_width(draw, word, font) <= max_width:
+        return [word]
+    parts: list[str] = []
+    current = ""
+    for char in word:
+        proposed = current + char
+        if current and _text_width(draw, proposed, font) > max_width:
+            parts.append(current)
+            current = char
+        else:
+            current = proposed
+    if current:
+        parts.append(current)
+    return parts
+
+
+def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> int:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[2] - bbox[0]
 
 
 def _font(size: int) -> ImageFont.ImageFont:
