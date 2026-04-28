@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from io import BytesIO
 
 from PIL import Image, ImageOps
 
@@ -10,14 +11,23 @@ from .profiles import DisplayProfile
 
 def png_to_gray2_packed(path: Path, profile: DisplayProfile) -> bytes:
     with Image.open(path) as image:
-        image = image.convert("L")
-        image = ImageOps.contain(image, (profile.logical_width, profile.logical_height), method=Image.Resampling.LANCZOS)
-        canvas = Image.new("L", (profile.logical_width, profile.logical_height), 255)
-        x = (profile.logical_width - image.width) // 2
-        y = (profile.logical_height - image.height) // 2
-        canvas.paste(image, (x, y))
-        pixels = [_luma_to_gray2(v) for v in canvas.tobytes()]
-        return pack_gray2(pixels, profile.logical_width, profile.logical_height)
+        return pil_image_to_gray2_packed(image, profile)
+
+
+def image_bytes_to_gray2_packed(data: bytes, profile: DisplayProfile) -> bytes:
+    with Image.open(BytesIO(data)) as image:
+        return pil_image_to_gray2_packed(image, profile)
+
+
+def pil_image_to_gray2_packed(image: Image.Image, profile: DisplayProfile) -> bytes:
+    image = image.convert("L")
+    image = ImageOps.contain(image, (profile.logical_width, profile.logical_height), method=Image.Resampling.LANCZOS)
+    canvas = Image.new("L", (profile.logical_width, profile.logical_height), 255)
+    x = (profile.logical_width - image.width) // 2
+    y = (profile.logical_height - image.height) // 2
+    canvas.paste(image, (x, y))
+    pixels = [_luma_to_gray2(v) for v in canvas.tobytes()]
+    return pack_gray2(pixels, profile.logical_width, profile.logical_height)
 
 
 def gray2_packed_to_png(data: bytes, width: int, height: int, output: Path) -> None:
