@@ -6,6 +6,7 @@ import sys
 
 from .inspect import inspect_book
 from .reader import BinBookReader
+from .render import encode_epub
 from .structs import HEADER_SIZE, BinBookHeader
 from .viewer import launch_viewer
 from .writer import encode_png_folder
@@ -19,6 +20,11 @@ def main(argv: list[str] | None = None) -> int:
     encode_png.add_argument("input_dir", type=Path)
     encode_png.add_argument("-o", "--output", required=True, type=Path)
     encode_png.add_argument("--profile", default="xteink-x4-portrait")
+
+    encode = subparsers.add_parser("encode", help="encode an EPUB into a BinBook file")
+    encode.add_argument("input_epub", type=Path)
+    encode.add_argument("-o", "--output", required=True, type=Path)
+    encode.add_argument("--profile", default="xteink-x4-portrait")
 
     decode = subparsers.add_parser("decode", help="decode one page to PNG")
     decode.add_argument("input", type=Path)
@@ -45,6 +51,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "encode-png-folder":
             encode_png_folder(args.input_dir, args.output, args.profile)
+        elif args.command == "encode":
+            encode_epub(args.input_epub, args.output, args.profile)
         elif args.command == "decode":
             BinBookReader.open(args.input).decode_page_to_png(args.page, args.output)
         elif args.command == "inspect":

@@ -28,6 +28,7 @@ class ManifestItem:
     href: str
     media_type: str
     full_path: str
+    properties: str = ""
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,13 @@ class RoughPage:
 
 
 @dataclass(frozen=True)
+class NavPoint:
+    title: str
+    href: str
+    full_path: str
+
+
+@dataclass(frozen=True)
 class EpubBook:
     path: Path
     file_size: int
@@ -56,6 +64,7 @@ class EpubBook:
     metadata: EpubMetadata
     manifest: dict[str, ManifestItem]
     spine: list[SpineItem]
+    nav_points: list[NavPoint]
 
     def rough_page_sequence(self) -> list[RoughPage]:
         return [
@@ -74,6 +83,7 @@ def read_epub(path: Path | str) -> EpubBook:
         metadata = _metadata(opf)
         manifest = _manifest(opf, opf_dir)
         spine = _spine(archive, opf, manifest)
+        nav_points = _nav_points(archive, manifest)
     return EpubBook(
         path=epub_path,
         file_size=len(data),
@@ -82,6 +92,7 @@ def read_epub(path: Path | str) -> EpubBook:
         metadata=metadata,
         manifest=manifest,
         spine=spine,
+        nav_points=nav_points,
     )
 
 
@@ -131,7 +142,7 @@ def _manifest(opf: ET.Element, opf_dir: str) -> dict[str, ManifestItem]:
         if not item_id or not href:
             continue
         full_path = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
-        items[item_id] = ManifestItem(item_id, href, media_type, full_path)
+        items[item_id] = ManifestItem(item_id, href, media_type, full_path, element.attrib.get("properties", ""))
     return items
 
 
@@ -156,6 +167,16 @@ def _spine(archive: zipfile.ZipFile, opf: ET.Element, manifest: dict[str, Manife
     return spine
 
 
+def _nav_points(archive: zipfile.ZipFile, manifest: dict[str, ManifestItem]) -> list[NavPoint]:
+    nav_item = next((item for item in manifest.values() if "nav" in item.properties.split()), None)
+    if nav_item is None:
+        return []
+    html = archive.read(nav_item.full_path).decode("utf-8", errors="replace")
+    parser = _NavExtractor(posixpath.dirname(nav_item.full_path))
+    parser.feed(html)
+    return parser.points
+
+
 def _text(element: ET.Element | None) -> str:
     if element is None or element.text is None:
         return ""
@@ -171,3 +192,33 @@ class _TextExtractor(HTMLParser):
         stripped = data.strip()
         if stripped:
             self.parts.append(stripped)
+
+
+class _NavExtractor(HTMLParser):
+    def __init__(self, nav_dir: str) -> None:
+        super().__init__()
+        self.nav_dir = nav_dir
+        self.points: list[NavPoint] = []
+        self._href: str | None = None
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() == "a":
+            attrs_dict = dict(attrs)
+            href = attrs_dict.get("href")
+            if href:
+                self._href = href.split("#", 1)[0]
+                self._parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._href is not None and data.strip():
+            self._parts.append(data.strip())
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "a" and self._href is not None:
+            title = " ".join(" ".join(self._parts).split())
+            full_path = posixpath.normpath(posixpath.join(self.nav_dir, self._href))
+            if title:
+                self.points.append(NavPoint(title, self._href, full_path))
+            self._href = None
+            self._parts = []
