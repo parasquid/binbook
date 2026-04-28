@@ -131,12 +131,18 @@ class BinBookReader:
             raise ValueError("unsupported required compression methods")
 
     def _validate_display_and_layout_profiles(self) -> None:
+        errors = self.profile_validation_errors()
+        if errors:
+            raise ValueError(errors[0])
+
+    def profile_validation_errors(self) -> list[str]:
         display = self._section_data(SectionId.DISPLAY_PROFILE)
         layout = self._section_data(SectionId.LAYOUT_PROFILE)
+        errors: list[str] = []
         if len(display) < 52:
-            raise ValueError("DISPLAY_PROFILE section is too short")
+            return ["DISPLAY_PROFILE section is too short"]
         if len(layout) < 28:
-            raise ValueError("LAYOUT_PROFILE section is too short")
+            return ["LAYOUT_PROFILE section is too short"]
         logical_width, logical_height = struct.unpack_from("<HH", display, 24)
         supported_formats = struct.unpack_from("<I", display, 36)[0]
         native_levels = struct.unpack_from("<H", display, 48)[0]
@@ -156,13 +162,13 @@ class BinBookReader:
             content_height,
         ) = layout_values
         if (logical_width, logical_height) != (480, 800):
-            raise ValueError("unsupported display profile dimensions")
+            errors.append("unsupported display profile dimensions")
         if not supported_formats & int(PixelFormat.GRAY2_PACKED):
-            raise ValueError("display profile does not support GRAY2_PACKED")
+            errors.append("display profile does not support GRAY2_PACKED")
         if native_levels != 4:
-            raise ValueError("display profile must use 4 grayscale levels for xteink-x4-portrait")
+            errors.append("display profile must use 4 grayscale levels for xteink-x4-portrait")
         if (full_width, full_height) != (logical_width, logical_height):
-            raise ValueError("LayoutProfile full page dimensions do not match DisplayProfile")
+            errors.append("LayoutProfile full page dimensions do not match DisplayProfile")
         expected_x = margin_left
         expected_y = margin_top + header_height
         expected_width = full_width - margin_left - margin_right
@@ -173,7 +179,8 @@ class BinBookReader:
             expected_width,
             expected_height,
         ):
-            raise ValueError("LayoutProfile content box is inconsistent with margins")
+            errors.append("LayoutProfile content box is inconsistent with margins")
+        return errors
 
     def _validate_string_refs(self) -> None:
         table = self._section_data(SectionId.STRING_TABLE)
