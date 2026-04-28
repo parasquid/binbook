@@ -11,12 +11,14 @@ from PIL import Image, ImageDraw, ImageFont
 from .checksums import crc32
 from .constants import PageKind, SourceType, UINT32_MAX
 from .epub import EpubBook, read_epub
+from .fonts import FontInfo, get_font
 from .images import image_bytes_to_gray2_packed, pil_image_to_gray2_packed
 from .profiles import DisplayProfile, get_profile
 from .rle import encode_packbits
 from .writer import BookInfo, EncodedPage, NavEntry, SourceInfo, build_binbook
 
-DEFAULT_FONT_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "Literata" / "Literata.ttf"
+DEFAULT_FONT = get_font("literata")
+DEFAULT_FONT_PATH = DEFAULT_FONT.path
 
 
 @dataclass(frozen=True)
@@ -27,10 +29,16 @@ class FlowItem:
     source_full_path: str
 
 
-def encode_epub(input_epub: Path, output: Path, profile_name: str = "xteink-x4-portrait") -> None:
+def encode_epub(
+    input_epub: Path,
+    output: Path,
+    profile_name: str = "xteink-x4-portrait",
+    font_family: str = "literata",
+) -> None:
     profile = get_profile(profile_name)
+    font = get_font(font_family)
     book = read_epub(input_epub)
-    pages, spine_first_page = _compile_pages(book, profile)
+    pages, spine_first_page = _compile_pages(book, profile, font)
     nav_entries = _compile_nav_entries(book, spine_first_page)
     output.write_bytes(
         build_binbook(
@@ -52,11 +60,12 @@ def encode_epub(input_epub: Path, output: Path, profile_name: str = "xteink-x4-p
                 package_identifier=book.metadata.package_identifier,
             ),
             nav_entries=nav_entries,
+            font_info=font,
         )
     )
 
 
-def _compile_pages(book: EpubBook, profile: DisplayProfile) -> tuple[list[EncodedPage], dict[int, int]]:
+def _compile_pages(book: EpubBook, profile: DisplayProfile, font: FontInfo) -> tuple[list[EncodedPage], dict[int, int]]:
     pages: list[EncodedPage] = []
     spine_first_page: dict[int, int] = {}
     with zipfile.ZipFile(book.path) as archive:
@@ -64,13 +73,13 @@ def _compile_pages(book: EpubBook, profile: DisplayProfile) -> tuple[list[Encode
             spine_first_page.setdefault(item.index, len(pages))
             for flow in _flow_items(item.html, item.index, item.full_path):
                 if flow.kind == "text" and flow.value:
-                    pages.extend(_text_pages(flow.value, profile, item.index))
+                    pages.extend(_text_pages(flow.value, profile, item.index, font))
                 elif flow.kind == "image":
                     image_path = _resolve_image_path(flow.source_full_path, flow.value)
                     packed = image_bytes_to_gray2_packed(archive.read(image_path), profile)
                     pages.append(_encoded_page(packed, PageKind.IMAGE, item.index))
     if not pages:
-        pages.append(_encoded_page(_render_text_to_packed("(empty book)", profile), PageKind.TEXT, UINT32_MAX))
+        pages.append(_encoded_page(_render_text_to_packed("(empty book)", profile, font), PageKind.TEXT, UINT32_MAX))
     return pages, spine_first_page
 
 
@@ -91,12 +100,12 @@ def _compile_nav_entries(book: EpubBook, spine_first_page: dict[int, int]) -> li
     return entries
 
 
-def _text_pages(text: str, profile: DisplayProfile, spine_index: int) -> list[EncodedPage]:
+def _text_pages(text: str, profile: DisplayProfile, spine_index: int, font: FontInfo = DEFAULT_FONT) -> list[EncodedPage]:
     chunks = [text[i : i + 1800] for i in range(0, len(text), 1800)] or [text]
-    return [_encoded_page(_render_text_to_packed(chunk, profile), PageKind.TEXT, spine_index) for chunk in chunks]
+    return [_encoded_page(_render_text_to_packed(chunk, profile, font), PageKind.TEXT, spine_index) for chunk in chunks]
 
 
-def _render_text_to_packed(text: str, profile: DisplayProfile) -> bytes:
+def _render_text_to_packed(text: str, profile: DisplayProfile, font_info: FontInfo = DEFAULT_FONT) -> bytes:
     # Supersample at 2x resolution for better antialiasing
     supersample_factor = 2
     supersampled_width = profile.logical_width * supersample_factor
@@ -104,7 +113,7 @@ def _render_text_to_packed(text: str, profile: DisplayProfile) -> bytes:
     
     image = Image.new("L", (supersampled_width, supersampled_height), 255)
     draw = ImageDraw.Draw(image)
-    font = _font(24 * supersample_factor)  # Scale font size
+    font = _font(24 * supersample_factor, font_info)  # Scale font size
     x = 24 * supersample_factor
     y = 24 * supersample_factor
     right = supersampled_width - (24 * supersample_factor)
@@ -167,9 +176,9 @@ def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont)
     return bbox[2] - bbox[0]
 
 
-def _font(size: int) -> ImageFont.ImageFont:
+def _font(size: int, font_info: FontInfo = DEFAULT_FONT) -> ImageFont.ImageFont:
     for path in [
-        DEFAULT_FONT_PATH,
+        font_info.path,
         Path("/System/Library/Fonts/Supplemental/Times New Roman.ttf"),
         Path("/System/Library/Fonts/Supplemental/Georgia.ttf"),
         Path("/Library/Fonts/Georgia.ttf"),

@@ -15,6 +15,7 @@ from .constants import (
     SectionId,
     SourceType,
 )
+from .fonts import FontInfo, get_font
 from .images import png_to_gray2_packed
 from .profiles import DisplayProfile, get_profile
 from .rle import encode_packbits
@@ -91,10 +92,12 @@ def build_binbook(
     book_info: BookInfo | None = None,
     source_info: SourceInfo | None = None,
     nav_entries: list[NavEntry] | None = None,
+    font_info: FontInfo | None = None,
 ) -> bytes:
     book_info = book_info or BookInfo(title=source_name)
     source_info = source_info or SourceInfo(filename=source_name)
     nav_entries = nav_entries or []
+    font_info = font_info or get_font("literata")
     strings = StringTableBuilder()
     refs = {
         "profile": strings.add(profile.name),
@@ -108,6 +111,8 @@ def build_binbook(
         "compiler": strings.add("binbook-poc"),
         "version": strings.add("0.1.0"),
         "renderer": strings.add("Pillow"),
+        "font_name": strings.add(font_info.display_name),
+        "font_path": strings.add(font_info.stable_path),
     }
     nav_title_refs = [strings.add(entry.title) for entry in nav_entries]
 
@@ -119,7 +124,7 @@ def build_binbook(
         (SectionId.SOURCE_IDENTITY, _source_identity(source_info, refs["filename"], refs["package_identifier"]), 0, 0),
         (SectionId.BOOK_METADATA, _book_metadata(refs["title"], refs["author"], refs["language"]), 0, 0),
         (SectionId.RENDITION_IDENTITY, _rendition_identity(refs["compiler"], refs["version"]), 0, 0),
-        (SectionId.FONT_POLICY, _font_policy(refs["renderer"]), 0, 0),
+        (SectionId.FONT_POLICY, _font_policy(font_info, refs["font_name"], refs["font_path"], refs["renderer"]), 0, 0),
         (SectionId.TYPOGRAPHY_POLICY, _typography_policy(), 0, 0),
         (SectionId.IMAGE_POLICY, _image_policy(), 0, 0),
         (SectionId.COMPRESSION_POLICY, _compression_policy(), 0, 0),
@@ -321,8 +326,20 @@ def _rendition_identity(compiler_name: StringRef, compiler_version: StringRef) -
     return b"".join([bytes(32 * 8), compiler_name.pack(), compiler_version.pack(), struct.pack("<Q", 0), bytes(32)])
 
 
-def _font_policy(renderer: StringRef) -> bytes:
-    return b"".join([struct.pack("<HH", 0, 0), bytes(32), StringRef().pack(), StringRef().pack(), renderer.pack(), bytes(32), bytes(32)])
+def _font_policy(font_info: FontInfo, font_name: StringRef, font_path: StringRef, renderer: StringRef) -> bytes:
+    font_mode_force = 2
+    force_custom_font = 1 << 0
+    return b"".join(
+        [
+            struct.pack("<HH", font_mode_force, force_custom_font),
+            font_info.sha256,
+            font_name.pack(),
+            font_path.pack(),
+            renderer.pack(),
+            bytes(32),
+            bytes(32),
+        ]
+    )
 
 
 def _typography_policy() -> bytes:

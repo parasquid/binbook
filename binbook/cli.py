@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     encode.add_argument("input_epub", type=Path)
     encode.add_argument("-o", "--output", required=True, type=Path)
     encode.add_argument("--profile", default="xteink-x4-portrait")
+    encode.add_argument("--font-family", default="literata")
 
     decode = subparsers.add_parser("decode", help="decode one page to PNG")
     decode.add_argument("input", type=Path)
@@ -52,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "encode-png-folder":
             encode_png_folder(args.input_dir, args.output, args.profile)
         elif args.command == "encode":
-            encode_epub(args.input_epub, args.output, args.profile)
+            encode_epub(args.input_epub, args.output, args.profile, args.font_family)
         elif args.command == "decode":
             BinBookReader.open(args.input).decode_page_to_png(args.page, args.output)
         elif args.command == "inspect":

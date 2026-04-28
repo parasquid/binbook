@@ -25,7 +25,7 @@ uv run pytest -q
 Run the CLI through `uv`:
 
 ```bash
-uv run binbook encode book.epub -o book.binbook
+uv run binbook encode book.epub -o book.binbook --font-family literata
 uv run binbook encode-png-folder ./pages -o test.binbook
 uv run binbook inspect test.binbook --validate
 uv run binbook inspect test.binbook --validate --json
