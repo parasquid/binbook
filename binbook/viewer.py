@@ -59,6 +59,13 @@ def render_page_image(
     return image
 
 
+def image_to_surface(image: Image.Image):
+    import pygame
+
+    rgb = image.convert("RGB")
+    return pygame.image.frombuffer(rgb.tobytes(), rgb.size, "RGB").copy()
+
+
 def launch_viewer(
     path: Path | str,
     *,
@@ -67,23 +74,17 @@ def launch_viewer(
     debug_content_box: bool = False,
 ) -> None:
     try:
-        import tkinter as tk
-        from PIL import ImageTk
+        import pygame
     except ImportError as exc:
-        raise RuntimeError("Tkinter is required for binbook view") from exc
+        raise RuntimeError("Pygame is required for binbook view") from exc
 
     reader = BinBookReader.open(path)
     state = ViewerState(len(reader.pages), page)
 
-    root = tk.Tk()
-    root.title(f"BinBook Viewer - {Path(path).name}")
-    root.resizable(False, False)
-
-    image_label = tk.Label(root)
-    image_label.pack()
-    status = tk.Label(root, anchor="center")
-    status.pack(fill="x")
-    photo_ref: dict[str, ImageTk.PhotoImage] = {}
+    pygame.init()
+    pygame.display.set_caption(f"BinBook Viewer - {Path(path).name}")
+    screen = pygame.display.set_mode((reader.pages[0].stored_width, reader.pages[0].stored_height))
+    clock = pygame.time.Clock()
 
     def refresh() -> None:
         image = render_page_image(
@@ -92,27 +93,29 @@ def launch_viewer(
             show_chrome=show_chrome,
             debug_content_box=debug_content_box,
         )
-        photo = ImageTk.PhotoImage(image)
-        photo_ref["image"] = photo
-        image_label.configure(image=photo)
-        status.configure(text=f"Page {state.current_page + 1} of {state.page_count}")
+        screen.blit(image_to_surface(image), (0, 0))
+        pygame.display.flip()
 
-    def on_key(event: tk.Event) -> None:
-        if event.keysym in {"Right", "Down", "space", "Page_Down"}:
-            state.next_page()
-            refresh()
-        elif event.keysym in {"Left", "Up", "BackSpace", "Page_Up"}:
-            state.previous_page()
-            refresh()
-        elif event.keysym in {"Home"}:
-            state.jump_to_page(0)
-            refresh()
-        elif event.keysym in {"End"}:
-            state.jump_to_page(state.page_count - 1)
-            refresh()
-        elif event.keysym in {"Escape", "q"}:
-            root.destroy()
-
-    root.bind("<Key>", on_key)
     refresh()
-    root.mainloop()
+    running = True
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key in {pygame.K_RIGHT, pygame.K_DOWN, pygame.K_SPACE, pygame.K_PAGEDOWN}:
+                    state.next_page()
+                    refresh()
+                elif event.key in {pygame.K_LEFT, pygame.K_UP, pygame.K_BACKSPACE, pygame.K_PAGEUP}:
+                    state.previous_page()
+                    refresh()
+                elif event.key == pygame.K_HOME:
+                    state.jump_to_page(0)
+                    refresh()
+                elif event.key == pygame.K_END:
+                    state.jump_to_page(state.page_count - 1)
+                    refresh()
+                elif event.key in {pygame.K_ESCAPE, pygame.K_q}:
+                    running = False
+        clock.tick(30)
+    pygame.quit()

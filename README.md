@@ -29,3 +29,5 @@ uv run binbook inspect test.binbook --validate --strict
 uv run binbook decode test.binbook --page 0 -o page0.png
 uv run binbook view test.binbook
 ```
+
+The desktop viewer uses Pygame for its window backend. Keyboard controls are right/down/space for next page, left/up/backspace for previous page, Home/End for first/last page, and Esc or `q` to quit.
