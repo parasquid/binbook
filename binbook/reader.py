@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import struct
 
 from .checksums import crc32
 from .constants import (
@@ -22,7 +23,18 @@ from .structs import (
     BinBookHeader,
     PageIndexEntry,
     SectionEntry,
+    StringRef,
 )
+
+SUPPORTED_READER_FEATURES = (1 << 0) | (1 << 2) | (1 << 3) | (1 << 4)
+SUPPORTED_STORAGE_PIXEL_FORMATS = int(PixelFormat.GRAY2_PACKED)
+SUPPORTED_COMPRESSION_METHOD_FLAGS = 1 << int(CompressionMethod.RLE_PACKBITS)
+DISPLAY_PROFILE_STRING_REF_OFFSETS = (0, 8, 16)
+SOURCE_IDENTITY_STRING_REF_OFFSETS = (60, 68)
+BOOK_METADATA_STRING_REF_OFFSETS = (0, 8, 16, 24, 32, 40)
+RENDITION_IDENTITY_STRING_REF_OFFSETS = (256, 264)
+FONT_POLICY_STRING_REF_OFFSETS = (36, 44, 52)
+TYPOGRAPHY_POLICY_STRING_REF_OFFSETS = (36,)
 
 
 @dataclass
@@ -58,12 +70,25 @@ class BinBookReader:
         missing = REQUIRED_SECTIONS.difference(self.sections)
         if missing:
             raise ValueError(f"missing required sections: {sorted(int(s) for s in missing)}")
+        metadata_end = max(
+            section.offset + section.length
+            for section_id, section in self.sections.items()
+            if section_id != SectionId.PAGE_DATA
+        )
+        if self.header.page_data_offset < metadata_end:
+            raise ValueError("page_data_offset is before end of metadata")
         page_data = self.sections[SectionId.PAGE_DATA]
         if page_data.offset != self.header.page_data_offset or page_data.length != self.header.page_data_length:
             raise ValueError("PAGE_DATA section does not match header")
         for section in self.sections.values():
             if section.offset + section.length > len(self.data):
                 raise ValueError(f"section {section.section_id} is outside file bounds")
+            if section.crc32 and crc32(self.data[section.offset : section.offset + section.length]) != section.crc32:
+                name = SectionId(section.section_id).name
+                raise ValueError(f"section {name} CRC32 mismatch")
+        self._validate_reader_requirements()
+        self._validate_display_and_layout_profiles()
+        self._validate_string_refs()
         used: list[tuple[int, int]] = []
         previous_progress = 0
         for page in self.pages:
@@ -86,6 +111,94 @@ class BinBookReader:
                 if start < other_end and end > other_start:
                     raise ValueError("page blobs overlap")
             used.append((start, end))
+
+    def _validate_reader_requirements(self) -> None:
+        data = self._section_data(SectionId.READER_REQUIREMENTS)
+        if len(data) < 40:
+            raise ValueError("READER_REQUIREMENTS section is too short")
+        required_features = struct.unpack_from("<Q", data, 8)[0]
+        required_storage_formats = struct.unpack_from("<I", data, 16)[0]
+        required_grayscale_levels = struct.unpack_from("<H", data, 20)[0]
+        required_compression_methods = struct.unpack_from("<I", data, 24)[0]
+        unsupported_features = required_features & ~SUPPORTED_READER_FEATURES
+        if unsupported_features:
+            raise ValueError(f"unsupported required reader features: 0x{unsupported_features:x}")
+        if not required_storage_formats & SUPPORTED_STORAGE_PIXEL_FORMATS:
+            raise ValueError("unsupported required storage pixel formats")
+        if required_grayscale_levels not in (0, 4):
+            raise ValueError("unsupported required output grayscale levels")
+        if not required_compression_methods & SUPPORTED_COMPRESSION_METHOD_FLAGS:
+            raise ValueError("unsupported required compression methods")
+
+    def _validate_display_and_layout_profiles(self) -> None:
+        display = self._section_data(SectionId.DISPLAY_PROFILE)
+        layout = self._section_data(SectionId.LAYOUT_PROFILE)
+        if len(display) < 52:
+            raise ValueError("DISPLAY_PROFILE section is too short")
+        if len(layout) < 28:
+            raise ValueError("LAYOUT_PROFILE section is too short")
+        logical_width, logical_height = struct.unpack_from("<HH", display, 24)
+        supported_formats = struct.unpack_from("<I", display, 36)[0]
+        native_levels = struct.unpack_from("<H", display, 48)[0]
+        layout_values = struct.unpack_from("<HHHHHHHHHHHH", layout, 0)
+        (
+            full_width,
+            full_height,
+            header_height,
+            footer_height,
+            margin_top,
+            margin_right,
+            margin_bottom,
+            margin_left,
+            content_x,
+            content_y,
+            content_width,
+            content_height,
+        ) = layout_values
+        if (logical_width, logical_height) != (480, 800):
+            raise ValueError("unsupported display profile dimensions")
+        if not supported_formats & int(PixelFormat.GRAY2_PACKED):
+            raise ValueError("display profile does not support GRAY2_PACKED")
+        if native_levels != 4:
+            raise ValueError("display profile must use 4 grayscale levels for xteink-x4-portrait")
+        if (full_width, full_height) != (logical_width, logical_height):
+            raise ValueError("LayoutProfile full page dimensions do not match DisplayProfile")
+        expected_x = margin_left
+        expected_y = margin_top + header_height
+        expected_width = full_width - margin_left - margin_right
+        expected_height = full_height - margin_top - margin_bottom - header_height - footer_height
+        if (content_x, content_y, content_width, content_height) != (
+            expected_x,
+            expected_y,
+            expected_width,
+            expected_height,
+        ):
+            raise ValueError("LayoutProfile content box is inconsistent with margins")
+
+    def _validate_string_refs(self) -> None:
+        table = self._section_data(SectionId.STRING_TABLE)
+        for section_id, offsets in {
+            SectionId.DISPLAY_PROFILE: DISPLAY_PROFILE_STRING_REF_OFFSETS,
+            SectionId.SOURCE_IDENTITY: SOURCE_IDENTITY_STRING_REF_OFFSETS,
+            SectionId.BOOK_METADATA: BOOK_METADATA_STRING_REF_OFFSETS,
+            SectionId.RENDITION_IDENTITY: RENDITION_IDENTITY_STRING_REF_OFFSETS,
+            SectionId.FONT_POLICY: FONT_POLICY_STRING_REF_OFFSETS,
+            SectionId.TYPOGRAPHY_POLICY: TYPOGRAPHY_POLICY_STRING_REF_OFFSETS,
+        }.items():
+            data = self._section_data(section_id)
+            for offset in offsets:
+                if offset + 8 > len(data):
+                    raise ValueError(f"{section_id.name} StringRef field is outside section")
+                ref = StringRef.unpack(data, offset)
+                if ref.length == 0:
+                    continue
+                if ref.offset + ref.length > len(table):
+                    raise ValueError("StringRef is outside the string table")
+                table[ref.offset : ref.offset + ref.length].decode("utf-8")
+
+    def _section_data(self, section_id: SectionId) -> bytes:
+        section = self.sections[section_id]
+        return self.data[section.offset : section.offset + section.length]
 
     def decode_page_bytes(self, page_number: int) -> tuple[bytes, PageIndexEntry]:
         page = self.pages[page_number]
