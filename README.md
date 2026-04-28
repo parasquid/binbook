@@ -27,4 +27,5 @@ uv run binbook inspect test.binbook --validate
 uv run binbook inspect test.binbook --validate --json
 uv run binbook inspect test.binbook --validate --strict
 uv run binbook decode test.binbook --page 0 -o page0.png
+uv run binbook view test.binbook
 ```

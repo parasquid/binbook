@@ -7,6 +7,7 @@ import sys
 from .inspect import inspect_book
 from .reader import BinBookReader
 from .structs import HEADER_SIZE, BinBookHeader
+from .viewer import launch_viewer
 from .writer import encode_png_folder
 
 
@@ -30,6 +31,16 @@ def main(argv: list[str] | None = None) -> int:
     inspect.add_argument("--strict", action="store_true", help="report all validation errors detected by inspect")
     inspect.add_argument("--json", action="store_true", help="emit JSON inspection output")
 
+    view = subparsers.add_parser(
+        "view",
+        help="simulate a BinBook file in a desktop viewer",
+        description="simulate a BinBook file in a desktop viewer",
+    )
+    view.add_argument("input", type=Path)
+    view.add_argument("--page", type=int, default=0)
+    view.add_argument("--no-chrome", action="store_true")
+    view.add_argument("--debug-content-box", action="store_true")
+
     args = parser.parse_args(argv)
     try:
         if args.command == "encode-png-folder":
@@ -42,6 +53,13 @@ def main(argv: list[str] | None = None) -> int:
             print(result.json_text if args.json else result.text)
             if args.validate and not result.ok:
                 return 1
+        elif args.command == "view":
+            launch_viewer(
+                args.input,
+                page=args.page,
+                show_chrome=not args.no_chrome,
+                debug_content_box=args.debug_content_box,
+            )
         else:
             parser.error("unknown command")
     except Exception as exc:
