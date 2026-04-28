@@ -27,6 +27,18 @@ FONTS = {
         path=FONT_ASSET_DIR / "Literata" / "Literata.ttf",
         stable_path="binbook/assets/fonts/Literata/Literata.ttf",
     ),
+    "opendyslexic": FontInfo(
+        family="opendyslexic",
+        display_name="OpenDyslexic",
+        path=FONT_ASSET_DIR / "OpenDyslexic" / "OpenDyslexic-Regular.otf",
+        stable_path="binbook/assets/fonts/OpenDyslexic/OpenDyslexic-Regular.otf",
+    ),
+    "sans-serif": FontInfo(
+        family="sans-serif",
+        display_name="OpenDyslexic",
+        path=FONT_ASSET_DIR / "OpenDyslexic" / "OpenDyslexic-Regular.otf",
+        stable_path="binbook/assets/fonts/OpenDyslexic/OpenDyslexic-Regular.otf",
+    ),
 }
 
 

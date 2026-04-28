@@ -45,6 +45,22 @@ def test_encode_records_selected_font_policy(tmp_path: Path, capsys):
     assert payload["validation"]["ok"] is True
 
 
+def test_sans_serif_alias_records_opendyslexic_font_policy(tmp_path: Path):
+    epub_path = tmp_path / "book.epub"
+    output = tmp_path / "book.binbook"
+    _write_minimal_epub(epub_path)
+
+    assert main(["encode", str(epub_path), "-o", str(output), "--font-family", "sans-serif"]) == 0
+    reader = BinBookReader.open(output)
+    font_policy = _section_bytes(reader, SectionId.FONT_POLICY)
+    string_table = _section_bytes(reader, SectionId.STRING_TABLE)
+    selected = get_font("sans-serif")
+
+    assert font_policy[4:36] == selected.sha256
+    assert read_string(string_table, StringRef.unpack(font_policy, 36)) == "OpenDyslexic"
+    assert read_string(string_table, StringRef.unpack(font_policy, 44)) == selected.stable_path
+
+
 def test_encode_rejects_unknown_font_family(tmp_path: Path):
     epub_path = tmp_path / "book.epub"
     output = tmp_path / "book.binbook"
