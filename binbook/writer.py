@@ -93,6 +93,7 @@ def build_binbook(
     source_info: SourceInfo | None = None,
     nav_entries: list[NavEntry] | None = None,
     font_info: FontInfo | None = None,
+    character_spacing_milli_em: int = 0,
 ) -> bytes:
     book_info = book_info or BookInfo(title=source_name)
     source_info = source_info or SourceInfo(filename=source_name)
@@ -125,7 +126,7 @@ def build_binbook(
         (SectionId.BOOK_METADATA, _book_metadata(refs["title"], refs["author"], refs["language"]), 0, 0),
         (SectionId.RENDITION_IDENTITY, _rendition_identity(refs["compiler"], refs["version"]), 0, 0),
         (SectionId.FONT_POLICY, _font_policy(font_info, refs["font_name"], refs["font_path"], refs["renderer"]), 0, 0),
-        (SectionId.TYPOGRAPHY_POLICY, _typography_policy(), 0, 0),
+        (SectionId.TYPOGRAPHY_POLICY, _typography_policy(character_spacing_milli_em), 0, 0),
         (SectionId.IMAGE_POLICY, _image_policy(), 0, 0),
         (SectionId.COMPRESSION_POLICY, _compression_policy(), 0, 0),
         (SectionId.CHROME_POLICY, _chrome_policy(), 0, 0),
@@ -342,10 +343,10 @@ def _font_policy(font_info: FontInfo, font_name: StringRef, font_path: StringRef
     )
 
 
-def _typography_policy() -> bytes:
+def _typography_policy(character_spacing_milli_em: int = 0) -> bytes:
     return b"".join(
         [
-            struct.pack("<HHHHIIHHiiBBBB", 24, 18, 0, 400, 1000, 1250, 0, 8, 0, 0, 1, 1, 1, 0),
+            struct.pack("<HHHHIIHHiiBBBB", 24, 18, 0, 400, 1000, 1250, 0, 8, character_spacing_milli_em, 0, 1, 1, 1, 0),
             StringRef().pack(),
             struct.pack("<I", 0),
             bytes(32),

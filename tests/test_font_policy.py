@@ -61,6 +61,20 @@ def test_sans_serif_alias_records_opendyslexic_font_policy(tmp_path: Path):
     assert read_string(string_table, StringRef.unpack(font_policy, 44)) == selected.stable_path
 
 
+def test_sans_serif_records_default_character_spacing(tmp_path: Path):
+    epub_path = tmp_path / "book.epub"
+    output = tmp_path / "book.binbook"
+    _write_minimal_epub(epub_path)
+
+    assert main(["encode", str(epub_path), "-o", str(output), "--font-family", "sans-serif"]) == 0
+    reader = BinBookReader.open(output)
+    typography_policy = _section_bytes(reader, SectionId.TYPOGRAPHY_POLICY)
+
+    character_spacing_milli_em = struct.unpack_from("<i", typography_policy, 20)[0]
+
+    assert character_spacing_milli_em == -30
+
+
 def test_encode_rejects_unknown_font_family(tmp_path: Path):
     epub_path = tmp_path / "book.epub"
     output = tmp_path / "book.binbook"

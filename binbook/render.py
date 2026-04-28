@@ -61,6 +61,7 @@ def encode_epub(
             ),
             nav_entries=nav_entries,
             font_info=font,
+            character_spacing_milli_em=font.default_character_spacing_milli_em,
         )
     )
 
@@ -114,16 +115,17 @@ def _render_text_to_packed(text: str, profile: DisplayProfile, font_info: FontIn
     image = Image.new("L", (supersampled_width, supersampled_height), 255)
     draw = ImageDraw.Draw(image)
     font = _font(24 * supersample_factor, font_info)  # Scale font size
+    character_spacing_milli_em = font_info.default_character_spacing_milli_em
     x = 24 * supersample_factor
     y = 24 * supersample_factor
     right = supersampled_width - (24 * supersample_factor)
     line_height = 32 * supersample_factor
     
     for paragraph in text.splitlines() or [text]:
-        for line in _wrap_text_to_width(paragraph, draw, font, right - x) or [""]:
+        for line in _wrap_text_to_width(paragraph, draw, font, right - x, character_spacing_milli_em) or [""]:
             if y + line_height > supersampled_height - (24 * supersample_factor):
                 break
-            draw.text((x, y), line, fill=0, font=font)
+            _draw_text(draw, (x, y), line, font, character_spacing_milli_em, fill=0)
             y += line_height
         y += 8 * supersample_factor
     
@@ -135,15 +137,21 @@ def _render_text_to_packed(text: str, profile: DisplayProfile, font_info: FontIn
     return pil_image_to_gray2_packed(downsampled_image, profile)
 
 
-def _wrap_text_to_width(text: str, draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont, max_width: int) -> list[str]:
+def _wrap_text_to_width(
+    text: str,
+    draw: ImageDraw.ImageDraw,
+    font: ImageFont.ImageFont,
+    max_width: int,
+    character_spacing_milli_em: int = 0,
+) -> list[str]:
     words = text.split()
     lines: list[str] = []
     current = ""
     for word in words:
-        candidates = _split_word_to_width(word, draw, font, max_width)
+        candidates = _split_word_to_width(word, draw, font, max_width, character_spacing_milli_em)
         for candidate in candidates:
             proposed = candidate if not current else f"{current} {candidate}"
-            if _text_width(draw, proposed, font) <= max_width:
+            if _text_width(draw, proposed, font, character_spacing_milli_em) <= max_width:
                 current = proposed
             else:
                 if current:
@@ -154,14 +162,20 @@ def _wrap_text_to_width(text: str, draw: ImageDraw.ImageDraw, font: ImageFont.Im
     return lines
 
 
-def _split_word_to_width(word: str, draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont, max_width: int) -> list[str]:
-    if _text_width(draw, word, font) <= max_width:
+def _split_word_to_width(
+    word: str,
+    draw: ImageDraw.ImageDraw,
+    font: ImageFont.ImageFont,
+    max_width: int,
+    character_spacing_milli_em: int = 0,
+) -> list[str]:
+    if _text_width(draw, word, font, character_spacing_milli_em) <= max_width:
         return [word]
     parts: list[str] = []
     current = ""
     for char in word:
         proposed = current + char
-        if current and _text_width(draw, proposed, font) > max_width:
+        if current and _text_width(draw, proposed, font, character_spacing_milli_em) > max_width:
             parts.append(current)
             current = char
         else:
@@ -171,9 +185,50 @@ def _split_word_to_width(word: str, draw: ImageDraw.ImageDraw, font: ImageFont.I
     return parts
 
 
-def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> int:
-    bbox = draw.textbbox((0, 0), text, font=font)
-    return bbox[2] - bbox[0]
+def _text_width(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.ImageFont,
+    character_spacing_milli_em: int = 0,
+) -> int:
+    if not text:
+        return 0
+    if character_spacing_milli_em == 0:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        return bbox[2] - bbox[0]
+    spacing_px = _character_spacing_px(font, character_spacing_milli_em)
+    width = 0.0
+    for index, character in enumerate(text):
+        bbox = draw.textbbox((0, 0), character, font=font)
+        width += bbox[2] - bbox[0]
+        if index != len(text) - 1:
+            width += spacing_px
+    return max(0, int(round(width)))
+
+
+def _draw_text(
+    draw: ImageDraw.ImageDraw,
+    xy: tuple[int, int],
+    text: str,
+    font: ImageFont.ImageFont,
+    character_spacing_milli_em: int,
+    *,
+    fill: int,
+) -> None:
+    if character_spacing_milli_em == 0:
+        draw.text(xy, text, fill=fill, font=font)
+        return
+    x, y = xy
+    spacing_px = _character_spacing_px(font, character_spacing_milli_em)
+    for character in text:
+        draw.text((x, y), character, fill=fill, font=font)
+        bbox = draw.textbbox((0, 0), character, font=font)
+        x += (bbox[2] - bbox[0]) + spacing_px
+
+
+def _character_spacing_px(font: ImageFont.ImageFont, character_spacing_milli_em: int) -> float:
+    size = getattr(font, "size", 24)
+    return size * (character_spacing_milli_em / 1000)
 
 
 def _font(size: int, font_info: FontInfo = DEFAULT_FONT) -> ImageFont.ImageFont:
