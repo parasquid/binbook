@@ -14,6 +14,7 @@ class FontInfo:
     display_name: str
     path: Path
     stable_path: str
+    default_character_spacing_milli_em: int = 0
 
     @property
     def sha256(self) -> bytes:
@@ -32,12 +33,14 @@ FONTS = {
         display_name="OpenDyslexic",
         path=FONT_ASSET_DIR / "OpenDyslexic" / "OpenDyslexic-Regular.otf",
         stable_path="binbook/assets/fonts/OpenDyslexic/OpenDyslexic-Regular.otf",
+        default_character_spacing_milli_em=-30,
     ),
     "sans-serif": FontInfo(
         family="sans-serif",
         display_name="OpenDyslexic",
         path=FONT_ASSET_DIR / "OpenDyslexic" / "OpenDyslexic-Regular.otf",
         stable_path="binbook/assets/fonts/OpenDyslexic/OpenDyslexic-Regular.otf",
+        default_character_spacing_milli_em=-30,
     ),
 }
 
