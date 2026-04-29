@@ -20,7 +20,7 @@ from .render import TEXT_FEATURES, _character_spacing_px, _draw_text, _font, _wr
 DEFAULT_CANDIDATE_VALUES = (0, -40, -60, -80, -100, -120, -140, -160)
 UPPER_TO_LOWER_PAIRS = ("To", "Th", "Ta", "Te", "Ty", "Yo", "Ye", "Ya", "Yu", "Wo", "Wa", "We", "Vo", "Va", "Ve")
 UPPER_PAIRS = ("AV", "VA", "WA", "AW", "LT", "LA", "LY", "TA", "TY")
-LOWER_PAIRS = ("yo", "ry", "ly", "vy", "wy", "fe", "rf", "ct")
+LOWER_PAIRS = ("yo", "oj", "ry", "ly", "vy", "wy", "fe", "rf", "ct")
 PROOF_WORDS = ("You", "you", "Toast", "HAWAII", "Yale", "Yukon", "Water", "Av", "LT")
 PAIR_CONTEXTS = {
     "Yo": (
