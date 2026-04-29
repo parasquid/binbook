@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from .constants import PixelFormat, PixelFormatFlag
 
@@ -12,6 +12,7 @@ class DisplayProfile:
     logical_height: int
     physical_width: int
     physical_height: int
+    default_storage_pixel_format: PixelFormat
     storage_pixel_format: PixelFormat
     storage_pixel_format_flag: PixelFormatFlag
     supported_storage_pixel_format_flags: int
@@ -21,6 +22,40 @@ class DisplayProfile:
     grayscale_levels: int
     framebuffer_bits_per_pixel: int
 
+    def resolve(self, storage_pixel_format: str | PixelFormat | None = None) -> "DisplayProfile":
+        if storage_pixel_format is None:
+            return self._resolve_pixel_format(self.default_storage_pixel_format)
+        return self._resolve_pixel_format(_parse_storage_pixel_format(storage_pixel_format))
+
+    def _resolve_pixel_format(self, pixel_format: PixelFormat) -> "DisplayProfile":
+        pixel_flags_by_format = {
+            PixelFormat.GRAY1_PACKED: PixelFormatFlag.GRAY1_PACKED,
+            PixelFormat.GRAY2_PACKED: PixelFormatFlag.GRAY2_PACKED,
+        }
+        pixel_flag = pixel_flags_by_format.get(pixel_format)
+        if pixel_flag is None:
+            raise ValueError(f"unsupported storage pixel format for {self.name}: {pixel_format.name}")
+        if not self.supported_storage_pixel_format_flags & int(pixel_flag):
+            raise ValueError(f"unsupported storage pixel format for {self.name}: {pixel_format.name}")
+        grayscale_levels = 2 if pixel_format == PixelFormat.GRAY1_PACKED else 4
+        framebuffer_bits_per_pixel = 1 if pixel_format == PixelFormat.GRAY1_PACKED else 2
+        return DisplayProfile(
+            name=self.name,
+            logical_width=self.logical_width,
+            logical_height=self.logical_height,
+            physical_width=self.physical_width,
+            physical_height=self.physical_height,
+            default_storage_pixel_format=self.default_storage_pixel_format,
+            storage_pixel_format=pixel_format,
+            storage_pixel_format_flag=pixel_flag,
+            supported_storage_pixel_format_flags=self.supported_storage_pixel_format_flags,
+            logical_orientation=self.logical_orientation,
+            logical_to_physical_rotation=self.logical_to_physical_rotation,
+            scan_order_hint=self.scan_order_hint,
+            grayscale_levels=grayscale_levels,
+            framebuffer_bits_per_pixel=framebuffer_bits_per_pixel,
+        )
+
 
 XTEINK_X4_PORTRAIT = DisplayProfile(
     name="xteink-x4-portrait",
@@ -28,6 +63,7 @@ XTEINK_X4_PORTRAIT = DisplayProfile(
     logical_height=800,
     physical_width=800,
     physical_height=480,
+    default_storage_pixel_format=PixelFormat.GRAY2_PACKED,
     storage_pixel_format=PixelFormat.GRAY2_PACKED,
     storage_pixel_format_flag=PixelFormatFlag.GRAY2_PACKED,
     supported_storage_pixel_format_flags=int(PixelFormatFlag.GRAY1_PACKED | PixelFormatFlag.GRAY2_PACKED),
@@ -39,23 +75,10 @@ XTEINK_X4_PORTRAIT = DisplayProfile(
 )
 
 
-def get_profile(name: str, storage_pixel_format: str | PixelFormat | None = None) -> DisplayProfile:
+def get_profile(name: str) -> DisplayProfile:
     if name != XTEINK_X4_PORTRAIT.name:
         raise ValueError(f"unsupported profile: {name}")
-    if storage_pixel_format is None:
-        return XTEINK_X4_PORTRAIT
-    pixel_format = _parse_storage_pixel_format(storage_pixel_format)
-    if pixel_format == PixelFormat.GRAY2_PACKED:
-        return XTEINK_X4_PORTRAIT
-    if pixel_format == PixelFormat.GRAY1_PACKED:
-        return replace(
-            XTEINK_X4_PORTRAIT,
-            storage_pixel_format=PixelFormat.GRAY1_PACKED,
-            storage_pixel_format_flag=PixelFormatFlag.GRAY1_PACKED,
-            grayscale_levels=2,
-            framebuffer_bits_per_pixel=1,
-        )
-    raise ValueError(f"unsupported storage pixel format for {name}: {pixel_format.name}")
+    return XTEINK_X4_PORTRAIT
 
 
 def _parse_storage_pixel_format(value: str | PixelFormat) -> PixelFormat:

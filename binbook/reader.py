@@ -101,7 +101,7 @@ class BinBookReader:
             elif page.pixel_format == PixelFormat.GRAY2_PACKED:
                 page_format_flag = int(PixelFormatFlag.GRAY2_PACKED)
             else:
-                raise ValueError("unsupported page pixel format for xteink-x4-portrait")
+                raise ValueError(f"unsupported page pixel format: {page.pixel_format}")
             if not required_storage_formats & page_format_flag:
                 raise ValueError("page pixel format does not match reader requirements")
             if page.compression_method != CompressionMethod.RLE_PACKBITS:
@@ -169,12 +169,12 @@ class BinBookReader:
             content_width,
             content_height,
         ) = layout_values
-        if (logical_width, logical_height) != (480, 800):
-            errors.append("unsupported display profile dimensions")
-        if not supported_formats & int(PixelFormatFlag.GRAY2_PACKED):
-            errors.append("display profile does not support GRAY2_PACKED")
-        if native_levels not in (2, 4):
-            errors.append("display profile must use 2 or 4 grayscale levels for xteink-x4-portrait")
+        if logical_width == 0 or logical_height == 0:
+            errors.append("display profile logical dimensions must be non-zero")
+        if supported_formats == 0:
+            errors.append("display profile must advertise at least one storage pixel format")
+        if native_levels < 2:
+            errors.append("display profile must use at least 2 grayscale levels")
         if (full_width, full_height) != (logical_width, logical_height):
             errors.append("LayoutProfile full page dimensions do not match DisplayProfile")
         expected_x = margin_left
