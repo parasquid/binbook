@@ -75,7 +75,7 @@ def encode_png_folder(
     profile_name: str = "xteink-x4-portrait",
     storage_pixel_format: str | PixelFormat | None = None,
 ) -> None:
-    profile = get_profile(profile_name, storage_pixel_format)
+    profile = get_profile(profile_name).resolve(storage_pixel_format)
     pngs = sorted(p for p in input_dir.iterdir() if p.suffix.lower() == ".png")
     if not pngs:
         raise ValueError("input folder contains no PNG files")
