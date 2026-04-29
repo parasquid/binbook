@@ -16,7 +16,7 @@ from .constants import (
     SourceType,
 )
 from .fonts import FontInfo, get_font
-from .images import png_to_gray2_packed
+from .images import png_to_packed
 from .profiles import DisplayProfile, get_profile
 from .rle import encode_packbits
 from .strings import StringTableBuilder
@@ -69,15 +69,20 @@ class NavEntry:
     level: int = 0
 
 
-def encode_png_folder(input_dir: Path, output: Path, profile_name: str = "xteink-x4-portrait") -> None:
-    profile = get_profile(profile_name)
+def encode_png_folder(
+    input_dir: Path,
+    output: Path,
+    profile_name: str = "xteink-x4-portrait",
+    storage_pixel_format: str | PixelFormat | None = None,
+) -> None:
+    profile = get_profile(profile_name, storage_pixel_format)
     pngs = sorted(p for p in input_dir.iterdir() if p.suffix.lower() == ".png")
     if not pngs:
         raise ValueError("input folder contains no PNG files")
 
     pages: list[EncodedPage] = []
     for path in pngs:
-        packed = png_to_gray2_packed(path, profile)
+        packed = png_to_packed(path, profile)
         compressed = encode_packbits(packed)
         pages.append(EncodedPage(compressed, len(packed), crc32(compressed)))
 
@@ -127,7 +132,7 @@ def build_binbook(
         (SectionId.RENDITION_IDENTITY, _rendition_identity(refs["compiler"], refs["version"]), 0, 0),
         (SectionId.FONT_POLICY, _font_policy(font_info, refs["font_name"], refs["font_path"], refs["renderer"]), 0, 0),
         (SectionId.TYPOGRAPHY_POLICY, _typography_policy(character_spacing_milli_em), 0, 0),
-        (SectionId.IMAGE_POLICY, _image_policy(), 0, 0),
+        (SectionId.IMAGE_POLICY, _image_policy(profile), 0, 0),
         (SectionId.COMPRESSION_POLICY, _compression_policy(), 0, 0),
         (SectionId.CHROME_POLICY, _chrome_policy(), 0, 0),
     ]
@@ -183,7 +188,7 @@ def _page_index(pages: list[EncodedPage], profile: DisplayProfile) -> bytes:
             PageIndexEntry(
                 page_number=index,
                 page_kind=page.page_kind,
-                pixel_format=PixelFormat.GRAY2_PACKED,
+                pixel_format=profile.storage_pixel_format,
                 compression_method=CompressionMethod.RLE_PACKBITS,
                 relative_blob_offset=relative,
                 compressed_size=len(page.compressed),
@@ -231,17 +236,17 @@ def _display_profile(profile: DisplayProfile, refs: dict[str, StringRef]) -> byt
                 profile.logical_height,
                 profile.physical_width,
                 profile.physical_height,
-                1,
+                profile.logical_orientation,
+                profile.logical_to_physical_rotation,
+                profile.scan_order_hint,
+                profile.supported_storage_pixel_format_flags,
+                profile.supported_storage_pixel_format_flags,
+                profile.storage_pixel_format,
                 0,
+                profile.grayscale_levels,
+                profile.grayscale_levels,
+                profile.framebuffer_bits_per_pixel,
                 1,
-                PixelFormatFlag.GRAY2_PACKED,
-                PixelFormatFlag.GRAY2_PACKED,
-                PixelFormat.GRAY2_PACKED,
-                0,
-                4,
-                4,
-                2,
-                3,
                 0,
             ),
             bytes(32),
@@ -284,13 +289,13 @@ def _reader_requirements(profile: DisplayProfile) -> bytes:
         feature_flags,
         required_features,
         profile.storage_pixel_format_flag,
-        4,
+        profile.grayscale_levels,
         1,
         1 << CompressionMethod.RLE_PACKBITS,
         profile.logical_width,
         profile.logical_height,
-        96000,
-        96000 * 2,
+        (profile.logical_width * profile.logical_height * profile.framebuffer_bits_per_pixel + 7) // 8,
+        ((profile.logical_width * profile.logical_height * profile.framebuffer_bits_per_pixel + 7) // 8) * 2,
         bytes(36),
     )
 
@@ -355,8 +360,26 @@ def _typography_policy(character_spacing_milli_em: int = 0) -> bytes:
     )
 
 
-def _image_policy() -> bytes:
-    return struct.pack("<HHHHHHHHHHHHI32s32s", 1, PixelFormat.GRAY2_PACKED, 1, 1, 1, 3, 3, 1000, 0, 0, 0, 0, 0, bytes(32), bytes(32))
+def _image_policy(profile: DisplayProfile) -> bytes:
+    white_value = profile.grayscale_levels - 1
+    return struct.pack(
+        "<HHHHHHHHHHHHI32s32s",
+        1,
+        profile.storage_pixel_format,
+        1,
+        1,
+        1,
+        1,
+        white_value,
+        1000,
+        0,
+        0,
+        0,
+        0,
+        0,
+        bytes(32),
+        bytes(32),
+    )
 
 
 def _compression_policy() -> bytes:

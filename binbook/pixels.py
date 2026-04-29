@@ -73,6 +73,12 @@ def unpack_gray1(data: bytes, width: int, height: int) -> list[int]:
     return pixels
 
 
+def gray1_to_luma(value: int) -> int:
+    if value not in (0, 1):
+        raise ValueError("GRAY1 pixel values must be 0 or 1")
+    return 255 if value else 0
+
+
 def pack_gray4(pixels: list[int], width: int, height: int) -> bytes:
     _expect_pixel_count(pixels, width, height)
     out = bytearray()

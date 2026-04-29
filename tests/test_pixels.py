@@ -1,6 +1,25 @@
 import pytest
 
-from binbook.pixels import pack_gray2, unpack_gray2, xteink_xth_value
+from binbook.pixels import gray1_to_luma, pack_gray1, pack_gray2, unpack_gray1, unpack_gray2, xteink_xth_value
+
+
+def test_gray1_packs_leftmost_pixel_in_highest_bits():
+    packed = pack_gray1([0, 1, 1, 0, 1, 0, 0, 1], width=8, height=1)
+
+    assert packed == bytes([0b01101001])
+    assert unpack_gray1(packed, width=8, height=1) == [0, 1, 1, 0, 1, 0, 0, 1]
+
+
+def test_gray1_zero_fills_unused_row_bits():
+    packed = pack_gray1([1, 0, 1], width=3, height=1)
+
+    assert packed == bytes([0b10100000])
+    assert unpack_gray1(packed, width=3, height=1) == [1, 0, 1]
+
+
+def test_gray1_canonical_luma_mapping_is_black_white():
+    assert gray1_to_luma(0) == 0
+    assert gray1_to_luma(1) == 255
 
 
 def test_gray2_packs_leftmost_pixel_in_highest_bits():

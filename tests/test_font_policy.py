@@ -9,7 +9,7 @@ import zipfile
 from PIL import Image
 
 from binbook.cli import main
-from binbook.constants import SectionId
+from binbook.constants import PixelFormat, SectionId
 from binbook.fonts import get_font
 from binbook.reader import BinBookReader
 from binbook.structs import StringRef
@@ -39,6 +39,8 @@ def test_encode_records_selected_font_policy(tmp_path: Path, capsys):
     assert font_name == "Literata"
     assert font_path == selected.stable_path
     assert renderer_name == "Pillow"
+    assert {page.pixel_format for page in reader.pages} == {PixelFormat.GRAY2_PACKED}
+    assert {page.uncompressed_size for page in reader.pages} == {96_000}
 
     assert main(["inspect", str(output), "--validate", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -72,7 +74,7 @@ def test_sans_serif_records_default_character_spacing(tmp_path: Path):
 
     character_spacing_milli_em = struct.unpack_from("<i", typography_policy, 20)[0]
 
-    assert character_spacing_milli_em == -30
+    assert character_spacing_milli_em == get_font("sans-serif").default_character_spacing_milli_em
 
 
 def test_encode_rejects_unknown_font_family(tmp_path: Path):
