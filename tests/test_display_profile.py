@@ -3,7 +3,7 @@ from __future__ import annotations
 import struct
 
 from binbook.constants import PixelFormat, PixelFormatFlag, SectionId
-from binbook.profiles import XTEINK_X4_PORTRAIT
+from binbook.profiles import XTEINK_X4_PORTRAIT, get_profile
 from binbook.reader import BinBookReader
 from binbook.rle import encode_packbits
 from binbook.writer import EncodedPage, build_binbook
@@ -32,3 +32,20 @@ def test_x4_profile_metadata_is_gray2_portrait_with_explicit_rotation(tmp_path):
     assert struct.unpack_from("<H", requirements, 20)[0] == 4
     assert struct.unpack_from("<II", requirements, 32) == (96_000, 192_000)
     assert struct.unpack_from("<H", image_policy, 2)[0] == PixelFormat.GRAY2_PACKED
+
+
+def test_profile_resolve_uses_default_storage_pixel_format():
+    resolved = get_profile("xteink-x4-portrait").resolve()
+
+    assert resolved.storage_pixel_format == PixelFormat.GRAY2_PACKED
+    assert resolved.grayscale_levels == 4
+    assert resolved.framebuffer_bits_per_pixel == 2
+
+
+def test_profile_resolve_allows_supported_storage_pixel_format_override():
+    resolved = get_profile("xteink-x4-portrait").resolve("gray1")
+
+    assert resolved.storage_pixel_format == PixelFormat.GRAY1_PACKED
+    assert resolved.storage_pixel_format_flag == PixelFormatFlag.GRAY1_PACKED
+    assert resolved.grayscale_levels == 2
+    assert resolved.framebuffer_bits_per_pixel == 1

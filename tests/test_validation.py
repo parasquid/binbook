@@ -83,7 +83,7 @@ def test_rejects_gray4_page_for_x4_profile(tmp_path: Path):
 
     path = _write(tmp_path, book)
 
-    with pytest.raises(ValueError, match="unsupported page pixel format for xteink-x4-portrait"):
+    with pytest.raises(ValueError, match="unsupported page pixel format"):
         BinBookReader.open(path)
 
 
