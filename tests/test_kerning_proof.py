@@ -34,6 +34,7 @@ def test_candidate_pairs_include_research_seeds_and_existing_overrides():
     assert ("r", "y") in pairs
     assert ("Y", "o") in pairs
     assert ("y", "o") in pairs
+    assert ("o", "j") in pairs
 
 
 def test_candidate_values_include_current_value_outside_default_set():
