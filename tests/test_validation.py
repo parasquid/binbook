@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from binbook.constants import SectionId
+from binbook.constants import PixelFormat, SectionId
 from binbook.profiles import XTEINK_X4_PORTRAIT
 from binbook.reader import BinBookReader
 from binbook.rle import encode_packbits
@@ -72,6 +72,18 @@ def test_rejects_page_data_offset_before_metadata_end(tmp_path: Path):
     path = _write(tmp_path, book)
 
     with pytest.raises(ValueError, match="page_data_offset is before end of metadata"):
+        BinBookReader.open(path)
+
+
+def test_rejects_gray4_page_for_x4_profile(tmp_path: Path):
+    book = bytearray(_book_bytes())
+    page_index = _section(book, SectionId.PAGE_INDEX)
+    struct.pack_into("<H", book, page_index.offset + 6, PixelFormat.GRAY4_PACKED)
+    _patch_section_crc(book, SectionId.PAGE_INDEX, 0)
+
+    path = _write(tmp_path, book)
+
+    with pytest.raises(ValueError, match="unsupported page pixel format for xteink-x4-portrait"):
         BinBookReader.open(path)
 
 

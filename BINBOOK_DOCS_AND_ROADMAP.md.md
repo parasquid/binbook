@@ -803,3 +803,6 @@ The reader owns:
     - device-specific display conversion
     - UI/chrome rendering
     - display output
+# Historical Roadmap
+
+> This roadmap reflects the original proof-of-concept direction and is no longer authoritative for BinBook 0.1. Use `BINBOOK_FORMAT_SPEC.md` for the current format and `AGENTS.md` for current implementation guidance.

@@ -1,5 +1,7 @@
 # Codex Prompt: BinBook Python POC Encoder and Decoder
 
+> Historical note: this prompt describes the original proof-of-concept direction and is no longer authoritative for BinBook 0.1. Use `BINBOOK_FORMAT_SPEC.md` for the current format and `AGENTS.md` for current implementation guidance.
+
 You are implementing a Python proof of concept for BinBook, a universal compiled raster-book format for low-RAM e-ink/display devices.
 
 Read this whole prompt before coding. Build the project incrementally, with tests where practical.

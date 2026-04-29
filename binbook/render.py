@@ -11,14 +11,15 @@ from PIL import Image, ImageDraw, ImageFont
 from .checksums import crc32
 from .constants import PageKind, SourceType, UINT32_MAX
 from .epub import EpubBook, read_epub
-from .fonts import FontInfo, get_font
-from .images import image_bytes_to_gray2_packed, pil_image_to_gray2_packed
+from .fonts import FontInfo, PairKerningTable, get_font
+from .images import image_bytes_to_packed, pil_image_to_packed
 from .profiles import DisplayProfile, get_profile
 from .rle import encode_packbits
 from .writer import BookInfo, EncodedPage, NavEntry, SourceInfo, build_binbook
 
 DEFAULT_FONT = get_font("literata")
 DEFAULT_FONT_PATH = DEFAULT_FONT.path
+TEXT_FEATURES = ["kern", "-liga"]
 
 
 @dataclass(frozen=True)
@@ -34,8 +35,9 @@ def encode_epub(
     output: Path,
     profile_name: str = "xteink-x4-portrait",
     font_family: str = "literata",
+    storage_pixel_format: str | None = None,
 ) -> None:
-    profile = get_profile(profile_name)
+    profile = get_profile(profile_name, storage_pixel_format)
     font = get_font(font_family)
     book = read_epub(input_epub)
     pages, spine_first_page = _compile_pages(book, profile, font)
@@ -77,7 +79,7 @@ def _compile_pages(book: EpubBook, profile: DisplayProfile, font: FontInfo) -> t
                     pages.extend(_text_pages(flow.value, profile, item.index, font))
                 elif flow.kind == "image":
                     image_path = _resolve_image_path(flow.source_full_path, flow.value)
-                    packed = image_bytes_to_gray2_packed(archive.read(image_path), profile)
+                    packed = image_bytes_to_packed(archive.read(image_path), profile)
                     pages.append(_encoded_page(packed, PageKind.IMAGE, item.index))
     if not pages:
         pages.append(_encoded_page(_render_text_to_packed("(empty book)", profile, font), PageKind.TEXT, UINT32_MAX))
@@ -116,16 +118,17 @@ def _render_text_to_packed(text: str, profile: DisplayProfile, font_info: FontIn
     draw = ImageDraw.Draw(image)
     font = _font(24 * supersample_factor, font_info)  # Scale font size
     character_spacing_milli_em = font_info.default_character_spacing_milli_em
+    pair_kerning_milli_em = font_info.pair_kerning_milli_em
     x = 24 * supersample_factor
     y = 24 * supersample_factor
     right = supersampled_width - (24 * supersample_factor)
     line_height = 32 * supersample_factor
     
     for paragraph in text.splitlines() or [text]:
-        for line in _wrap_text_to_width(paragraph, draw, font, right - x, character_spacing_milli_em) or [""]:
+        for line in _wrap_text_to_width(paragraph, draw, font, right - x, character_spacing_milli_em, pair_kerning_milli_em) or [""]:
             if y + line_height > supersampled_height - (24 * supersample_factor):
                 break
-            _draw_text(draw, (x, y), line, font, character_spacing_milli_em, fill=0)
+            _draw_text(draw, (x, y), line, font, character_spacing_milli_em, fill=0, pair_kerning_milli_em=pair_kerning_milli_em)
             y += line_height
         y += 8 * supersample_factor
     
@@ -134,7 +137,7 @@ def _render_text_to_packed(text: str, profile: DisplayProfile, font_info: FontIn
         (profile.logical_width, profile.logical_height), 
         resample=Image.Resampling.LANCZOS
     )
-    return pil_image_to_gray2_packed(downsampled_image, profile)
+    return pil_image_to_packed(downsampled_image, profile)
 
 
 def _wrap_text_to_width(
@@ -143,15 +146,16 @@ def _wrap_text_to_width(
     font: ImageFont.ImageFont,
     max_width: int,
     character_spacing_milli_em: int = 0,
+    pair_kerning_milli_em: PairKerningTable | None = None,
 ) -> list[str]:
     words = text.split()
     lines: list[str] = []
     current = ""
     for word in words:
-        candidates = _split_word_to_width(word, draw, font, max_width, character_spacing_milli_em)
+        candidates = _split_word_to_width(word, draw, font, max_width, character_spacing_milli_em, pair_kerning_milli_em)
         for candidate in candidates:
             proposed = candidate if not current else f"{current} {candidate}"
-            if _text_width(draw, proposed, font, character_spacing_milli_em) <= max_width:
+            if _text_width(draw, proposed, font, character_spacing_milli_em, pair_kerning_milli_em) <= max_width:
                 current = proposed
             else:
                 if current:
@@ -168,14 +172,15 @@ def _split_word_to_width(
     font: ImageFont.ImageFont,
     max_width: int,
     character_spacing_milli_em: int = 0,
+    pair_kerning_milli_em: PairKerningTable | None = None,
 ) -> list[str]:
-    if _text_width(draw, word, font, character_spacing_milli_em) <= max_width:
+    if _text_width(draw, word, font, character_spacing_milli_em, pair_kerning_milli_em) <= max_width:
         return [word]
     parts: list[str] = []
     current = ""
     for char in word:
         proposed = current + char
-        if current and _text_width(draw, proposed, font, character_spacing_milli_em) > max_width:
+        if current and _text_width(draw, proposed, font, character_spacing_milli_em, pair_kerning_milli_em) > max_width:
             parts.append(current)
             current = char
         else:
@@ -190,20 +195,37 @@ def _text_width(
     text: str,
     font: ImageFont.ImageFont,
     character_spacing_milli_em: int = 0,
+    pair_kerning_milli_em: PairKerningTable | None = None,
 ) -> int:
     if not text:
         return 0
     if character_spacing_milli_em == 0:
-        bbox = draw.textbbox((0, 0), text, font=font)
-        return bbox[2] - bbox[0]
+        return int(round(draw.textlength(text, font=font, features=TEXT_FEATURES)))
+
     spacing_px = _character_spacing_px(font, character_spacing_milli_em)
     width = 0.0
     for index, character in enumerate(text):
-        bbox = draw.textbbox((0, 0), character, font=font)
-        width += bbox[2] - bbox[0]
+        width += draw.textlength(character, font=font, features=TEXT_FEATURES)
         if index != len(text) - 1:
-            width += spacing_px
+            width += spacing_px + _pair_kerning_px(font, text[index], text[index + 1], pair_kerning_milli_em)
     return max(0, int(round(width)))
+
+
+def _character_spacing_px(font: ImageFont.ImageFont, character_spacing_milli_em: int) -> float:
+    size = getattr(font, "size", 24)
+    return size * (character_spacing_milli_em / 1000)
+
+
+def _pair_kerning_px(
+    font: ImageFont.ImageFont,
+    left: str,
+    right: str,
+    pair_kerning_milli_em: PairKerningTable | None,
+) -> float:
+    if not pair_kerning_milli_em:
+        return 0.0
+    size = getattr(font, "size", 24)
+    return size * (pair_kerning_milli_em.get((left, right), 0) / 1000)
 
 
 def _draw_text(
@@ -214,35 +236,30 @@ def _draw_text(
     character_spacing_milli_em: int,
     *,
     fill: int,
+    pair_kerning_milli_em: PairKerningTable | None = None,
 ) -> None:
     if character_spacing_milli_em == 0:
-        draw.text(xy, text, fill=fill, font=font)
+        draw.text(xy, text, fill=fill, font=font, features=TEXT_FEATURES)
         return
     x, y = xy
     spacing_px = _character_spacing_px(font, character_spacing_milli_em)
-    for character in text:
-        draw.text((x, y), character, fill=fill, font=font)
-        bbox = draw.textbbox((0, 0), character, font=font)
-        x += (bbox[2] - bbox[0]) + spacing_px
-
-
-def _character_spacing_px(font: ImageFont.ImageFont, character_spacing_milli_em: int) -> float:
-    size = getattr(font, "size", 24)
-    return size * (character_spacing_milli_em / 1000)
+    for index, character in enumerate(text):
+        draw.text((x, y), character, fill=fill, font=font, features=TEXT_FEATURES)
+        x += draw.textlength(character, font=font, features=TEXT_FEATURES)
+        if index != len(text) - 1:
+            x += spacing_px + _pair_kerning_px(font, character, text[index + 1], pair_kerning_milli_em)
 
 
 def _font(size: int, font_info: FontInfo = DEFAULT_FONT) -> ImageFont.ImageFont:
-    for path in [
-        font_info.path,
-        Path("/System/Library/Fonts/Supplemental/Times New Roman.ttf"),
-        Path("/System/Library/Fonts/Supplemental/Georgia.ttf"),
-        Path("/Library/Fonts/Georgia.ttf"),
-    ]:
-        try:
-            return ImageFont.truetype(path, size)
-        except OSError:
-            pass
-    return ImageFont.load_default()
+    # Try the specified font path first
+    try:
+        return ImageFont.truetype(font_info.path, size)
+    except OSError as e:
+        raise OSError(
+            f"Failed to load font '{font_info.display_name}' from {font_info.path}. "
+            f"Original error: {e}. "
+            f"Make sure the font file exists and is a valid font file."
+        ) from e
 
 
 def _encoded_page(packed: bytes, kind: int, spine_index: int) -> EncodedPage:

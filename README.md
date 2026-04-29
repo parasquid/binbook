@@ -1,8 +1,8 @@
-# BinBook POC
+# BinBook
 
-Python proof of concept for the BinBook compiled raster-book format.
+Python reference implementation for the BinBook compiled raster-book format.
 
-The current POC supports:
+The current implementation supports:
 
 - encoding a basic EPUB into `.binbook`
 - encoding a folder of rendered PNG pages into `.binbook`
@@ -10,7 +10,7 @@ The current POC supports:
 - inspecting the binary container structure
 - viewing a `.binbook` in a Pygame desktop simulation viewer
 
-The first supported profile is `xteink-x4-portrait`, stored as canonical row-major `GRAY2_PACKED` pages at `480x800`.
+The first supported profile is `xteink-x4-portrait`, stored by default as canonical row-major `GRAY2_PACKED` pages at logical `480x800`, with physical panel metadata `800x480` and logical-to-physical rotation `90` degrees clockwise. `GRAY1_PACKED` output is available as an explicit fast/lower-quality option.
 The default bundled reading font is Literata, licensed under the SIL Open Font License.
 
 ## Development
@@ -27,6 +27,7 @@ Run the CLI through `uv`:
 ```bash
 uv run binbook encode book.epub -o book.binbook --font-family sans-serif
 uv run binbook encode-png-folder ./pages -o test.binbook
+uv run binbook encode-png-folder ./pages -o test-gray1.binbook --pixel-format gray1
 uv run binbook inspect test.binbook --validate
 uv run binbook inspect test.binbook --validate --json
 uv run binbook inspect test.binbook --validate --strict

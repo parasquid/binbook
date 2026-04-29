@@ -5,7 +5,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from .pixels import gray2_to_luma, unpack_gray2
+from .constants import PixelFormat
+from .pixels import gray1_to_luma, gray2_to_luma, unpack_gray1, unpack_gray2
 from .reader import BinBookReader
 
 
@@ -43,9 +44,16 @@ def render_page_image(
     debug_content_box: bool = False,
 ) -> Image.Image:
     packed, page = reader.decode_page_bytes(page_number)
-    pixels = unpack_gray2(packed, page.stored_width, page.stored_height)
+    if page.pixel_format == PixelFormat.GRAY1_PACKED:
+        pixels = unpack_gray1(packed, page.stored_width, page.stored_height)
+        lumas = [gray1_to_luma(value) for value in pixels]
+    elif page.pixel_format == PixelFormat.GRAY2_PACKED:
+        pixels = unpack_gray2(packed, page.stored_width, page.stored_height)
+        lumas = [gray2_to_luma(value) for value in pixels]
+    else:
+        raise ValueError(f"unsupported page pixel format: {page.pixel_format}")
     image = Image.new("RGB", (page.stored_width, page.stored_height))
-    image.putdata([(gray2_to_luma(value),) * 3 for value in pixels])
+    image.putdata([(value,) * 3 for value in lumas])
     draw = ImageDraw.Draw(image)
     if debug_content_box:
         draw.rectangle((page.placement_x, page.placement_y, page.stored_width - 1, page.stored_height - 1), outline=(255, 0, 0), width=2)

@@ -27,6 +27,7 @@ binbook = [
   "assets/fonts/Literata/OFL.txt",
   "assets/fonts/OpenDyslexic/OpenDyslexic-Regular.otf",
   "assets/fonts/OpenDyslexic/OFL.txt",
+  "font_kerning/*.json",
 ]
 
 [tool.pytest.ini_options]

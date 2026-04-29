@@ -11,9 +11,10 @@ from .constants import (
     CompressionMethod,
     PageKind,
     PixelFormat,
+    PixelFormatFlag,
     SectionId,
 )
-from .images import gray2_packed_to_png
+from .images import packed_to_png
 from .rle import decode_packbits
 from .structs import (
     HEADER_SIZE,
@@ -27,7 +28,7 @@ from .structs import (
 )
 
 SUPPORTED_READER_FEATURES = (1 << 0) | (1 << 2) | (1 << 3) | (1 << 4)
-SUPPORTED_STORAGE_PIXEL_FORMATS = int(PixelFormat.GRAY2_PACKED)
+SUPPORTED_STORAGE_PIXEL_FORMATS = int(PixelFormatFlag.GRAY1_PACKED | PixelFormatFlag.GRAY2_PACKED)
 SUPPORTED_COMPRESSION_METHOD_FLAGS = 1 << int(CompressionMethod.RLE_PACKBITS)
 DISPLAY_PROFILE_STRING_REF_OFFSETS = (0, 8, 16)
 SOURCE_IDENTITY_STRING_REF_OFFSETS = (60, 68)
@@ -89,13 +90,20 @@ class BinBookReader:
         self._validate_reader_requirements()
         self._validate_display_and_layout_profiles()
         self._validate_string_refs()
+        required_storage_formats = struct.unpack_from("<I", self._section_data(SectionId.READER_REQUIREMENTS), 16)[0]
         used: list[tuple[int, int]] = []
         previous_progress = 0
         for page in self.pages:
             if page.page_kind == PageKind.MIXED_RESERVED:
                 raise ValueError("MIXED_RESERVED pages are unsupported in v0.1")
-            if page.pixel_format != PixelFormat.GRAY2_PACKED:
-                raise ValueError("xteink-x4-portrait requires GRAY2_PACKED pages")
+            if page.pixel_format == PixelFormat.GRAY1_PACKED:
+                page_format_flag = int(PixelFormatFlag.GRAY1_PACKED)
+            elif page.pixel_format == PixelFormat.GRAY2_PACKED:
+                page_format_flag = int(PixelFormatFlag.GRAY2_PACKED)
+            else:
+                raise ValueError("unsupported page pixel format for xteink-x4-portrait")
+            if not required_storage_formats & page_format_flag:
+                raise ValueError("page pixel format does not match reader requirements")
             if page.compression_method != CompressionMethod.RLE_PACKBITS:
                 raise ValueError("unsupported page compression method")
             start = page.relative_blob_offset
@@ -125,7 +133,7 @@ class BinBookReader:
             raise ValueError(f"unsupported required reader features: 0x{unsupported_features:x}")
         if not required_storage_formats & SUPPORTED_STORAGE_PIXEL_FORMATS:
             raise ValueError("unsupported required storage pixel formats")
-        if required_grayscale_levels not in (0, 4):
+        if required_grayscale_levels not in (0, 2, 4):
             raise ValueError("unsupported required output grayscale levels")
         if not required_compression_methods & SUPPORTED_COMPRESSION_METHOD_FLAGS:
             raise ValueError("unsupported required compression methods")
@@ -163,10 +171,10 @@ class BinBookReader:
         ) = layout_values
         if (logical_width, logical_height) != (480, 800):
             errors.append("unsupported display profile dimensions")
-        if not supported_formats & int(PixelFormat.GRAY2_PACKED):
+        if not supported_formats & int(PixelFormatFlag.GRAY2_PACKED):
             errors.append("display profile does not support GRAY2_PACKED")
-        if native_levels != 4:
-            errors.append("display profile must use 4 grayscale levels for xteink-x4-portrait")
+        if native_levels not in (2, 4):
+            errors.append("display profile must use 2 or 4 grayscale levels for xteink-x4-portrait")
         if (full_width, full_height) != (logical_width, logical_height):
             errors.append("LayoutProfile full page dimensions do not match DisplayProfile")
         expected_x = margin_left
@@ -220,7 +228,7 @@ class BinBookReader:
 
     def decode_page_to_png(self, page_number: int, output: Path | str) -> None:
         unpacked, page = self.decode_page_bytes(page_number)
-        gray2_packed_to_png(unpacked, page.stored_width, page.stored_height, Path(output))
+        packed_to_png(unpacked, PixelFormat(page.pixel_format), page.stored_width, page.stored_height, Path(output))
 
 
 def _read_sections(data: bytes, header: BinBookHeader) -> dict[SectionId, SectionEntry]:
