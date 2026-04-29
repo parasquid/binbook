@@ -37,7 +37,7 @@ def encode_epub(
     font_family: str = "literata",
     storage_pixel_format: str | None = None,
 ) -> None:
-    profile = get_profile(profile_name, storage_pixel_format)
+    profile = get_profile(profile_name).resolve(storage_pixel_format)
     font = get_font(font_family)
     book = read_epub(input_epub)
     pages, spine_first_page = _compile_pages(book, profile, font)

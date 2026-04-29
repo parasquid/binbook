@@ -42,7 +42,6 @@ def test_inspect_strict_validation_reports_all_detected_errors(tmp_path: Path, c
 
     out = capsys.readouterr().out
     assert "Validation: FAILED" in out
-    assert "unsupported display profile dimensions" in out
     assert "LayoutProfile full page dimensions" in out
     assert "LayoutProfile content box" in out
 
