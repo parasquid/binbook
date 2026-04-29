@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 import html
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -93,8 +94,18 @@ def candidate_values(current_value: int | None) -> list[int]:
     return values
 
 
-def generate_kerning_proof(font_family: str, output_dir: Path, *, font_size: int = 72) -> KerningProofResult:
+def generate_kerning_proof(
+    font_family: str,
+    output_dir: Path,
+    *,
+    font_size: int = 72,
+    static: bool = False,
+    pair_kerning_milli_em: dict[tuple[str, str], int] | None = None,
+) -> KerningProofResult:
+    _log(f"Generating kerning proof for {font_family} at {output_dir}")
     font_info = get_font(font_family)
+    if pair_kerning_milli_em is not None:
+        font_info = replace(font_info, pair_kerning_milli_em=pair_kerning_milli_em)
     output_dir.mkdir(parents=True, exist_ok=True)
     assets_dir = output_dir / "assets"
     assets_dir.mkdir(exist_ok=True)
@@ -105,6 +116,7 @@ def generate_kerning_proof(font_family: str, output_dir: Path, *, font_size: int
         _build_pair_report(pair, font, font_info, controls, assets_dir)
         for pair in candidate_pairs(font_info)
     ]
+    holistic = _build_holistic_proof(font, font_info, assets_dir)
     report = {
         "font_family": font_info.family,
         "font_path": str(font_info.path),
@@ -119,15 +131,12 @@ def generate_kerning_proof(font_family: str, output_dir: Path, *, font_size: int
             "FontLab common examples including Av, LT, and To.",
         ],
         "controls": controls,
+        "holistic": holistic,
         "pairs": pairs,
     }
 
-    report_json = output_dir / "report.json"
-    report_json.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-    suggested_table = output_dir / "approved_table.py.txt"
-    suggested_table.write_text(_table_text(font_info.family, pairs, use_suggestions=True))
-    index_html = output_dir / "index.html"
-    index_html.write_text(_index_html(report))
+    report_json, suggested_table, index_html = _write_report_outputs(output_dir, font_info.family, report, static=static)
+    _log(f"Generated kerning proof with {len(pairs)} pairs at {index_html}")
     return KerningProofResult(
         index_html=index_html,
         report_json=report_json,
@@ -153,8 +162,10 @@ def save_canonical_kerning(
     get_font(font_family)
     canonical_pairs = _validate_canonical_pairs(pairs)
     path = output_path if output_path is not None else canonical_kerning_path(font_family)
+    _log(f"Saving canonical kerning JSON for {font_family}: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(canonical_pairs, indent=2, sort_keys=True) + "\n")
+    _log(f"Saved {len(canonical_pairs)} kerning pairs to {path}")
     return canonical_pairs
 
 
@@ -224,14 +235,12 @@ def _build_candidate(
     filename = f"{_pair_file_stem(pair_text)}_{value}.png"
     image.save(assets_dir / filename)
     contexts = _build_contexts(pair_text, value, font, font_info, assets_dir)
-    holistic_context = _build_holistic_context(pair_text, value, font, font_info, assets_dir)
     gap = _measure_pair_gap(pair, font, font_info, value)
     return {
         "value": value,
         "gap_px": gap,
         "image": f"assets/{filename}",
         "contexts": contexts,
-        "holistic_context": holistic_context,
     }
 
 
@@ -321,17 +330,23 @@ def _build_contexts(
     return contexts
 
 
-def _build_holistic_context(
-    pair_text: str,
-    value: int,
+def _build_holistic_proof(
     font: ImageFont.FreeTypeFont,
     font_info: FontInfo,
     assets_dir: Path,
-) -> dict[str, str]:
-    image = _render_context_image(HOLISTIC_CONTEXT, pair_text, value, font, font_info)
-    filename = f"{_pair_file_stem(pair_text)}_{value}_holistic.png"
+    *,
+    stale: bool = False,
+    stale_pairs: list[str] | None = None,
+) -> dict[str, Any]:
+    image = _render_paragraph_image(HOLISTIC_CONTEXT, font, font_info, dict(font_info.pair_kerning_milli_em))
+    filename = "holistic.png"
     image.save(assets_dir / filename)
-    return {"text": HOLISTIC_CONTEXT, "image": f"assets/{filename}"}
+    return {
+        "text": HOLISTIC_CONTEXT,
+        "image": f"assets/{filename}",
+        "stale": stale,
+        "stale_pairs": stale_pairs or [],
+    }
 
 
 def _context_texts(pair_text: str) -> tuple[str, ...]:
@@ -354,7 +369,6 @@ def _render_context_image(
     font_info: FontInfo,
     base_pair_kerning_milli_em: dict[tuple[str, str], int] | None = None,
 ) -> Image.Image:
-    context_font = _font(_context_font_size(font), font_info)
     pair_kerning = (
         dict(font_info.pair_kerning_milli_em)
         if base_pair_kerning_milli_em is None
@@ -362,9 +376,19 @@ def _render_context_image(
     )
     pair_kerning[(pair_text[0], pair_text[1])] = value
 
+    return _render_paragraph_image(text, font, font_info, pair_kerning)
+
+
+def _render_paragraph_image(
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    font_info: FontInfo,
+    pair_kerning_milli_em: dict[tuple[str, str], int],
+) -> Image.Image:
     width = 760
     x = 24
     y = 26
+    context_font = _font(_context_font_size(font), font_info)
     line_height = int(round(context_font.size * 1.35))
     measurement_image = Image.new("L", (width, 120), 255)
     measurement_draw = ImageDraw.Draw(measurement_image)
@@ -374,7 +398,7 @@ def _render_context_image(
         context_font,
         width - (x * 2),
         font_info.default_character_spacing_milli_em,
-        pair_kerning,
+        pair_kerning_milli_em,
     ) or [""]
 
     image = Image.new("L", (width, y * 2 + line_height * len(lines)), 255)
@@ -387,7 +411,7 @@ def _render_context_image(
             context_font,
             font_info.default_character_spacing_milli_em,
             fill=0,
-            pair_kerning_milli_em=pair_kerning,
+            pair_kerning_milli_em=pair_kerning_milli_em,
         )
     return image
 
@@ -425,6 +449,37 @@ def _response(status: HTTPStatus, body: object, content_type: str) -> KerningPro
         headers={"Content-Type": content_type},
         body=response_body,
     )
+
+
+def _write_report_outputs(
+    output_dir: Path,
+    font_family: str,
+    report: dict[str, Any],
+    *,
+    static: bool = False,
+) -> tuple[Path, Path, Path]:
+    report_json = output_dir / "report.json"
+    report_json.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    suggested_table = output_dir / "approved_table.py.txt"
+    suggested_table.write_text(_table_text(font_family, report["pairs"], use_suggestions=True))
+    index_html = output_dir / "index.html"
+    index_html.write_text(_index_html(report, static=static))
+    return report_json, suggested_table, index_html
+
+
+def _changed_pair_keys(previous: dict[str, int], saved: dict[str, int]) -> list[str]:
+    return sorted(pair for pair in set(previous) | set(saved) if previous.get(pair) != saved.get(pair))
+
+
+def _pair_table_from_serialized(pair_table: object) -> dict[tuple[str, str], int]:
+    table: dict[tuple[str, str], int] = {}
+    for pair, value in dict(pair_table).items():
+        if not isinstance(pair, str) or len(pair) != 2:
+            raise ValueError("kerning pair keys must be two-character strings")
+        if not isinstance(value, int):
+            raise ValueError("kerning pair values must be integers")
+        table[(pair[0], pair[1])] = value
+    return table
 
 
 class KerningProofRequestHandler(BaseHTTPRequestHandler):
@@ -500,6 +555,8 @@ class KerningProofRequestHandler(BaseHTTPRequestHandler):
     @classmethod
     def handle_post(cls, raw_path: str, body: bytes) -> KerningProofResponse:
         path = urlparse(raw_path).path
+        if path == "/api/holistic":
+            return cls._handle_holistic_post(body)
         if path != "/api/kerning":
             return _response(HTTPStatus.NOT_FOUND, {"error": "not found"}, "application/json")
         try:
@@ -511,14 +568,76 @@ class KerningProofRequestHandler(BaseHTTPRequestHandler):
             pairs = payload.get("pairs")
             if not isinstance(pairs, dict):
                 raise ValueError("pairs must be an object")
+            previous = dict(cls.report.get("existing_pair_kerning_milli_em", {}))
             saved = save_canonical_kerning(cls.font_family, pairs, cls.canonical_path)
+            changed_pairs = _changed_pair_keys(previous, saved)
+            if changed_pairs:
+                _log(f"Regenerating {len(changed_pairs)} changed pair proofs: {', '.join(changed_pairs)}")
+                cls._regenerate_pair_reports(saved, changed_pairs)
+                cls.report["holistic"] = {
+                    **cls.report["holistic"],
+                    "stale": True,
+                    "stale_pairs": changed_pairs,
+                }
+                _log(f"Holistic proof marked stale for {len(changed_pairs)} changed pairs")
+            else:
+                _log("No changed pair proofs to regenerate")
+            _write_report_outputs(cls.output_dir, cls.font_family, cls.report)
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             return _response(HTTPStatus.BAD_REQUEST, {"error": str(exc)}, "application/json")
         return _response(
             HTTPStatus.OK,
-            {"font_family": cls.font_family, "pairs": saved},
+            {
+                "font_family": cls.font_family,
+                "pairs": saved,
+                "regenerated_pairs": changed_pairs,
+                "holistic_stale": bool(changed_pairs),
+                "report": cls.report,
+            },
             "application/json",
         )
+
+    @classmethod
+    def _handle_holistic_post(cls, body: bytes) -> KerningProofResponse:
+        try:
+            payload = json.loads(body.decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("request body must be a JSON object")
+            if payload.get("font_family") != cls.font_family:
+                raise ValueError("font_family does not match this proof server")
+            pair_table = _pair_table_from_serialized(cls.report.get("existing_pair_kerning_milli_em", {}))
+            font_info = replace(get_font(cls.font_family), pair_kerning_milli_em=pair_table)
+            font = _font(int(cls.report.get("font_size_px", 72)), font_info)
+            assets_dir = cls.output_dir / "assets"
+            _log(f"Regenerating holistic proof for {cls.font_family}")
+            cls.report["holistic"] = _build_holistic_proof(font, font_info, assets_dir)
+            _write_report_outputs(cls.output_dir, cls.font_family, cls.report)
+            _log(f"Regenerated holistic proof for {cls.font_family}")
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            return _response(HTTPStatus.BAD_REQUEST, {"error": str(exc)}, "application/json")
+        return _response(
+            HTTPStatus.OK,
+            {"font_family": cls.font_family, "regenerated": "holistic", "report": cls.report},
+            "application/json",
+        )
+
+    @classmethod
+    def _regenerate_pair_reports(cls, saved: dict[str, int], changed_pairs: list[str]) -> None:
+        pair_table = _pair_table_from_serialized(saved)
+        font_info = replace(get_font(cls.font_family), pair_kerning_milli_em=pair_table)
+        font = _font(int(cls.report.get("font_size_px", 72)), font_info)
+        assets_dir = cls.output_dir / "assets"
+        existing_pairs = {entry["pair"]: entry for entry in cls.report["pairs"]}
+        controls = cls.report["controls"]
+        for pair_text in changed_pairs:
+            existing_pairs[pair_text] = _build_pair_report((pair_text[0], pair_text[1]), font, font_info, controls, assets_dir)
+        cls.report["pairs"] = [
+            existing_pairs.get(entry["pair"], entry)
+            for entry in cls.report["pairs"]
+        ]
+        existing_order = {entry["pair"] for entry in cls.report["pairs"]}
+        cls.report["pairs"].extend(existing_pairs[pair_text] for pair_text in changed_pairs if pair_text not in existing_order)
+        cls.report["existing_pair_kerning_milli_em"] = _serialize_pair_table(pair_table)
 
     @classmethod
     def _asset_response(cls, path: str) -> KerningProofResponse:
@@ -547,8 +666,73 @@ class KerningProofRequestHandler(BaseHTTPRequestHandler):
         return
 
 
-def _index_html(report: dict[str, Any]) -> str:
+def _index_html(report: dict[str, Any], *, static: bool = False) -> str:
     data = json.dumps(report, sort_keys=True).replace("</", "<\\/")
+    save_button = "" if static else '<button id="save">Save Canonical JSON</button>'
+    holistic_button = "" if static else '<button id="regenerate-holistic" hidden>Regenerate Holistic</button>'
+    static_note = (
+        '<span id="save-status">Static export: run without --static to save canonical JSON from the browser.</span>'
+        if static
+        else '<span id="save-status"></span>'
+    )
+    save_script = (
+        ""
+        if static
+        else """
+    document.getElementById('save').addEventListener('click', async () => {
+      const status = document.getElementById('save-status');
+      const save = document.getElementById('save');
+      const activePair = active.pair;
+      save.disabled = true;
+      status.textContent = 'Saving and regenerating changed pair proofs...';
+      try {
+        const response = await fetch('/api/kerning', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ font_family: report.font_family, pairs: approvedPairs() })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          status.textContent = `Save failed: ${payload.error ?? response.statusText}`;
+          return;
+        }
+        report = payload.report;
+        approvals = new Map(report.pairs.map(pair => [pair.pair, pair.current_value ?? pair.suggested_value]));
+        active = report.pairs.find(pair => pair.pair === activePair) ?? report.pairs[0];
+        assetVersion = Date.now();
+        render();
+        status.textContent = `Saved and regenerated proof. Regenerated ${{payload.regenerated_pairs.length}} changed pair proof(s). Holistic proof is stale.`;
+      } finally {
+        save.disabled = false;
+      }
+    });
+    document.getElementById('regenerate-holistic').addEventListener('click', async () => {
+      const status = document.getElementById('save-status');
+      const button = document.getElementById('regenerate-holistic');
+      button.disabled = true;
+      status.textContent = 'Regenerating holistic proof...';
+      try {
+        const response = await fetch('/api/holistic', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ font_family: report.font_family })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          status.textContent = `Holistic regeneration failed: ${payload.error ?? response.statusText}`;
+          return;
+        }
+        report = payload.report;
+        approvals = new Map(report.pairs.map(pair => [pair.pair, pair.current_value ?? pair.suggested_value]));
+        active = HOLISTIC_VIEW;
+        assetVersion = Date.now();
+        render();
+        status.textContent = 'Regenerated holistic proof.';
+      } finally {
+        button.disabled = false;
+      }
+    });"""
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -582,6 +766,7 @@ def _index_html(report: dict[str, Any]) -> str:
     .context-text {{ margin-top: 7px; color: #555d52; font-size: 13px; }}
     .context-heading {{ margin: 0 0 8px; font-size: 14px; color: #29311f; }}
     .badge {{ border-radius: 999px; background: #e7eadf; color: #3d4c2c; padding: 2px 7px; font-size: 11px; margin-left: 5px; }}
+    .status-stale {{ color: #8a4b00; font-weight: 650; }}
     textarea {{ width: 100%; min-height: 220px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }}
     .export-row {{ margin-top: 18px; }}
     @media (max-width: 760px) {{ main {{ grid-template-columns: 1fr; }} nav {{ border-right: 0; border-bottom: 1px solid #d2d2ca; max-height: 220px; }} }}
@@ -597,12 +782,13 @@ def _index_html(report: dict[str, Any]) -> str:
     <section>
       <h2 id="pair-title"></h2>
       <p id="pair-summary"></p>
-      <div class="toolbar">
+      <div id="toolbar" class="toolbar">
         <button id="approve">Approve Suggested</button>
         <button id="none">No Override</button>
         <label>Approved value <select id="approved-value"></select></label>
-        <button id="save">Save Canonical JSON</button>
-        <span id="save-status"></span>
+        {save_button}
+        {holistic_button}
+        {static_note}
       </div>
       <div id="candidates" class="candidate-grid"></div>
       <div id="holistic-context" class="candidate-contexts"></div>
@@ -611,13 +797,25 @@ def _index_html(report: dict[str, Any]) -> str:
   </main>
   <script id="report-data" type="application/json">{data}</script>
   <script>
-    const report = JSON.parse(document.getElementById('report-data').textContent);
-    const approvals = new Map(report.pairs.map(pair => [pair.pair, pair.current_value ?? pair.suggested_value]));
+    const HOLISTIC_VIEW = '__holistic__';
+    let report = JSON.parse(document.getElementById('report-data').textContent);
+    let approvals = new Map(report.pairs.map(pair => [pair.pair, pair.current_value ?? pair.suggested_value]));
+    let assetVersion = Date.now();
     let active = report.pairs[0];
+
+    function assetSrc(path) {{
+      return `${{path}}?v=${{assetVersion}}`;
+    }}
 
     function renderList() {{
       const list = document.getElementById('pair-list');
       list.innerHTML = '';
+      const holisticButton = document.createElement('button');
+      holisticButton.className = 'pair-button';
+      holisticButton.setAttribute('aria-current', active === HOLISTIC_VIEW ? 'true' : 'false');
+      holisticButton.innerHTML = `<span class="pair-text">Holistic</span><span class="pair-meta">${{report.holistic.stale ? 'stale' : 'fresh'}}</span>`;
+      holisticButton.addEventListener('click', () => {{ active = HOLISTIC_VIEW; render(); }});
+      list.appendChild(holisticButton);
       for (const pair of report.pairs) {{
         const button = document.createElement('button');
         button.className = 'pair-button';
@@ -631,6 +829,7 @@ def _index_html(report: dict[str, Any]) -> str:
     function renderCandidates() {{
       const container = document.getElementById('candidates');
       container.innerHTML = '';
+      if (active === HOLISTIC_VIEW) return;
       for (const candidate of active.candidates) {{
         const card = document.createElement('button');
         card.className = 'candidate' + (approvals.get(active.pair) === candidate.value ? ' selected' : '');
@@ -638,7 +837,7 @@ def _index_html(report: dict[str, Any]) -> str:
           candidate.value === active.suggested_value ? '<span class="badge">suggested</span>' : '',
           candidate.value === active.current_value ? '<span class="badge">current</span>' : ''
         ].join('');
-        card.innerHTML = `<img src="${{candidate.image}}" alt="${{active.pair}} at ${{candidate.value}} milli-em"><div class="candidate-info"><span>${{candidate.value}} milli-em ${{badges}}</span><span>gap ${{candidate.gap_px.toFixed(1)}}px</span></div>`;
+        card.innerHTML = `<img src="${{assetSrc(candidate.image)}}" alt="${{active.pair}} at ${{candidate.value}} milli-em"><div class="candidate-info"><span>${{candidate.value}} milli-em ${{badges}}</span><span>gap ${{candidate.gap_px.toFixed(1)}}px</span></div>`;
         card.addEventListener('click', () => {{ approvals.set(active.pair, candidate.value); render(); }});
         container.appendChild(card);
       }}
@@ -649,16 +848,20 @@ def _index_html(report: dict[str, Any]) -> str:
       const holistic = document.getElementById('holistic-context');
       container.innerHTML = '';
       holistic.innerHTML = '';
+      if (active === HOLISTIC_VIEW) {{
+        const card = document.createElement('div');
+        card.className = 'context-card';
+        const stale = report.holistic.stale ? `<p class="status-stale">Holistic proof is stale. Regenerate to review with latest saved kerning for ${{report.holistic.stale_pairs.join(', ')}}.</p>` : '';
+        card.innerHTML = `<h3 class="context-heading">Holistic paragraph</h3>${{stale}}<img src="${{assetSrc(report.holistic.image)}}" alt="${{report.holistic.text}}"><div class="context-text">${{report.holistic.text}}</div>`;
+        holistic.appendChild(card);
+        return;
+      }}
       const selectedValue = approvals.get(active.pair);
       const selected = active.candidates.find(candidate => candidate.value === selectedValue) ?? active.candidates[0];
-      const holisticCard = document.createElement('div');
-      holisticCard.className = 'context-card';
-      holisticCard.innerHTML = `<h3 class="context-heading">Holistic paragraph</h3><img src="${{selected.holistic_context.image}}" alt="${{selected.holistic_context.text}}"><div class="context-text">${{selected.holistic_context.text}}</div>`;
-      holistic.appendChild(holisticCard);
       for (const context of selected.contexts) {{
         const card = document.createElement('div');
         card.className = 'context-card';
-        card.innerHTML = `<img src="${{context.image}}" alt="${{context.text}}"><div class="context-text">${{context.text}}</div>`;
+        card.innerHTML = `<img src="${{assetSrc(context.image)}}" alt="${{context.text}}"><div class="context-text">${{context.text}}</div>`;
         container.appendChild(card);
       }}
     }}
@@ -676,6 +879,7 @@ def _index_html(report: dict[str, Any]) -> str:
     function renderSelect() {{
       const select = document.getElementById('approved-value');
       select.innerHTML = '<option value="">No override</option>';
+      if (active === HOLISTIC_VIEW) return;
       for (const value of active.candidate_values) {{
         const option = document.createElement('option');
         option.value = String(value);
@@ -688,8 +892,19 @@ def _index_html(report: dict[str, Any]) -> str:
 
     function render() {{
       renderList();
-      document.getElementById('pair-title').textContent = `${{active.pair}}`;
-      document.getElementById('pair-summary').textContent = `Control target ${{active.target_gap_px.toFixed(1)}}px, current ${{active.current_value ?? 'none'}}, suggested ${{active.suggested_value}}.`;
+      const pairControls = [document.getElementById('approve'), document.getElementById('none'), document.getElementById('approved-value')];
+      for (const control of pairControls) control.disabled = active === HOLISTIC_VIEW;
+      const save = document.getElementById('save');
+      if (save) save.hidden = active === HOLISTIC_VIEW;
+      const regenerateHolistic = document.getElementById('regenerate-holistic');
+      if (regenerateHolistic) regenerateHolistic.hidden = active !== HOLISTIC_VIEW || !report.holistic.stale;
+      if (active === HOLISTIC_VIEW) {{
+        document.getElementById('pair-title').textContent = 'Holistic proof';
+        document.getElementById('pair-summary').textContent = report.holistic.stale ? `Holistic proof is stale after changes to ${{report.holistic.stale_pairs.join(', ')}}.` : 'Holistic proof reflects the current saved kerning table.';
+      }} else {{
+        document.getElementById('pair-title').textContent = `${{active.pair}}`;
+        document.getElementById('pair-summary').textContent = `Control target ${{active.target_gap_px.toFixed(1)}}px, current ${{active.current_value ?? 'none'}}, suggested ${{active.suggested_value}}.`;
+      }}
       renderSelect();
       renderCandidates();
       renderContexts();
@@ -701,21 +916,7 @@ def _index_html(report: dict[str, Any]) -> str:
       approvals.set(active.pair, event.target.value === '' ? null : Number(event.target.value));
       render();
     }});
-    document.getElementById('save').addEventListener('click', async () => {{
-      const status = document.getElementById('save-status');
-      status.textContent = 'Saving...';
-      const response = await fetch('/api/kerning', {{
-        method: 'POST',
-        headers: {{ 'Content-Type': 'application/json' }},
-        body: JSON.stringify({{ font_family: report.font_family, pairs: approvedPairs() }})
-      }});
-      const payload = await response.json();
-      if (!response.ok) {{
-        status.textContent = `Save failed: ${{payload.error ?? response.statusText}}`;
-        return;
-      }}
-      status.textContent = 'Saved canonical JSON.';
-    }});
+    {save_script}
     render();
   </script>
 </body>
@@ -734,6 +935,11 @@ def _table_text(font_family: str, pairs: list[dict[str, Any]], *, use_suggestion
         lines.append(f"    ({pair['left']!r}, {pair['right']!r}): {value},")
     lines.append("}")
     return "\n".join(lines) + "\n"
+
+
+def _log(message: str) -> None:
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    print(f"[binbook kerning-proof {timestamp}] {message}", flush=True)
 
 
 def _dedupe_pairs(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:

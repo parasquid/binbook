@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 from types import MappingProxyType
@@ -75,9 +75,13 @@ FONTS = {
 def get_font(family: str) -> FontInfo:
     key = family.lower()
     try:
-        return FONTS[key]
+        font_info = FONTS[key]
     except KeyError as exc:
         raise ValueError(f"unsupported font family: {family}") from exc
+    return replace(
+        font_info,
+        pair_kerning_milli_em=load_pair_kerning_table(FONT_KERNING_DIR / f"{font_info.family}.json"),
+    )
 
 
 def available_font_families() -> list[str]:

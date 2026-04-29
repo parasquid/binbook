@@ -7,6 +7,7 @@ from pathlib import Path
 from binbook.cli import main
 from binbook.constants import SectionId
 from binbook.profiles import XTEINK_X4_PORTRAIT
+from binbook.reader import BinBookReader
 from binbook.rle import encode_packbits
 from binbook.structs import HEADER_SIZE, SECTION_ENTRY_SIZE, BinBookHeader, SectionEntry
 from binbook.writer import EncodedPage, build_binbook
@@ -44,6 +45,20 @@ def test_inspect_strict_validation_reports_all_detected_errors(tmp_path: Path, c
     assert "Validation: FAILED" in out
     assert "LayoutProfile full page dimensions" in out
     assert "LayoutProfile content box" in out
+
+
+def test_reader_open_can_skip_validation_for_inspection(tmp_path: Path):
+    book = bytearray(_book_bytes())
+    display = _section(book, SectionId.DISPLAY_PROFILE)
+    struct.pack_into("<HH", book, display.offset + 24, 0, 800)
+    _patch_section_crc(book, SectionId.DISPLAY_PROFILE, 0)
+    path = tmp_path / "invalid-but-readable.binbook"
+    path.write_bytes(book)
+
+    reader = BinBookReader.open(path, validate=False)
+
+    assert reader.header.page_data_length > 0
+    assert "display profile logical dimensions must be non-zero" in reader.profile_validation_errors()
 
 
 def _book_bytes() -> bytes:

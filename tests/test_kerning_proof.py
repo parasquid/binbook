@@ -114,9 +114,7 @@ def test_holistic_context_image_wraps_without_right_edge_clipping(tmp_path):
     generate_kerning_proof("opendyslexic", tmp_path)
 
     report = json.loads((tmp_path / "report.json").read_text())
-    pairs = {entry["pair"]: entry for entry in report["pairs"]}
-    candidate = pairs["Yo"]["candidates"][0]
-    image = Image.open(tmp_path / candidate["holistic_context"]["image"])
+    image = Image.open(tmp_path / report["holistic"]["image"])
 
     assert image.height > 138
     right_edge = image.crop((image.width - 2, 0, image.width, image.height))
@@ -132,18 +130,28 @@ def test_generated_html_displays_contextual_renders(tmp_path):
     assert "context.image" in html
 
 
-def test_report_includes_holistic_paragraph_renders_for_candidates(tmp_path):
+def test_static_html_does_not_offer_server_only_save_api(tmp_path):
+    generate_kerning_proof("opendyslexic", tmp_path, static=True)
+
+    html = (tmp_path / "index.html").read_text()
+
+    assert "fetch('/api/kerning'" not in html
+    assert "Save Canonical JSON" not in html
+    assert "Static export" in html
+
+
+def test_report_includes_separate_holistic_paragraph_proof(tmp_path):
     generate_kerning_proof("opendyslexic", tmp_path)
 
     report = json.loads((tmp_path / "report.json").read_text())
-    pairs = {entry["pair"]: entry for entry in report["pairs"]}
-    yo_candidate = pairs["Yo"]["candidates"][0]
 
-    assert "holistic_context" in yo_candidate
-    assert "Today" in yo_candidate["holistic_context"]["text"]
-    assert "your young" in yo_candidate["holistic_context"]["text"]
-    assert yo_candidate["holistic_context"]["image"].startswith("assets/")
-    assert (tmp_path / yo_candidate["holistic_context"]["image"]).exists()
+    assert "Today" in report["holistic"]["text"]
+    assert "your young" in report["holistic"]["text"]
+    assert report["holistic"]["image"].startswith("assets/")
+    assert report["holistic"]["stale"] is False
+    assert report["holistic"]["stale_pairs"] == []
+    assert (tmp_path / report["holistic"]["image"]).exists()
+    assert "holistic_context" not in report["pairs"][0]["candidates"][0]
 
 
 def test_literata_proof_generation_works_with_empty_pair_table(tmp_path):
@@ -209,7 +217,13 @@ def test_server_routes_report_assets_and_kerning_api(tmp_path):
     assert report.status == HTTPStatus.OK
     assert json.loads(report.body)["font_family"] == "opendyslexic"
     assert api.status == HTTPStatus.OK
-    assert json.loads(api.body)["pairs"] == {"Yo": -120, "yo": -60}
+    assert json.loads(api.body)["pairs"] == {
+        "AV": -160,
+        "Th": -160,
+        "To": -160,
+        "Yo": -120,
+        "yo": -60,
+    }
     assert asset.status == HTTPStatus.OK
     assert asset.headers["Content-Type"] == "image/png"
 
@@ -231,6 +245,96 @@ def test_server_save_api_writes_canonical_table(tmp_path):
 
     assert response.status == HTTPStatus.OK
     assert target.read_text() == '{\n  "Yo": -140\n}\n'
+
+
+def test_server_save_api_regenerates_changed_pairs_and_marks_holistic_stale(tmp_path):
+    proof = generate_kerning_proof("opendyslexic", tmp_path)
+    target = tmp_path / "opendyslexic.json"
+    handler = KerningProofRequestHandler.create_test_handler(
+        "opendyslexic",
+        tmp_path,
+        proof.report,
+        canonical_path=target,
+    )
+
+    response = handler.handle_post(
+        "/api/kerning",
+        json.dumps({"font_family": "opendyslexic", "pairs": {"Yo": -140, "AV": -100}}).encode(),
+    )
+    payload = json.loads(response.body)
+    regenerated_pairs = {pair["pair"]: pair for pair in payload["report"]["pairs"]}
+
+    assert response.status == HTTPStatus.OK
+    assert payload["regenerated_pairs"] == ["AV", "Th", "To", "Yo", "yo"]
+    assert payload["pairs"] == {"AV": -100, "Yo": -140}
+    assert payload["report"]["existing_pair_kerning_milli_em"] == {"AV": -100, "Yo": -140}
+    assert regenerated_pairs["Yo"]["current_value"] == -140
+    assert payload["report"]["holistic"]["stale"] is True
+    assert payload["report"]["holistic"]["stale_pairs"] == ["AV", "Th", "To", "Yo", "yo"]
+    assert handler.report["existing_pair_kerning_milli_em"] == {"AV": -100, "Yo": -140}
+
+
+def test_server_save_api_logs_save_and_regeneration_progress(tmp_path, capsys):
+    proof = generate_kerning_proof("opendyslexic", tmp_path)
+    target = tmp_path / "opendyslexic.json"
+    handler = KerningProofRequestHandler.create_test_handler(
+        "opendyslexic",
+        tmp_path,
+        proof.report,
+        canonical_path=target,
+    )
+    capsys.readouterr()
+
+    response = handler.handle_post(
+        "/api/kerning",
+        json.dumps({"font_family": "opendyslexic", "pairs": {"Yo": -140}}).encode(),
+    )
+    out = capsys.readouterr().out
+
+    assert response.status == HTTPStatus.OK
+    assert "Saving canonical kerning JSON" in out
+    assert "Regenerating 5 changed pair proofs" in out
+    assert "Holistic proof marked stale" in out
+
+
+def test_server_html_describes_save_regeneration_ux(tmp_path):
+    proof = generate_kerning_proof("opendyslexic", tmp_path)
+    handler = KerningProofRequestHandler.create_test_handler("opendyslexic", tmp_path, proof.report)
+
+    html = handler.handle_get("/").body.decode("utf-8")
+
+    assert "Saving and regenerating changed pair proofs..." in html
+    assert "Saved and regenerated proof." in html
+    assert "save.disabled = true" in html
+    assert "Holistic proof is stale" in html
+    assert "Regenerate Holistic" in html
+
+
+def test_server_holistic_api_regenerates_stale_holistic_proof(tmp_path):
+    proof = generate_kerning_proof("opendyslexic", tmp_path)
+    target = tmp_path / "opendyslexic.json"
+    handler = KerningProofRequestHandler.create_test_handler(
+        "opendyslexic",
+        tmp_path,
+        proof.report,
+        canonical_path=target,
+    )
+    handler.handle_post(
+        "/api/kerning",
+        json.dumps({"font_family": "opendyslexic", "pairs": {"Yo": -140}}).encode(),
+    )
+
+    response = handler.handle_post(
+        "/api/holistic",
+        json.dumps({"font_family": "opendyslexic"}).encode(),
+    )
+    payload = json.loads(response.body)
+
+    assert response.status == HTTPStatus.OK
+    assert payload["regenerated"] == "holistic"
+    assert payload["report"]["holistic"]["stale"] is False
+    assert payload["report"]["holistic"]["stale_pairs"] == []
+    assert handler.report["holistic"]["stale"] is False
 
 
 def test_server_save_api_rejects_path_traversal_font(tmp_path):

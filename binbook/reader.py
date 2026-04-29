@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import struct
 
 from .checksums import crc32
 from .constants import (
@@ -16,6 +15,12 @@ from .constants import (
 )
 from .images import packed_to_png
 from .rle import decode_packbits
+from .sections import (
+    SECTION_STRING_REF_OFFSETS,
+    DisplayProfileSection,
+    LayoutProfileSection,
+    ReaderRequirementsSection,
+)
 from .structs import (
     HEADER_SIZE,
     NAV_INDEX_ENTRY_SIZE,
@@ -30,12 +35,6 @@ from .structs import (
 SUPPORTED_READER_FEATURES = (1 << 0) | (1 << 2) | (1 << 3) | (1 << 4)
 SUPPORTED_STORAGE_PIXEL_FORMATS = int(PixelFormatFlag.GRAY1_PACKED | PixelFormatFlag.GRAY2_PACKED)
 SUPPORTED_COMPRESSION_METHOD_FLAGS = 1 << int(CompressionMethod.RLE_PACKBITS)
-DISPLAY_PROFILE_STRING_REF_OFFSETS = (0, 8, 16)
-SOURCE_IDENTITY_STRING_REF_OFFSETS = (60, 68)
-BOOK_METADATA_STRING_REF_OFFSETS = (0, 8, 16, 24, 32, 40)
-RENDITION_IDENTITY_STRING_REF_OFFSETS = (256, 264)
-FONT_POLICY_STRING_REF_OFFSETS = (36, 44, 52)
-TYPOGRAPHY_POLICY_STRING_REF_OFFSETS = (36,)
 
 
 @dataclass
@@ -47,14 +46,15 @@ class BinBookReader:
     pages: list[PageIndexEntry]
 
     @classmethod
-    def open(cls, path: Path | str) -> "BinBookReader":
+    def open(cls, path: Path | str, *, validate: bool = True) -> "BinBookReader":
         book_path = Path(path)
         data = book_path.read_bytes()
         header = BinBookHeader.unpack(data[:HEADER_SIZE])
         sections = _read_sections(data, header)
         pages = _read_pages(data, sections)
         reader = cls(book_path, data, header, sections, pages)
-        reader.validate()
+        if validate:
+            reader.validate()
         return reader
 
     def validate(self) -> None:
@@ -90,7 +90,9 @@ class BinBookReader:
         self._validate_reader_requirements()
         self._validate_display_and_layout_profiles()
         self._validate_string_refs()
-        required_storage_formats = struct.unpack_from("<I", self._section_data(SectionId.READER_REQUIREMENTS), 16)[0]
+        required_storage_formats = ReaderRequirementsSection.unpack(
+            self._section_data(SectionId.READER_REQUIREMENTS)
+        ).required_storage_pixel_format_flags
         used: list[tuple[int, int]] = []
         previous_progress = 0
         for page in self.pages:
@@ -122,20 +124,15 @@ class BinBookReader:
 
     def _validate_reader_requirements(self) -> None:
         data = self._section_data(SectionId.READER_REQUIREMENTS)
-        if len(data) < 40:
-            raise ValueError("READER_REQUIREMENTS section is too short")
-        required_features = struct.unpack_from("<Q", data, 8)[0]
-        required_storage_formats = struct.unpack_from("<I", data, 16)[0]
-        required_grayscale_levels = struct.unpack_from("<H", data, 20)[0]
-        required_compression_methods = struct.unpack_from("<I", data, 24)[0]
-        unsupported_features = required_features & ~SUPPORTED_READER_FEATURES
+        requirements = ReaderRequirementsSection.unpack(data)
+        unsupported_features = requirements.required_features & ~SUPPORTED_READER_FEATURES
         if unsupported_features:
             raise ValueError(f"unsupported required reader features: 0x{unsupported_features:x}")
-        if not required_storage_formats & SUPPORTED_STORAGE_PIXEL_FORMATS:
+        if not requirements.required_storage_pixel_format_flags & SUPPORTED_STORAGE_PIXEL_FORMATS:
             raise ValueError("unsupported required storage pixel formats")
-        if required_grayscale_levels not in (0, 2, 4):
+        if requirements.required_grayscale_levels not in (0, 2, 4):
             raise ValueError("unsupported required output grayscale levels")
-        if not required_compression_methods & SUPPORTED_COMPRESSION_METHOD_FLAGS:
+        if not requirements.required_compression_method_flags & SUPPORTED_COMPRESSION_METHOD_FLAGS:
             raise ValueError("unsupported required compression methods")
 
     def _validate_display_and_layout_profiles(self) -> None:
@@ -144,44 +141,31 @@ class BinBookReader:
             raise ValueError(errors[0])
 
     def profile_validation_errors(self) -> list[str]:
-        display = self._section_data(SectionId.DISPLAY_PROFILE)
-        layout = self._section_data(SectionId.LAYOUT_PROFILE)
         errors: list[str] = []
-        if len(display) < 52:
-            return ["DISPLAY_PROFILE section is too short"]
-        if len(layout) < 28:
-            return ["LAYOUT_PROFILE section is too short"]
-        logical_width, logical_height = struct.unpack_from("<HH", display, 24)
-        supported_formats = struct.unpack_from("<I", display, 36)[0]
-        native_levels = struct.unpack_from("<H", display, 48)[0]
-        layout_values = struct.unpack_from("<HHHHHHHHHHHH", layout, 0)
-        (
-            full_width,
-            full_height,
-            header_height,
-            footer_height,
-            margin_top,
-            margin_right,
-            margin_bottom,
-            margin_left,
-            content_x,
-            content_y,
-            content_width,
-            content_height,
-        ) = layout_values
-        if logical_width == 0 or logical_height == 0:
+        try:
+            display = DisplayProfileSection.unpack(self._section_data(SectionId.DISPLAY_PROFILE))
+            layout = LayoutProfileSection.unpack(self._section_data(SectionId.LAYOUT_PROFILE))
+        except ValueError as exc:
+            return [str(exc)]
+        if display.logical_width == 0 or display.logical_height == 0:
             errors.append("display profile logical dimensions must be non-zero")
-        if supported_formats == 0:
+        if display.supported_storage_pixel_format_flags == 0:
             errors.append("display profile must advertise at least one storage pixel format")
-        if native_levels < 2:
+        if display.native_grayscale_levels < 2:
             errors.append("display profile must use at least 2 grayscale levels")
-        if (full_width, full_height) != (logical_width, logical_height):
+        if (layout.full_width, layout.full_height) != (display.logical_width, display.logical_height):
             errors.append("LayoutProfile full page dimensions do not match DisplayProfile")
-        expected_x = margin_left
-        expected_y = margin_top + header_height
-        expected_width = full_width - margin_left - margin_right
-        expected_height = full_height - margin_top - margin_bottom - header_height - footer_height
-        if (content_x, content_y, content_width, content_height) != (
+        expected_x = layout.margin_left
+        expected_y = layout.margin_top + layout.header_height
+        expected_width = layout.full_width - layout.margin_left - layout.margin_right
+        expected_height = (
+            layout.full_height
+            - layout.margin_top
+            - layout.margin_bottom
+            - layout.header_height
+            - layout.footer_height
+        )
+        if (layout.content_x, layout.content_y, layout.content_width, layout.content_height) != (
             expected_x,
             expected_y,
             expected_width,
@@ -192,14 +176,7 @@ class BinBookReader:
 
     def _validate_string_refs(self) -> None:
         table = self._section_data(SectionId.STRING_TABLE)
-        for section_id, offsets in {
-            SectionId.DISPLAY_PROFILE: DISPLAY_PROFILE_STRING_REF_OFFSETS,
-            SectionId.SOURCE_IDENTITY: SOURCE_IDENTITY_STRING_REF_OFFSETS,
-            SectionId.BOOK_METADATA: BOOK_METADATA_STRING_REF_OFFSETS,
-            SectionId.RENDITION_IDENTITY: RENDITION_IDENTITY_STRING_REF_OFFSETS,
-            SectionId.FONT_POLICY: FONT_POLICY_STRING_REF_OFFSETS,
-            SectionId.TYPOGRAPHY_POLICY: TYPOGRAPHY_POLICY_STRING_REF_OFFSETS,
-        }.items():
+        for section_id, offsets in SECTION_STRING_REF_OFFSETS.items():
             data = self._section_data(section_id)
             for offset in offsets:
                 if offset + 8 > len(data):

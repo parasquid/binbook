@@ -19,6 +19,7 @@ from .fonts import FontInfo, get_font
 from .images import png_to_packed
 from .profiles import DisplayProfile, get_profile
 from .rle import encode_packbits
+from .sections import DisplayProfileSection, LayoutProfileSection, ReaderRequirementsSection
 from .strings import StringTableBuilder
 from .structs import (
     HEADER_SIZE,
@@ -107,8 +108,8 @@ def build_binbook(
     strings = StringTableBuilder()
     refs = {
         "profile": strings.add(profile.name),
-        "family": strings.add("xteink"),
-        "model": strings.add("x4"),
+        "family": strings.add(profile.family),
+        "model": strings.add(profile.model),
         "title": strings.add(book_info.title or source_name),
         "author": strings.add(book_info.author),
         "language": strings.add(book_info.language),
@@ -225,79 +226,20 @@ def _nav_index(entries: list[NavEntry], title_refs: list[StringRef]) -> bytes:
 
 
 def _display_profile(profile: DisplayProfile, refs: dict[str, StringRef]) -> bytes:
-    return b"".join(
-        [
-            refs["profile"].pack(),
-            refs["family"].pack(),
-            refs["model"].pack(),
-            struct.pack(
-                "<HHHHBhBIIHHHHBHB",
-                profile.logical_width,
-                profile.logical_height,
-                profile.physical_width,
-                profile.physical_height,
-                profile.logical_orientation,
-                profile.logical_to_physical_rotation,
-                profile.scan_order_hint,
-                profile.supported_storage_pixel_format_flags,
-                profile.supported_storage_pixel_format_flags,
-                profile.storage_pixel_format,
-                0,
-                profile.grayscale_levels,
-                profile.grayscale_levels,
-                profile.framebuffer_bits_per_pixel,
-                1,
-                0,
-            ),
-            bytes(32),
-            bytes(32),
-        ]
-    )
+    return DisplayProfileSection.from_profile(
+        profile,
+        profile_ref=refs["profile"],
+        family=refs["family"],
+        model=refs["model"],
+    ).pack()
 
 
 def _layout_profile(profile: DisplayProfile) -> bytes:
-    return struct.pack(
-        "<HHHHHHHHHHHHBB2sHHI32s32s",
-        profile.logical_width,
-        profile.logical_height,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        profile.logical_width,
-        profile.logical_height,
-        1,
-        1,
-        bytes(2),
-        3,
-        0,
-        0,
-        bytes(32),
-        bytes(32),
-    )
+    return LayoutProfileSection.from_profile(profile).pack()
 
 
 def _reader_requirements(profile: DisplayProfile) -> bytes:
-    feature_flags = (1 << 0) | (1 << 3)
-    required_features = (1 << 0) | (1 << 2) | (1 << 3) | (1 << 4)
-    return struct.pack(
-        "<QQIHHIHHII36s",
-        feature_flags,
-        required_features,
-        profile.storage_pixel_format_flag,
-        profile.grayscale_levels,
-        1,
-        1 << CompressionMethod.RLE_PACKBITS,
-        profile.logical_width,
-        profile.logical_height,
-        (profile.logical_width * profile.logical_height * profile.framebuffer_bits_per_pixel + 7) // 8,
-        ((profile.logical_width * profile.logical_height * profile.framebuffer_bits_per_pixel + 7) // 8) * 2,
-        bytes(36),
-    )
+    return ReaderRequirementsSection.from_profile(profile).pack()
 
 
 def _source_identity(source: SourceInfo, filename: StringRef, package_identifier: StringRef) -> bytes:
