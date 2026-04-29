@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
 
+import binbook.fonts as fonts_module
 from binbook.fonts import get_font
 from binbook.pixels import unpack_gray2
 from binbook.profiles import XTEINK_X4_PORTRAIT
@@ -113,6 +114,16 @@ def test_literata_has_no_font_specific_pair_kerning_override():
 
 def test_sans_serif_alias_has_no_font_specific_pair_kerning_override():
     assert get_font("sans-serif").pair_kerning_milli_em == {}
+
+
+def test_get_font_loads_family_specific_pair_kerning_json(tmp_path, monkeypatch):
+    kerning_dir = tmp_path / "font_kerning"
+    kerning_dir.mkdir()
+    (kerning_dir / "literata.json").write_text('{"AV": -90}\n')
+
+    monkeypatch.setattr(fonts_module, "FONT_KERNING_DIR", kerning_dir)
+
+    assert get_font("literata").pair_kerning_milli_em == {("A", "V"): -90}
 
 
 def test_draw_text_applies_same_pair_kerning_as_measurement():

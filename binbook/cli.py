@@ -8,7 +8,6 @@ from .inspect import inspect_book
 from .kerning_proof import generate_kerning_proof, serve_kerning_proof
 from .reader import BinBookReader
 from .render import encode_epub
-from .structs import HEADER_SIZE, BinBookHeader
 from .viewer import launch_viewer
 from .writer import encode_png_folder
 
@@ -89,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.font_family,
                     args.output_dir,
                     font_size=args.font_size,
+                    static=True,
                 )
                 print(f"Wrote kerning proof: {result.index_html}")
             else:
@@ -109,13 +109,7 @@ def main(argv: list[str] | None = None) -> int:
 def _open_for_inspect(path: Path, *, strict: bool) -> BinBookReader:
     if not strict:
         return BinBookReader.open(path)
-    data = path.read_bytes()
-    header = BinBookHeader.unpack(data[:HEADER_SIZE])
-    from .reader import _read_pages, _read_sections
-
-    sections = _read_sections(data, header)
-    pages = _read_pages(data, sections)
-    return BinBookReader(path, data, header, sections, pages)
+    return BinBookReader.open(path, validate=False)
 
 
 if __name__ == "__main__":

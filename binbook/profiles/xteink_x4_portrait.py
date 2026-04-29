@@ -6,6 +6,8 @@ from .base import DisplayProfile
 
 PROFILE = DisplayProfile(
     name="xteink-x4-portrait",
+    family="xteink",
+    model="x4",
     logical_width=480,
     logical_height=800,
     physical_width=800,

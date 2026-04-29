@@ -34,10 +34,16 @@ def test_x4_profile_metadata_is_gray2_portrait_with_explicit_rotation(tmp_path):
     assert struct.unpack_from("<H", image_policy, 2)[0] == PixelFormat.GRAY2_PACKED
 
 
+def test_x4_profile_owns_family_and_model_metadata():
+    assert XTEINK_X4_PORTRAIT.family == "xteink"
+    assert XTEINK_X4_PORTRAIT.model == "x4"
+
+
 def test_profile_resolve_uses_default_storage_pixel_format():
     resolved = get_profile("xteink-x4-portrait").resolve()
 
     assert resolved.storage_pixel_format == PixelFormat.GRAY2_PACKED
+    assert resolved.storage_pixel_format_flag == PixelFormatFlag.GRAY2_PACKED
     assert resolved.grayscale_levels == 4
     assert resolved.framebuffer_bits_per_pixel == 2
 
