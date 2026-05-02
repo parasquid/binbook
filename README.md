@@ -14,6 +14,11 @@ The current implementation supports:
 The first supported profile is `xteink-x4-portrait`, stored by default as canonical row-major `GRAY2_PACKED` pages at logical `480x800`, with physical panel metadata `800x480` and logical-to-physical rotation `90` degrees clockwise. `GRAY1_PACKED` output is available as an explicit fast/lower-quality option.
 The default bundled reading font is Literata, licensed under the SIL Open Font License.
 
+## Documentation
+
+- [BinBook format specification](BINBOOK_FORMAT_SPEC.md) - authoritative BinBook 0.1 candidate file-format specification.
+- [Documentation index](docs/README.md) - supporting reference notes and archived historical POC material.
+
 ## Development
 
 Use `uv` for local setup and test execution:
