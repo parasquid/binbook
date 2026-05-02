@@ -1,6 +1,6 @@
 # Codex Prompt: BinBook Python POC Encoder and Decoder
 
-> Historical note: this prompt describes the original proof-of-concept direction and is no longer authoritative for BinBook 0.1. Use `BINBOOK_FORMAT_SPEC.md` for the current format and `AGENTS.md` for current implementation guidance.
+> Historical note: this prompt describes the original proof-of-concept direction and is no longer authoritative for BinBook 0.1. Use [`../../BINBOOK_FORMAT_SPEC.md`](../../BINBOOK_FORMAT_SPEC.md) for the current format and [`../../AGENTS.md`](../../AGENTS.md) for current implementation guidance.
 
 You are implementing a Python proof of concept for BinBook, a universal compiled raster-book format for low-RAM e-ink/display devices.
 
@@ -546,7 +546,7 @@ Readers MUST reject files where these entry-size values do not match the v0.1 ex
 
 ## Structs
 
-Implement the structs exactly as defined in BINBOOK_POC_SPEC.md.
+Implement the structs exactly as defined in [`binbook-poc-spec.md`](binbook-poc-spec.md).
 
 Important structs:
     Header

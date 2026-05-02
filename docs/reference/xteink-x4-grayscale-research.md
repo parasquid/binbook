@@ -1,6 +1,6 @@
 # Xteink X4 Grayscale Research
 
-This note records device-specific research for the `xteink-x4-portrait` BinBook profile. It is not the universal BinBook format specification.
+This note records device-specific research for the `xteink-x4-portrait` BinBook profile. It is not the universal BinBook format specification; use [`../../BINBOOK_FORMAT_SPEC.md`](../../BINBOOK_FORMAT_SPEC.md) for the current BinBook 0.1 candidate format.
 
 ## CrossPoint Reader Findings
 

@@ -2,8 +2,8 @@
 
 ## Project Context
 
-- Treat `BINBOOK_FORMAT_SPEC.md` as the authoritative BinBook 0.1 candidate file-format specification.
-- Treat `CODEX_PROMPT_BINBOOK_POC.md.md`, `BINBOOK_POC_SPEC.md.md`, and `BINBOOK_DOCS_AND_ROADMAP.md.md` as historical POC context only.
+- Treat [`BINBOOK_FORMAT_SPEC.md`](BINBOOK_FORMAT_SPEC.md) as the authoritative BinBook 0.1 candidate file-format specification.
+- Treat files under [`docs/historical/`](docs/historical/) as historical POC context only.
 - This repo is the Python reference implementation for BinBook 0.1, a compiled raster-book format for low-RAM e-ink/display devices.
 - The first target profile is `xteink-x4-portrait`: logical `480x800`, physical `800x480`, `GRAY2_PACKED` by default, optional `GRAY1_PACKED` for explicit fast/lower-quality output, logical-to-physical rotation `90` degrees clockwise.
 

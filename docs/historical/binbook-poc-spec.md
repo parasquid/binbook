@@ -1,6 +1,6 @@
 # BinBook POC Specification
 
-> Historical note: this document describes the original proof-of-concept direction and is no longer authoritative for BinBook 0.1. Use `BINBOOK_FORMAT_SPEC.md` for the current 0.1 candidate format.
+> Historical note: this document describes the original proof-of-concept direction and is no longer authoritative for BinBook 0.1. Use [`../../BINBOOK_FORMAT_SPEC.md`](../../BINBOOK_FORMAT_SPEC.md) for the current 0.1 candidate format.
 
 ## 1. Purpose
 
