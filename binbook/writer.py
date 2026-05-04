@@ -9,6 +9,7 @@ from .constants import (
     PAGE_DATA_ALIGNMENT,
     UINT32_MAX,
     CompressionMethod,
+    DitherMethod,
     PageKind,
     PixelFormat,
     PixelFormatFlag,
@@ -75,6 +76,8 @@ def encode_png_folder(
     output: Path,
     profile_name: str = "xteink-x4-portrait",
     storage_pixel_format: str | PixelFormat | None = None,
+    *,
+    dither: bool = True,
 ) -> None:
     profile = get_profile(profile_name).resolve(storage_pixel_format)
     pngs = sorted(p for p in input_dir.iterdir() if p.suffix.lower() == ".png")
@@ -83,11 +86,12 @@ def encode_png_folder(
 
     pages: list[EncodedPage] = []
     for path in pngs:
-        packed = png_to_packed(path, profile)
+        packed = png_to_packed(path, profile, dither=dither)
         compressed = encode_packbits(packed)
         pages.append(EncodedPage(compressed, len(packed), crc32(compressed)))
 
-    output.write_bytes(build_binbook(pages, profile, source_name=input_dir.name))
+    dither_method = DitherMethod.FLOYD_STEINBERG if dither else DitherMethod.NONE
+    output.write_bytes(build_binbook(pages, profile, source_name=input_dir.name, dither_method=dither_method))
 
 
 def build_binbook(
@@ -100,6 +104,7 @@ def build_binbook(
     nav_entries: list[NavEntry] | None = None,
     font_info: FontInfo | None = None,
     character_spacing_milli_em: int = 0,
+    dither_method: int = DitherMethod.FLOYD_STEINBERG,
 ) -> bytes:
     book_info = book_info or BookInfo(title=source_name)
     source_info = source_info or SourceInfo(filename=source_name)
@@ -133,7 +138,7 @@ def build_binbook(
         (SectionId.RENDITION_IDENTITY, _rendition_identity(refs["compiler"], refs["version"]), 0, 0),
         (SectionId.FONT_POLICY, _font_policy(font_info, refs["font_name"], refs["font_path"], refs["renderer"]), 0, 0),
         (SectionId.TYPOGRAPHY_POLICY, _typography_policy(character_spacing_milli_em), 0, 0),
-        (SectionId.IMAGE_POLICY, _image_policy(profile), 0, 0),
+        (SectionId.IMAGE_POLICY, _image_policy(profile, dither_method), 0, 0),
         (SectionId.COMPRESSION_POLICY, _compression_policy(), 0, 0),
         (SectionId.CHROME_POLICY, _chrome_policy(), 0, 0),
     ]
@@ -302,7 +307,7 @@ def _typography_policy(character_spacing_milli_em: int = 0) -> bytes:
     )
 
 
-def _image_policy(profile: DisplayProfile) -> bytes:
+def _image_policy(profile: DisplayProfile, dither_method: int = DitherMethod.FLOYD_STEINBERG) -> bytes:
     white_value = profile.grayscale_levels - 1
     return struct.pack(
         "<HHHHHHHHHHHHI32s32s",
@@ -310,7 +315,7 @@ def _image_policy(profile: DisplayProfile) -> bytes:
         profile.storage_pixel_format,
         1,
         1,
-        1,
+        dither_method,
         1,
         white_value,
         1000,

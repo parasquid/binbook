@@ -9,7 +9,7 @@ import zipfile
 from PIL import Image, ImageDraw, ImageFont
 
 from .checksums import crc32
-from .constants import PageKind, SourceType, UINT32_MAX
+from .constants import DitherMethod, PageKind, SourceType, UINT32_MAX
 from .epub import EpubBook, read_epub
 from .fonts import FontInfo, PairKerningTable, get_font
 from .images import image_bytes_to_packed, pil_image_to_packed
@@ -36,12 +36,15 @@ def encode_epub(
     profile_name: str = "xteink-x4-portrait",
     font_family: str = "literata",
     storage_pixel_format: str | None = None,
+    *,
+    dither: bool = True,
 ) -> None:
     profile = get_profile(profile_name).resolve(storage_pixel_format)
     font = get_font(font_family)
     book = read_epub(input_epub)
-    pages, spine_first_page = _compile_pages(book, profile, font)
+    pages, spine_first_page = _compile_pages(book, profile, font, dither=dither)
     nav_entries = _compile_nav_entries(book, spine_first_page)
+    dither_method = DitherMethod.FLOYD_STEINBERG if dither else DitherMethod.NONE
     output.write_bytes(
         build_binbook(
             pages,
@@ -64,11 +67,18 @@ def encode_epub(
             nav_entries=nav_entries,
             font_info=font,
             character_spacing_milli_em=font.default_character_spacing_milli_em,
+            dither_method=dither_method,
         )
     )
 
 
-def _compile_pages(book: EpubBook, profile: DisplayProfile, font: FontInfo) -> tuple[list[EncodedPage], dict[int, int]]:
+def _compile_pages(
+    book: EpubBook,
+    profile: DisplayProfile,
+    font: FontInfo,
+    *,
+    dither: bool = True,
+) -> tuple[list[EncodedPage], dict[int, int]]:
     pages: list[EncodedPage] = []
     spine_first_page: dict[int, int] = {}
     with zipfile.ZipFile(book.path) as archive:
@@ -79,7 +89,7 @@ def _compile_pages(book: EpubBook, profile: DisplayProfile, font: FontInfo) -> t
                     pages.extend(_text_pages(flow.value, profile, item.index, font))
                 elif flow.kind == "image":
                     image_path = _resolve_image_path(flow.source_full_path, flow.value)
-                    packed = image_bytes_to_packed(archive.read(image_path), profile)
+                    packed = image_bytes_to_packed(archive.read(image_path), profile, dither=dither)
                     pages.append(_encoded_page(packed, PageKind.IMAGE, item.index))
     if not pages:
         pages.append(_encoded_page(_render_text_to_packed("(empty book)", profile, font), PageKind.TEXT, UINT32_MAX))
@@ -137,7 +147,7 @@ def _render_text_to_packed(text: str, profile: DisplayProfile, font_info: FontIn
         (profile.logical_width, profile.logical_height), 
         resample=Image.Resampling.LANCZOS
     )
-    return pil_image_to_packed(downsampled_image, profile)
+    return pil_image_to_packed(downsampled_image, profile, dither=False)
 
 
 def _wrap_text_to_width(
