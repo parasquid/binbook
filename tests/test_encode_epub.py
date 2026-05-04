@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+import struct
 import zipfile
 
 from PIL import Image
@@ -10,6 +11,7 @@ from PIL import Image
 from binbook.cli import main
 from binbook.constants import PageKind, SectionId
 from binbook.reader import BinBookReader
+import binbook.render as render_module
 
 
 def test_encode_epub_creates_text_image_and_nav_pages(tmp_path: Path, capsys):
@@ -32,6 +34,53 @@ def test_encode_epub_creates_text_image_and_nav_pages(tmp_path: Path, capsys):
 
     assert main(["decode", str(output), "--page", "0", "-o", str(decoded)]) == 0
     assert Image.open(decoded).size == (480, 800)
+
+
+def test_encode_epub_dithers_embedded_images_but_not_rendered_text(tmp_path: Path, monkeypatch):
+    epub_path = tmp_path / "book.epub"
+    output = tmp_path / "book.binbook"
+    _write_epub_with_text_image_and_nav(epub_path)
+    text_dither_flags: list[bool] = []
+    image_dither_flags: list[bool] = []
+
+    def fake_pil_image_to_packed(image, profile, *, dither=True):
+        text_dither_flags.append(dither)
+        return bytes([0xFF]) * 96_000
+
+    def fake_image_bytes_to_packed(data, profile, *, dither=True):
+        image_dither_flags.append(dither)
+        return bytes([0xFF]) * 96_000
+
+    monkeypatch.setattr(render_module, "pil_image_to_packed", fake_pil_image_to_packed)
+    monkeypatch.setattr(render_module, "image_bytes_to_packed", fake_image_bytes_to_packed)
+
+    assert main(["encode", str(epub_path), "-o", str(output)]) == 0
+
+    reader = BinBookReader.open(output)
+    image_policy = reader._section_data(SectionId.IMAGE_POLICY)
+    assert text_dither_flags == [False, False, False]
+    assert image_dither_flags == [True]
+    assert struct.unpack_from("<H", image_policy, 8)[0] == 1
+
+
+def test_encode_epub_no_dither_disables_embedded_image_dithering(tmp_path: Path, monkeypatch):
+    epub_path = tmp_path / "book.epub"
+    output = tmp_path / "book.binbook"
+    _write_epub_with_text_image_and_nav(epub_path)
+    image_dither_flags: list[bool] = []
+
+    def fake_image_bytes_to_packed(data, profile, *, dither=True):
+        image_dither_flags.append(dither)
+        return bytes([0xFF]) * 96_000
+
+    monkeypatch.setattr(render_module, "image_bytes_to_packed", fake_image_bytes_to_packed)
+
+    assert main(["encode", str(epub_path), "-o", str(output), "--no-dither"]) == 0
+
+    reader = BinBookReader.open(output)
+    image_policy = reader._section_data(SectionId.IMAGE_POLICY)
+    assert image_dither_flags == [False]
+    assert struct.unpack_from("<H", image_policy, 8)[0] == 0
 
 
 def _write_epub_with_text_image_and_nav(path: Path) -> None:

@@ -65,6 +65,11 @@ class CompressionMethod(IntEnum):
     RLE_PACKBITS = 1
 
 
+class DitherMethod(IntEnum):
+    NONE = 0
+    FLOYD_STEINBERG = 1
+
+
 class PageKind(IntEnum):
     TEXT = 1
     IMAGE = 2
