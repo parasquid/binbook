@@ -20,7 +20,7 @@ from binbook.kerning_proof import (
     _render_context_image,
     save_canonical_kerning,
 )
-from binbook.render import _font
+from binbook.text_rendering import load_font
 
 pytestmark = pytest.mark.proof
 
@@ -96,7 +96,7 @@ def test_contextual_render_preserves_saved_non_active_pair_adjustments(tmp_path)
     actual = Image.open(tmp_path / context["image"])
 
     font_info = get_font("opendyslexic")
-    font = _font(report["font_size_px"], font_info)
+    font = load_font(report["font_size_px"], font_info)
     with_saved_table = _render_context_image(context["text"], "Yo", 0, font, font_info)
     with_active_pair_only = _render_context_image(
         context["text"],

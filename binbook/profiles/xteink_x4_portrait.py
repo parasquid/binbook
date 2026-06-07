@@ -21,4 +21,5 @@ PROFILE = DisplayProfile(
     scan_order_hint=1,
     grayscale_levels=4,
     framebuffer_bits_per_pixel=2,
+    page_data_alignment=16,
 )

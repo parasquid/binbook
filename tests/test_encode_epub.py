@@ -11,7 +11,8 @@ from PIL import Image
 from binbook.cli import main
 from binbook.constants import PageKind, SectionId
 from binbook.reader import BinBookReader
-import binbook.render as render_module
+import binbook.page_compiler as page_compiler
+import binbook.text_rendering as text_rendering
 
 
 def test_encode_epub_creates_text_image_and_nav_pages(tmp_path: Path, capsys):
@@ -33,7 +34,7 @@ def test_encode_epub_creates_text_image_and_nav_pages(tmp_path: Path, capsys):
     assert payload["page_count"] == 4
 
     assert main(["decode", str(output), "--page", "0", "-o", str(decoded)]) == 0
-    assert Image.open(decoded).size == (480, 800)
+    assert Image.open(decoded).size == (800, 480)
 
 
 def test_encode_epub_dithers_embedded_images_but_not_rendered_text(tmp_path: Path, monkeypatch):
@@ -51,8 +52,8 @@ def test_encode_epub_dithers_embedded_images_but_not_rendered_text(tmp_path: Pat
         image_dither_flags.append(dither)
         return bytes([0xFF]) * 96_000
 
-    monkeypatch.setattr(render_module, "pil_image_to_packed", fake_pil_image_to_packed)
-    monkeypatch.setattr(render_module, "image_bytes_to_packed", fake_image_bytes_to_packed)
+    monkeypatch.setattr(text_rendering, "pil_image_to_packed", fake_pil_image_to_packed)
+    monkeypatch.setattr(page_compiler, "image_bytes_to_packed", fake_image_bytes_to_packed)
 
     assert main(["encode", str(epub_path), "-o", str(output)]) == 0
 
@@ -73,7 +74,7 @@ def test_encode_epub_no_dither_disables_embedded_image_dithering(tmp_path: Path,
         image_dither_flags.append(dither)
         return bytes([0xFF]) * 96_000
 
-    monkeypatch.setattr(render_module, "image_bytes_to_packed", fake_image_bytes_to_packed)
+    monkeypatch.setattr(page_compiler, "image_bytes_to_packed", fake_image_bytes_to_packed)
 
     assert main(["encode", str(epub_path), "-o", str(output), "--no-dither"]) == 0
 

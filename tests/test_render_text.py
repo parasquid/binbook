@@ -6,21 +6,32 @@ from PIL import Image, ImageChops, ImageDraw
 
 import binbook.fonts as fonts_module
 from binbook.fonts import get_font
-from binbook.pixels import unpack_gray2
+from binbook.constants import PixelFormat
+from binbook.images import packed_to_image, storage_image_to_logical
 from binbook.profiles import XTEINK_X4_PORTRAIT
-from binbook.render import DEFAULT_FONT_PATH, _draw_text, _font, _render_text_to_packed, _text_width
+from binbook.text_rendering import DEFAULT_FONT_PATH, draw_text, load_font, measure_text, render_text_to_packed
 
 
 def test_rendered_text_respects_right_margin_for_wide_glyphs():
-    packed = _render_text_to_packed("W" * 160, XTEINK_X4_PORTRAIT)
-    pixels = unpack_gray2(packed, XTEINK_X4_PORTRAIT.logical_width, XTEINK_X4_PORTRAIT.logical_height)
+    packed = render_text_to_packed("W" * 160, XTEINK_X4_PORTRAIT)
+    storage = packed_to_image(
+        packed,
+        PixelFormat.GRAY2_PACKED,
+        XTEINK_X4_PORTRAIT.storage_width,
+        XTEINK_X4_PORTRAIT.storage_height,
+    )
+    image = storage_image_to_logical(
+        storage,
+        logical_width=XTEINK_X4_PORTRAIT.logical_width,
+        logical_height=XTEINK_X4_PORTRAIT.logical_height,
+        logical_to_physical_rotation=XTEINK_X4_PORTRAIT.logical_to_physical_rotation,
+    )
 
     right_margin_start = XTEINK_X4_PORTRAIT.logical_width - 24
     dark_pixels_in_right_margin = 0
     for y in range(XTEINK_X4_PORTRAIT.logical_height):
-        row_offset = y * XTEINK_X4_PORTRAIT.logical_width
         for x in range(right_margin_start, XTEINK_X4_PORTRAIT.logical_width):
-            if pixels[row_offset + x] != 3:
+            if image.getpixel((x, y)) != 255:
                 dark_pixels_in_right_margin += 1
 
     assert dark_pixels_in_right_margin == 0
@@ -29,7 +40,7 @@ def test_rendered_text_respects_right_margin_for_wide_glyphs():
 def test_default_font_uses_bundled_literata():
     assert DEFAULT_FONT_PATH.exists()
 
-    loaded = _font(24)
+    loaded = load_font(24)
 
     assert Path(loaded.path) == DEFAULT_FONT_PATH
 
@@ -38,11 +49,11 @@ def test_opendyslexic_default_character_spacing_tightens_measurement():
     image = Image.new("L", (480, 800), 255)
     draw = ImageDraw.Draw(image)
     font_info = get_font("sans-serif")
-    font = _font(24, font_info)
+    font = load_font(24, font_info)
     text = "serviceable"
 
-    normal_width = _text_width(draw, text, font)
-    spaced_width = _text_width(draw, text, font, font_info.default_character_spacing_milli_em)
+    normal_width = measure_text(draw, text, font)
+    spaced_width = measure_text(draw, text, font, font_info.default_character_spacing_milli_em)
 
     assert spaced_width < normal_width
 
@@ -55,20 +66,20 @@ def test_opendyslexic_default_character_spacing_is_tighter_for_proofing():
 def test_text_width_uses_kerning_without_ligatures():
     image = Image.new("L", (200, 100), 255)
     draw = ImageDraw.Draw(image)
-    font = _font(72, get_font("literata"))
+    font = load_font(72, get_font("literata"))
 
     unkerned_width = draw.textlength("AV", font=font, features=["-kern", "-liga"])
 
-    assert _text_width(draw, "AV", font) < unkerned_width
+    assert measure_text(draw, "AV", font) < unkerned_width
 
 
 def test_draw_text_keeps_ligature_prone_characters():
     font_info = get_font("literata")
-    font = _font(72, font_info)
+    font = load_font(72, font_info)
 
     actual = Image.new("L", (360, 160), 255)
     actual_draw = ImageDraw.Draw(actual)
-    _draw_text(actual_draw, (20, 40), "office", font, 0, fill=0)
+    draw_text(actual_draw, (20, 40), "office", font, 0, fill=0)
 
     expected = Image.new("L", (360, 160), 255)
     expected_draw = ImageDraw.Draw(expected)
@@ -86,11 +97,11 @@ def test_opendyslexic_pair_kerning_tightens_you_without_global_spacing_change():
     image = Image.new("L", (400, 160), 255)
     draw = ImageDraw.Draw(image)
     font_info = get_font("opendyslexic")
-    font = _font(72, font_info)
+    font = load_font(72, font_info)
     spacing = font_info.default_character_spacing_milli_em
 
-    without_pair_adjustment = _text_width(draw, "You", font, spacing)
-    with_pair_adjustment = _text_width(draw, "You", font, spacing, font_info.pair_kerning_milli_em)
+    without_pair_adjustment = measure_text(draw, "You", font, spacing)
+    with_pair_adjustment = measure_text(draw, "You", font, spacing, font_info.pair_kerning_milli_em)
 
     assert without_pair_adjustment - with_pair_adjustment >= 8
 
@@ -99,11 +110,11 @@ def test_opendyslexic_pair_kerning_supports_lowercase_yo():
     image = Image.new("L", (400, 160), 255)
     draw = ImageDraw.Draw(image)
     font_info = get_font("opendyslexic")
-    font = _font(72, font_info)
+    font = load_font(72, font_info)
     spacing = font_info.default_character_spacing_milli_em
 
-    without_pair_adjustment = _text_width(draw, "you", font, spacing)
-    with_pair_adjustment = _text_width(draw, "you", font, spacing, font_info.pair_kerning_milli_em)
+    without_pair_adjustment = measure_text(draw, "you", font, spacing)
+    with_pair_adjustment = measure_text(draw, "you", font, spacing, font_info.pair_kerning_milli_em)
 
     assert without_pair_adjustment - with_pair_adjustment >= 4
 
@@ -128,16 +139,16 @@ def test_get_font_loads_family_specific_pair_kerning_json(tmp_path, monkeypatch)
 
 def test_draw_text_applies_same_pair_kerning_as_measurement():
     font_info = get_font("opendyslexic")
-    font = _font(72, font_info)
+    font = load_font(72, font_info)
     spacing = font_info.default_character_spacing_milli_em
 
     without_pairs = Image.new("L", (400, 160), 255)
     draw_without_pairs = ImageDraw.Draw(without_pairs)
-    _draw_text(draw_without_pairs, (20, 40), "You", font, spacing, fill=0)
+    draw_text(draw_without_pairs, (20, 40), "You", font, spacing, fill=0)
 
     with_pairs = Image.new("L", (400, 160), 255)
     draw_with_pairs = ImageDraw.Draw(with_pairs)
-    _draw_text(draw_with_pairs, (20, 40), "You", font, spacing, fill=0, pair_kerning_milli_em=font_info.pair_kerning_milli_em)
+    draw_text(draw_with_pairs, (20, 40), "You", font, spacing, fill=0, pair_kerning_milli_em=font_info.pair_kerning_milli_em)
 
     without_bbox = ImageChops.invert(without_pairs).getbbox()
     with_bbox = ImageChops.invert(with_pairs).getbbox()

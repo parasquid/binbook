@@ -6,7 +6,6 @@ import struct
 
 from .checksums import crc32
 from .constants import (
-    PAGE_DATA_ALIGNMENT,
     UINT32_MAX,
     CompressionMethod,
     DitherMethod,
@@ -165,7 +164,7 @@ def build_binbook(
         data_parts.append(data)
         cursor += len(data)
 
-    page_data_offset = _align_up(cursor, PAGE_DATA_ALIGNMENT)
+    page_data_offset = _align_up(cursor, profile.page_data_alignment)
     page_data = b"".join(page.compressed for page in pages)
     section_entries.append(SectionEntry(SectionId.PAGE_DATA, page_data_offset, len(page_data), 0, 0, crc32(page_data)))
 
@@ -200,8 +199,8 @@ def _page_index(pages: list[EncodedPage], profile: DisplayProfile) -> bytes:
                 compressed_size=len(page.compressed),
                 uncompressed_size=page.uncompressed_size,
                 page_crc32=page.page_crc32,
-                stored_width=profile.logical_width,
-                stored_height=profile.logical_height,
+                stored_width=profile.storage_width,
+                stored_height=profile.storage_height,
                 source_spine_index=page.source_spine_index,
                 chapter_nav_index=page.chapter_nav_index,
                 progress_start_ppm=start,

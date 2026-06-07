@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from ..constants import PixelFormat, PixelFormatFlag
+from ..constants import PAGE_DATA_ALIGNMENT, PixelFormat, PixelFormatFlag
 
 
 @dataclass(frozen=True)
@@ -53,6 +53,15 @@ class DisplayProfile:
     scan_order_hint: int
     grayscale_levels: int
     framebuffer_bits_per_pixel: int
+    page_data_alignment: int = PAGE_DATA_ALIGNMENT
+
+    @property
+    def storage_width(self) -> int:
+        return self.physical_width
+
+    @property
+    def storage_height(self) -> int:
+        return self.physical_height
 
     def resolve(self, storage_pixel_format: str | PixelFormat | None = None) -> "DisplayProfile":
         if storage_pixel_format is None:

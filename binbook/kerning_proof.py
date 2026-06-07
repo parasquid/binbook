@@ -15,7 +15,7 @@ from urllib.parse import unquote, urlparse
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 from .fonts import FONT_KERNING_DIR, FontInfo, get_font, load_pair_kerning_table
-from .render import TEXT_FEATURES, _character_spacing_px, _draw_text, _font, _wrap_text_to_width
+from .text_rendering import TEXT_FEATURES, character_spacing_px, draw_text, load_font, wrap_text_to_width
 
 DEFAULT_CANDIDATE_VALUES = (0, -40, -60, -80, -100, -120, -140, -160)
 UPPER_TO_LOWER_PAIRS = ("To", "Th", "Ta", "Te", "Ty", "Yo", "Ye", "Ya", "Yu", "Wo", "Wa", "We", "Vo", "Va", "Ve")
@@ -110,7 +110,7 @@ def generate_kerning_proof(
     assets_dir = output_dir / "assets"
     assets_dir.mkdir(exist_ok=True)
 
-    font = _font(font_size, font_info)
+    font = load_font(font_size, font_info)
     controls = _measure_controls(font, font_info)
     pairs = [
         _build_pair_report(pair, font, font_info, controls, assets_dir)
@@ -271,7 +271,7 @@ def _measure_pair_gap(
     draw = ImageDraw.Draw(Image.new("L", (360, 180), 255))
     left_x = 80
     baseline_y = 44
-    spacing_px = _character_spacing_px(font, font_info.default_character_spacing_milli_em)
+    spacing_px = character_spacing_px(font, font_info.default_character_spacing_milli_em)
     right_x = left_x + draw.textlength(pair[0], font=font, features=TEXT_FEATURES)
     right_x += spacing_px + _pair_value_px(font, pair_value_milli_em)
 
@@ -302,7 +302,7 @@ def _render_pair_image(
 ) -> Image.Image:
     image = Image.new("L", (360, 150), 255)
     draw = ImageDraw.Draw(image)
-    _draw_text(
+    draw_text(
         draw,
         (80, 38),
         text,
@@ -388,11 +388,11 @@ def _render_paragraph_image(
     width = 760
     x = 24
     y = 26
-    context_font = _font(_context_font_size(font), font_info)
+    context_font = load_font(_context_font_size(font), font_info)
     line_height = int(round(context_font.size * 1.35))
     measurement_image = Image.new("L", (width, 120), 255)
     measurement_draw = ImageDraw.Draw(measurement_image)
-    lines = _wrap_text_to_width(
+    lines = wrap_text_to_width(
         text,
         measurement_draw,
         context_font,
@@ -404,7 +404,7 @@ def _render_paragraph_image(
     image = Image.new("L", (width, y * 2 + line_height * len(lines)), 255)
     draw = ImageDraw.Draw(image)
     for index, line in enumerate(lines):
-        _draw_text(
+        draw_text(
             draw,
             (x, y + line_height * index),
             line,
@@ -607,7 +607,7 @@ class KerningProofRequestHandler(BaseHTTPRequestHandler):
                 raise ValueError("font_family does not match this proof server")
             pair_table = _pair_table_from_serialized(cls.report.get("existing_pair_kerning_milli_em", {}))
             font_info = replace(get_font(cls.font_family), pair_kerning_milli_em=pair_table)
-            font = _font(int(cls.report.get("font_size_px", 72)), font_info)
+            font = load_font(int(cls.report.get("font_size_px", 72)), font_info)
             assets_dir = cls.output_dir / "assets"
             _log(f"Regenerating holistic proof for {cls.font_family}")
             cls.report["holistic"] = _build_holistic_proof(font, font_info, assets_dir)
@@ -625,7 +625,7 @@ class KerningProofRequestHandler(BaseHTTPRequestHandler):
     def _regenerate_pair_reports(cls, saved: dict[str, int], changed_pairs: list[str]) -> None:
         pair_table = _pair_table_from_serialized(saved)
         font_info = replace(get_font(cls.font_family), pair_kerning_milli_em=pair_table)
-        font = _font(int(cls.report.get("font_size_px", 72)), font_info)
+        font = load_font(int(cls.report.get("font_size_px", 72)), font_info)
         assets_dir = cls.output_dir / "assets"
         existing_pairs = {entry["pair"]: entry for entry in cls.report["pairs"]}
         controls = cls.report["controls"]

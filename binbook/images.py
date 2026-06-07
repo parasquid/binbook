@@ -30,14 +30,16 @@ def pil_image_to_packed(image: Image.Image, profile: DisplayProfile, *, dither: 
     luma = canvas.tobytes()
     if profile.storage_pixel_format == PixelFormat.GRAY1_PACKED:
         pixels = _luma_to_gray1_pixels(luma, profile.logical_width, profile.logical_height, dither=dither)
-        return pack_gray1(pixels, profile.logical_width, profile.logical_height)
+        pixels = _orient_pixels_to_storage(pixels, profile)
+        return pack_gray1(pixels, profile.storage_width, profile.storage_height)
     if profile.storage_pixel_format == PixelFormat.GRAY2_PACKED:
         pixels = _luma_to_gray2_pixels(luma, profile.logical_width, profile.logical_height, dither=dither)
-        return pack_gray2(pixels, profile.logical_width, profile.logical_height)
+        pixels = _orient_pixels_to_storage(pixels, profile)
+        return pack_gray2(pixels, profile.storage_width, profile.storage_height)
     raise ValueError(f"unsupported profile pixel format: {profile.storage_pixel_format}")
 
 
-def packed_to_png(data: bytes, pixel_format: PixelFormat, width: int, height: int, output: Path) -> None:
+def packed_to_image(data: bytes, pixel_format: PixelFormat, width: int, height: int) -> Image.Image:
     image = Image.new("L", (width, height))
     if pixel_format == PixelFormat.GRAY1_PACKED:
         pixels = unpack_gray1(data, width, height)
@@ -47,6 +49,28 @@ def packed_to_png(data: bytes, pixel_format: PixelFormat, width: int, height: in
         image.putdata([gray2_to_luma(v) for v in pixels])
     else:
         raise ValueError(f"unsupported page pixel format: {pixel_format}")
+    return image
+
+
+def storage_image_to_logical(image: Image.Image, *, logical_width: int, logical_height: int, logical_to_physical_rotation: int) -> Image.Image:
+    rotation = logical_to_physical_rotation % 360
+    if rotation == 0:
+        logical = image
+    elif rotation == 90:
+        logical = image.rotate(90, expand=True)
+    elif rotation == 180:
+        logical = image.rotate(180, expand=True)
+    elif rotation == 270:
+        logical = image.rotate(270, expand=True)
+    else:
+        raise ValueError(f"unsupported logical-to-physical rotation: {logical_to_physical_rotation}")
+    if logical.size != (logical_width, logical_height):
+        raise ValueError("logical image dimensions do not match display profile")
+    return logical
+
+
+def packed_to_png(data: bytes, pixel_format: PixelFormat, width: int, height: int, output: Path) -> None:
+    image = packed_to_image(data, pixel_format, width, height)
     image.save(output)
 
 
@@ -74,6 +98,47 @@ def _luma_to_gray2_pixels(luma: bytes, width: int, height: int, *, dither: bool)
     if not dither:
         return [_luma_to_gray2(v) for v in luma]
     return _floyd_steinberg(luma, width, height, [0, 85, 170, 255], [0, 1, 2, 3])
+
+
+def _orient_pixels_to_storage(pixels: list[int], profile: DisplayProfile) -> list[int]:
+    rotation = profile.logical_to_physical_rotation % 360
+    if rotation == 0:
+        if profile.storage_width != profile.logical_width or profile.storage_height != profile.logical_height:
+            raise ValueError("storage dimensions do not match logical dimensions for zero-rotation profile")
+        return pixels
+    if rotation == 90:
+        return _rotate_pixels_90_clockwise(pixels, profile.logical_width, profile.logical_height)
+    if rotation == 180:
+        return _rotate_pixels_180(pixels, profile.logical_width, profile.logical_height)
+    if rotation == 270:
+        return _rotate_pixels_270_clockwise(pixels, profile.logical_width, profile.logical_height)
+    raise ValueError(f"unsupported logical-to-physical rotation: {profile.logical_to_physical_rotation}")
+
+
+def _rotate_pixels_90_clockwise(pixels: list[int], width: int, height: int) -> list[int]:
+    out = [0] * (width * height)
+    storage_width = height
+    for y in range(height):
+        for x in range(width):
+            out[x * storage_width + (height - 1 - y)] = pixels[y * width + x]
+    return out
+
+
+def _rotate_pixels_180(pixels: list[int], width: int, height: int) -> list[int]:
+    out = [0] * (width * height)
+    for y in range(height):
+        for x in range(width):
+            out[(height - 1 - y) * width + (width - 1 - x)] = pixels[y * width + x]
+    return out
+
+
+def _rotate_pixels_270_clockwise(pixels: list[int], width: int, height: int) -> list[int]:
+    out = [0] * (width * height)
+    storage_width = height
+    for y in range(height):
+        for x in range(width):
+            out[(width - 1 - x) * storage_width + y] = pixels[y * width + x]
+    return out
 
 
 def _floyd_steinberg(luma: bytes, width: int, height: int, levels: list[int], values: list[int]) -> list[int]:
