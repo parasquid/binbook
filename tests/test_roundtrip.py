@@ -22,11 +22,10 @@ def test_png_folder_can_encode_inspect_and_decode(tmp_path: Path, capsys):
     assert raw[:8] == MAGIC
 
     reader = BinBookReader.open(book)
-    assert reader.header.version_major == 0
-    assert reader.header.version_minor == 1
     assert reader.header.page_data_offset < 4096
     assert reader.header.page_data_offset % 16 == 0
     assert len(reader.pages) == 2
+    assert len(reader.chapters) == 0
     assert {page.pixel_format for page in reader.pages} == {PixelFormat.GRAY2_PACKED}
     assert {page.uncompressed_size for page in reader.pages} == {96_000}
 

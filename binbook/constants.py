@@ -3,8 +3,6 @@ from __future__ import annotations
 from enum import IntEnum
 
 MAGIC = b"BINBOOK\0"
-VERSION_MAJOR = 0
-VERSION_MINOR = 1
 PAGE_DATA_ALIGNMENT = 65536
 UINT32_MAX = 0xFFFFFFFF
 
@@ -26,6 +24,7 @@ class SectionId(IntEnum):
     PAGE_INDEX = 40
     NAV_INDEX = 41
     PAGE_LABELS_RESERVED = 42
+    CHAPTER_INDEX = 43
     PAGE_DATA = 50
 
 
@@ -44,6 +43,7 @@ REQUIRED_SECTIONS = {
     SectionId.CHROME_POLICY,
     SectionId.PAGE_INDEX,
     SectionId.NAV_INDEX,
+    SectionId.CHAPTER_INDEX,
     SectionId.PAGE_DATA,
 }
 

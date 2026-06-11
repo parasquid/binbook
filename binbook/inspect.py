@@ -44,10 +44,10 @@ def _payload(reader: BinBookReader, validation_errors: list[str] | None) -> dict
     ratio = compressed / uncompressed if uncompressed else 0
     payload: dict[str, object] = {
         "format": "BinBook",
-        "version": {"major": reader.header.version_major, "minor": reader.header.version_minor},
         "file_size": reader.header.file_size,
         "section_count": len(reader.sections),
         "page_count": len(reader.pages),
+        "chapter_count": len(reader.chapters),
         "page_data": {"offset": reader.header.page_data_offset, "length": reader.header.page_data_length},
         "compression": {
             "compressed_bytes": compressed,
@@ -93,10 +93,10 @@ def _text(payload: dict[str, object], *, strict: bool) -> str:
     page_data = payload["page_data"]
     lines = [
         "BinBook",
-        f"Version: {payload['version']['major']}.{payload['version']['minor']}",
         f"File size: {payload['file_size']}",
         f"Sections: {payload['section_count']}",
         f"Pages: {payload['page_count']}",
+        f"Chapters: {payload['chapter_count']}",
         f"Page data offset: {page_data['offset']}",
         f"Page data length: {page_data['length']}",
         f"Compression: {compression['compressed_bytes']}/{compression['uncompressed_bytes']} bytes ({compression['ratio']:.2%})",

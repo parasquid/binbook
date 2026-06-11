@@ -6,7 +6,6 @@ from pathlib import Path
 from .checksums import crc32
 from .constants import (
     REQUIRED_SECTIONS,
-    VERSION_MAJOR,
     CompressionMethod,
     PageKind,
     PixelFormat,
@@ -23,10 +22,12 @@ from .sections import (
 )
 from .structs import (
     HEADER_SIZE,
+    CHAPTER_INDEX_ENTRY_SIZE,
     NAV_INDEX_ENTRY_SIZE,
     PAGE_INDEX_ENTRY_SIZE,
     SECTION_ENTRY_SIZE,
     BinBookHeader,
+    ChapterIndexEntry,
     PageIndexEntry,
     SectionEntry,
     StringRef,
@@ -44,6 +45,7 @@ class BinBookReader:
     header: BinBookHeader
     sections: dict[SectionId, SectionEntry]
     pages: list[PageIndexEntry]
+    chapters: list[ChapterIndexEntry]
 
     @classmethod
     def open(cls, path: Path | str, *, validate: bool = True) -> "BinBookReader":
@@ -52,14 +54,13 @@ class BinBookReader:
         header = BinBookHeader.unpack(data[:HEADER_SIZE])
         sections = _read_sections(data, header)
         pages = _read_pages(data, sections)
-        reader = cls(book_path, data, header, sections, pages)
+        chapters = _read_chapters(data, sections)
+        reader = cls(book_path, data, header, sections, pages, chapters)
         if validate:
             reader.validate()
         return reader
 
     def validate(self) -> None:
-        if self.header.version_major != VERSION_MAJOR:
-            raise ValueError("unsupported BinBook major version")
         if self.header.section_table_entry_size != SECTION_ENTRY_SIZE:
             raise ValueError("unsupported section entry size")
         if self.header.page_index_entry_size != PAGE_INDEX_ENTRY_SIZE:
@@ -97,7 +98,7 @@ class BinBookReader:
         previous_progress = 0
         for page in self.pages:
             if page.page_kind == PageKind.MIXED_RESERVED:
-                raise ValueError("MIXED_RESERVED pages are unsupported in v0.1")
+                raise ValueError("MIXED_RESERVED pages are unsupported")
             if page.pixel_format == PixelFormat.GRAY1_PACKED:
                 page_format_flag = int(PixelFormatFlag.GRAY1_PACKED)
             elif page.pixel_format == PixelFormat.GRAY2_PACKED:
@@ -121,6 +122,18 @@ class BinBookReader:
                 if start < other_end and end > other_start:
                     raise ValueError("page blobs overlap")
             used.append((start, end))
+        chapter_section = self.sections[SectionId.CHAPTER_INDEX]
+        if chapter_section.entry_size != CHAPTER_INDEX_ENTRY_SIZE:
+            raise ValueError("unsupported chapter index entry size")
+        if chapter_section.record_count != len(self.chapters):
+            raise ValueError("chapter index count mismatch")
+        for expected, chapter in enumerate(self.chapters):
+            if chapter.chapter_index != expected:
+                raise ValueError("chapter index is not contiguous")
+            if chapter.target_page_number >= len(self.pages):
+                raise ValueError("chapter target page is out of range")
+            if chapter.nav_type not in (3, 4):
+                raise ValueError("chapter index contains non-selectable nav type")
 
     def _validate_reader_requirements(self) -> None:
         data = self._section_data(SectionId.READER_REQUIREMENTS)
@@ -177,16 +190,22 @@ class BinBookReader:
     def _validate_string_refs(self) -> None:
         table = self._section_data(SectionId.STRING_TABLE)
         for section_id, offsets in SECTION_STRING_REF_OFFSETS.items():
+            section = self.sections[section_id]
             data = self._section_data(section_id)
-            for offset in offsets:
-                if offset + 8 > len(data):
-                    raise ValueError(f"{section_id.name} StringRef field is outside section")
-                ref = StringRef.unpack(data, offset)
-                if ref.length == 0:
-                    continue
-                if ref.offset + ref.length > len(table):
-                    raise ValueError("StringRef is outside the string table")
-                table[ref.offset : ref.offset + ref.length].decode("utf-8")
+            record_count = section.record_count if section.entry_size else 1
+            stride = section.entry_size if section.entry_size else 0
+            for record_index in range(record_count):
+                base = record_index * stride
+                for offset in offsets:
+                    absolute = base + offset
+                    if absolute + 8 > len(data):
+                        raise ValueError(f"{section_id.name} StringRef field is outside section")
+                    ref = StringRef.unpack(data, absolute)
+                    if ref.length == 0:
+                        continue
+                    if ref.offset + ref.length > len(table):
+                        raise ValueError("StringRef is outside the string table")
+                    table[ref.offset : ref.offset + ref.length].decode("utf-8")
 
     def _section_data(self, section_id: SectionId) -> bytes:
         section = self.sections[section_id]
@@ -229,5 +248,15 @@ def _read_pages(data: bytes, sections: dict[SectionId, SectionEntry]) -> list[Pa
         return []
     return [
         PageIndexEntry.unpack(data, section.offset + index * section.entry_size)
+        for index in range(section.record_count)
+    ]
+
+
+def _read_chapters(data: bytes, sections: dict[SectionId, SectionEntry]) -> list[ChapterIndexEntry]:
+    section = sections.get(SectionId.CHAPTER_INDEX)
+    if section is None:
+        return []
+    return [
+        ChapterIndexEntry.unpack(data, section.offset + index * section.entry_size)
         for index in range(section.record_count)
     ]

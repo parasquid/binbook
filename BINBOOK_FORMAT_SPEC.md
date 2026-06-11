@@ -1,4 +1,4 @@
-# BinBook Format Specification v0.1
+# BinBook Format Specification
 
 Language-agnostic specification for the BinBook compiled raster-book format.
 Designed for low-RAM e-ink and embedded display devices.
@@ -132,19 +132,19 @@ All multi-byte integers are **little-endian**.
 ```c
 struct BinBookHeader {
     u8   magic[8];                   // "BINBOOK\0" (0x42 0x49 0x4E 0x42 0x4F 0x4F 0x4B 0x00)
-    u16  version_major;              // 0 for v0.1
-    u16  version_minor;              // 1 for v0.1
+    u16  reserved0;                  // 0
+    u16  reserved1;                  // 0
     u16  header_size;                // 256
     u16  header_flags;              // 0 (reserved for future use)
 
     u64  file_size;                  // Total file size in bytes (0 = skip validation)
     u64  section_table_offset;       // Absolute offset to section table
     u32  section_table_length;       // Length of section table in bytes
-    u16  section_table_entry_size;   // 40 for v0.1
+    u16  section_table_entry_size;   // 40
     u16  section_count;              // Number of section table entries
 
-    u16  page_index_entry_size;      // 76 for v0.1
-    u16  nav_index_entry_size;       // 48 for v0.1
+    u16  page_index_entry_size;      // 76
+    u16  nav_index_entry_size;       // 48
 
     u64  page_data_offset;           // Absolute offset to PAGE_DATA
     u64  page_data_length;           // Length of PAGE_DATA in bytes
@@ -161,14 +161,13 @@ The fields before `reserved` occupy 68 bytes. The `reserved[188]` tail brings th
 **Field Details**:
 
 - **magic**: Must be exactly `0x42 0x49 0x4E 0x42 0x4F 0x4F 0x4B 0x00` ("BINBOOK\0")
-- **version_major**: Readers must reject files where `version_major` != supported_major
-- **version_minor**: Readers should tolerate higher minor versions unless they use unsupported features
-- **header_flags**: Must be 0 in v0.1. Readers must ignore non-zero values.
+- **reserved0/reserved1**: Writers set these to 0. Readers ignore them.
+- **header_flags**: Writers set this to 0. Readers ignore non-zero values.
 - **file_size**: If nonzero, readers should validate the actual file is at least this size
 - **section_table_offset**: Typically 256 (right after the header)
-- **section_table_entry_size**: Must be 40 for v0.1
-- **page_index_entry_size**: Must be 76 for v0.1
-- **nav_index_entry_size**: Must be 48 for v0.1
+- **section_table_entry_size**: Must be 40
+- **page_index_entry_size**: Must be 76
+- **nav_index_entry_size**: Must be 48
 - **page_data_offset**: Absolute offset to start of page blobs. Typically aligned to 64 KiB.
 - **reserved**: Must be zero-filled by writer. Readers must ignore.
 
@@ -207,6 +206,7 @@ struct SectionEntry {
 | 40 | PAGE_INDEX | Yes | Yes (76 bytes each) |
 | 41 | NAV_INDEX | Yes | Yes (48 bytes each) |
 | 42 | PAGE_LABELS_RESERVED | No | Reserved |
+| 43 | CHAPTER_INDEX | Yes | Yes (32 bytes each) |
 | 50 | PAGE_DATA | Yes | No (raw blobs) |
 | 60-63 | RESERVED | No | Reserved for future use |
 
@@ -419,7 +419,7 @@ struct RenditionIdentity {
     u8   chrome_policy_hash[32];      // Copy of ChromePolicy hash
 
     StringRef compiler_name;          // e.g., "binbook-python-poc"
-    StringRef compiler_version;       // e.g., "0.1.0"
+    StringRef reserved_compiler_info;
 
     u64  created_unix_time;           // Unix timestamp of compilation
     u8   reserved[32];
@@ -436,8 +436,7 @@ SHA-256(
     typography_policy_hash (32 bytes) +
     image_policy_hash (32 bytes) +
     compression_policy_hash (32 bytes) +
-    chrome_policy_hash (32 bytes) +
-    u32(compiler_version_utf8_length) + compiler_version_utf8_bytes
+    chrome_policy_hash (32 bytes)
 )
 ```
 
@@ -595,12 +594,12 @@ struct ChromePolicy {
 
 ### 3.18 PAGE_INDEX Section (Record-Based)
 
-Array of `PageIndexEntry` records. Count = `section_entry.record_count`. Size per entry = `header.page_index_entry_size` (76 bytes for v0.1).
+Array of `PageIndexEntry` records. Count = `section_entry.record_count`. Size per entry = `header.page_index_entry_size` (76 bytes).
 
 ```c
 struct PageIndexEntry {
     u32  page_number;                 // 0-based page index
-    u16  page_kind;                   // 1=TEXT, 2=IMAGE, 3=MIXED_RESERVED (reject in v0.1)
+    u16  page_kind;                   // 1=TEXT, 2=IMAGE, 3=MIXED_RESERVED
     u16  pixel_format;                // 1=GRAY1, 2=GRAY2, 4=GRAY4
 
     u16  compression_method;          // 0=NONE, 1=RLE_PACKBITS
@@ -636,7 +635,7 @@ absolute_offset = header.page_data_offset + page.relative_blob_offset
 
 ### 3.19 NAV_INDEX Section (Record-Based)
 
-Array of `NavIndexEntry` records. Count = `section_entry.record_count`. Size per entry = `header.nav_index_entry_size` (48 bytes for v0.1).
+Array of `NavIndexEntry` records. Count = `section_entry.record_count`. Size per entry = `header.nav_index_entry_size` (48 bytes).
 
 ```c
 struct NavIndexEntry {
@@ -660,7 +659,42 @@ struct NavIndexEntry {
 
 **Note**: UINT32_MAX = `0xFFFFFFFF`. Used for "none" or "no parent/child/sibling".
 
-### 3.20 PAGE_DATA Section
+### 3.20 CHAPTER_INDEX Section (Record-Based)
+
+Array of `ChapterIndexEntry` records. Count = `section_entry.record_count`. Size per entry = `section_entry.entry_size` (32 bytes).
+
+This is the reader-facing selectable chapter table. It contains a compact,
+directly indexable subset of navigation entries that should appear in a chapter
+picker. Readers use this section for fast chapter list windows and selected
+chapter lookup instead of scanning `NAV_INDEX`.
+
+```c
+struct ChapterIndexEntry {
+    u32  chapter_index;              // 0-based chapter row index
+    u32  nav_index;                  // Corresponding NAV_INDEX record
+
+    StringRef title;                 // Display title for this chapter row
+
+    u32  rendered_page_number;       // Page number this chapter points to
+
+    u16  level;                      // Nesting level copied from NAV_INDEX
+    u16  nav_type;                   // 3=CHAPTER, 4=SECTION
+
+    u32  source_spine_index;         // EPUB spine index (UINT32_MAX = none)
+    u32  chapter_flags;              // Reserved
+};
+```
+
+Rules:
+
+- `chapter_index` values are contiguous from 0.
+- `rendered_page_number` must be within `PAGE_INDEX.record_count`.
+- `nav_type` must be selectable by the reader. The current writer emits
+  `CHAPTER` and `SECTION` entries.
+- `title` must reference `STRING_TABLE` and may be reused from the matching
+  `NAV_INDEX` entry.
+
+### 3.21 PAGE_DATA Section
 
 Raw concatenated compressed page blobs. No page-local headers.
 
@@ -836,9 +870,6 @@ header = read_bytes(256);
 if (memcmp(header.magic, "BINBOOK\0", 8) != 0) {
     error("invalid magic");
 }
-if (header.version_major != SUPPORTED_MAJOR) {
-    error("unsupported major version");
-}
 if (header.section_table_entry_size != EXPECTED_SECTION_ENTRY_SIZE) {
     error("unsupported section entry size");
 }
@@ -855,7 +886,7 @@ for (i = 0; i < header.section_count; i++) {
 required = {STRING_TABLE, DISPLAY_PROFILE, LAYOUT_PROFILE, READER_REQUIREMENTS,
             SOURCE_IDENTITY, BOOK_METADATA, RENDITION_IDENTITY,
             FONT_POLICY, TYPOGRAPHY_POLICY, IMAGE_POLICY, COMPRESSION_POLICY,
-            CHROME_POLICY, PAGE_INDEX, NAV_INDEX, PAGE_DATA};
+            CHROME_POLICY, PAGE_INDEX, NAV_INDEX, CHAPTER_INDEX, PAGE_DATA};
 for (id in required) {
     if (id not in sections) error("missing required section");
 }
@@ -875,7 +906,11 @@ for (i = 0; i < pi_section.record_count; i++) {
     pages.append(read_PageIndexEntry(offset));
 }
 
-// Step 6: Decode a specific page
+// Step 6: Read directly indexed chapter rows
+chapter_section = sections[CHAPTER_INDEX];
+chapter = read_ChapterIndexEntry(chapter_section.offset + chapter_index * chapter_section.entry_size);
+
+// Step 7: Decode a specific page
 page = pages[page_number];
 absolute_offset = header.page_data_offset + page.relative_blob_offset;
 compressed_blob = read_bytes(absolute_offset, page.compressed_size);
@@ -887,7 +922,7 @@ if (page.page_crc32 != 0) {
 decompressed = decompress(compressed_blob, page.compression_method);
 if (len(decompressed) != page.uncompressed_size) error("size mismatch");
 
-// Step 7: Convert pixels to display format
+// Step 8: Convert pixels to display format
 // For xteink-x4-portrait, default pages are GRAY2_PACKED logical portrait pixels.
 // Firmware rotates logical pixels into the physical framebuffer using
 // DISPLAY_PROFILE.logical_to_physical_rotation.
@@ -919,9 +954,10 @@ While the section table is authoritative (readers must use it), the recommended 
 3. STRING_TABLE
 4. Policy/metadata sections (any order)
 5. NAV_INDEX
-6. PAGE_INDEX
-7. Zero padding
-8. PAGE_DATA
+6. CHAPTER_INDEX
+7. PAGE_INDEX
+8. Zero padding
+9. PAGE_DATA
 
 ### 8.4 String Table Construction
 
@@ -960,7 +996,7 @@ physical_y = logical_width_px - 1 - logical_x
 
 The stored page blob remains logical portrait `480x800` row-major data. Firmware rotates into the physical `800x480` display framebuffer.
 
-The default X4 output for BinBook v0.1 is canonical `GRAY2_PACKED`. A compiler may emit `GRAY1_PACKED` for an explicit lower-quality or fast-mode configuration, but readers must not assume all X4 books are 1-bit.
+The default X4 output for BinBook is canonical `GRAY2_PACKED`. A compiler may emit `GRAY1_PACKED` for an explicit lower-quality or fast-mode configuration, but readers must not assume all X4 books are 1-bit.
 
 **Canonical GRAY2 values**:
 - `0 = black`
@@ -982,11 +1018,9 @@ Readers/firmware should validate:
 
 ### File-Level
 - [ ] Magic matches "BINBOOK\0"
-- [ ] `version_major` is supported
-- [ ] `version_minor` is acceptable (or features used are supported)
 - [ ] `file_size` is 0 or actual file size >= `file_size`
 - [ ] `section_table_offset` + `section_table_length` <= file size
-- [ ] `section_table_entry_size` is supported (40 for v0.1)
+- [ ] `section_table_entry_size` is supported (40)
 
 ### Section-Level
 - [ ] All required sections present
@@ -995,16 +1029,22 @@ Readers/firmware should validate:
 - [ ] Section CRC32s valid (if nonzero)
 
 ### Page-Level
-- [ ] `page_index_entry_size` is supported (76 for v0.1)
-- [ ] `nav_index_entry_size` is supported (48 for v0.1)
+- [ ] `page_index_entry_size` is supported (76)
+- [ ] `nav_index_entry_size` is supported (48)
 - [ ] All page blobs within `PAGE_DATA` bounds
 - [ ] No overlapping page blobs
 - [ ] `pixel_format` is supported
 - [ ] `compression_method` is supported
-- [ ] `page_kind` != MIXED_RESERVED (3) in v0.1
+- [ ] `page_kind` != MIXED_RESERVED (3)
 - [ ] `progress_start_ppm` <= `progress_end_ppm`
 - [ ] Progress is monotonically non-decreasing
 - [ ] Page dimensions match layout profile
+
+### Chapter-Level
+- [ ] `CHAPTER_INDEX.entry_size` is supported (32)
+- [ ] `chapter_index` values are contiguous from 0
+- [ ] `rendered_page_number` targets an existing page
+- [ ] `nav_type` is a selectable chapter row type
 
 ### String-Level
 - [ ] All `StringRef` offsets/lengths within STRING_TABLE bounds
@@ -1020,27 +1060,9 @@ Readers/firmware should validate:
 
 ---
 
-## 11. Versioning
+## 11. Examples
 
-| Field | v0.1 Value |
-|-------|------------|
-| `version_major` | 0 |
-| `version_minor` | 1 |
-| `header_size` | 256 |
-| `section_table_entry_size` | 40 |
-| `page_index_entry_size` | 76 |
-| `nav_index_entry_size` | 48 |
-
-**Rules**:
-- Readers **must reject** files where `version_major` != supported_major
-- Readers **should not reject** files solely because `version_minor` > supported_minor
-- Readers **may reject** same-major newer-minor files if they use unsupported features/sections
-
----
-
-## 12. Examples
-
-### 12.1 Minimal Valid File (Hex Dump)
+### 11.1 Minimal Valid File (Hex Dump)
 
 A minimal `.binbook` file with:
 - 1 page (GRAY2_PACKED, 480×800, RLE compressed)
@@ -1049,7 +1071,7 @@ A minimal `.binbook` file with:
 
 **Header** (first 256 bytes):
 ```
-00000000: 42 49 4e 42 4f 4f 4b 00  00 00 01 00 00 01 00 00  |BINBOOK.........|
+00000000: 42 49 4e 42 4f 4f 4b 00  00 00 00 00 00 01 00 00  |BINBOOK.........|
 00000010: 00 00 00 00 00 00 00 00  00 01 00 00 00 00 00 00  |................|
 00000020: 28 01 00 00 10 00 4c 01  04 00 04 00 00 00 10 00  |(.....L.........|
 00000030: 00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
@@ -1059,8 +1081,8 @@ A minimal `.binbook` file with:
 
 **Legend**:
 - Bytes 0-7: `magic` = "BINBOOK\0"
-- Bytes 8-9: `version_major` = 0
-- Bytes 10-11: `version_minor` = 1
+- Bytes 8-9: `reserved0` = 0
+- Bytes 10-11: `reserved1` = 0
 - Bytes 12-13: `header_size` = 256
 - Bytes 14-15: `header_flags` = 0
 - Bytes 16-23: `file_size` = 0 (skip validation)
@@ -1073,7 +1095,7 @@ A minimal `.binbook` file with:
 
 *(Note: Full hex dump would be ~100+ lines. The above shows header structure. In practice, use `binbook inspect` to see a real file's structure.)*
 
-### 12.2 StringRef Example
+### 11.2 StringRef Example
 
 STRING_TABLE contains: `"xteink-x4-portrait"` (20 bytes) starting at offset 0.
 
@@ -1088,7 +1110,7 @@ In binary (little-endian):
 00 00 00 00  14 00 00 00
 ```
 
-### 12.3 GRAY1_PACKED Pixel Example
+### 11.3 GRAY1_PACKED Pixel Example
 
 An 8×1 pixel row:
 
@@ -1103,7 +1125,7 @@ Packed into 1 byte:
 bit 7..0 = 0 1 1 0 1 0 0 1 = 0x69
 ```
 
-### 12.4 GRAY2_PACKED Pixel Example
+### 11.4 GRAY2_PACKED Pixel Example
 
 A 4×4 pixel image (compressed for clarity):
 
@@ -1149,7 +1171,7 @@ Byte 3: pixels 0-3 of row 3: 11 00 01 10 = 0xC6
 ```c
 #define PAGE_KIND_TEXT   1
 #define PAGE_KIND_IMAGE  2
-// 3 = MIXED_RESERVED (reject in v0.1)
+// 3 = MIXED_RESERVED
 ```
 
 ### Compression Methods

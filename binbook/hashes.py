@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import struct
-
-
 def sha256_digest(data: bytes) -> bytes:
     return hashlib.sha256(data).digest()
 
@@ -23,9 +20,7 @@ def rendition_hash(
     image_policy_hash: bytes,
     compression_policy_hash: bytes,
     chrome_policy_hash: bytes,
-    compiler_version: str,
 ) -> bytes:
-    version = compiler_version.encode("utf-8")
     return sha256_digest(
         b"".join(
             [
@@ -37,8 +32,6 @@ def rendition_hash(
                 image_policy_hash,
                 compression_policy_hash,
                 chrome_policy_hash,
-                struct.pack("<I", len(version)),
-                version,
             ]
         )
     )

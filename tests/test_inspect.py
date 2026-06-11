@@ -21,8 +21,8 @@ def test_inspect_json_outputs_structural_summary(tmp_path: Path, capsys):
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["format"] == "BinBook"
-    assert payload["version"] == {"major": 0, "minor": 1}
     assert payload["page_count"] == 1
+    assert payload["chapter_count"] == 0
     assert payload["validation"] == {"ok": True, "errors": []}
     assert payload["sections"][0]["name"] == "STRING_TABLE"
     assert payload["pages"][0]["pixel_format"] == 2

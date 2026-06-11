@@ -3,18 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 import struct
 
-from .constants import MAGIC, VERSION_MAJOR, VERSION_MINOR, SectionId
+from .constants import MAGIC, SectionId
 
 HEADER_SIZE = 256
 SECTION_ENTRY_SIZE = 40
 PAGE_INDEX_ENTRY_SIZE = 76
 NAV_INDEX_ENTRY_SIZE = 48
+CHAPTER_INDEX_ENTRY_SIZE = 32
 
 _HEADER = struct.Struct("<8sHHHHQQIHHHHQQII")
 _STRING_REF = struct.Struct("<II")
 _SECTION = struct.Struct("<HHQQIII8s")
 _PAGE_INDEX = struct.Struct("<IHHHHI QIII HHHH II II 16s")
 _NAV_INDEX = struct.Struct("<IHH II II IIIIII")
+_CHAPTER_INDEX = struct.Struct("<II II IHHII")
 
 
 @dataclass(frozen=True)
@@ -43,16 +45,14 @@ class BinBookHeader:
     page_data_length: int = 0
     file_crc32: int = 0
     header_crc32: int = 0
-    version_major: int = VERSION_MAJOR
-    version_minor: int = VERSION_MINOR
     header_flags: int = 0
     header_size: int = HEADER_SIZE
 
     def pack(self) -> bytes:
         data = _HEADER.pack(
             MAGIC,
-            self.version_major,
-            self.version_minor,
+            0,
+            0,
             self.header_size,
             self.header_flags,
             self.file_size,
@@ -75,8 +75,8 @@ class BinBookHeader:
             raise ValueError("header is shorter than 256 bytes")
         (
             magic,
-            version_major,
-            version_minor,
+            _reserved0,
+            _reserved1,
             header_size,
             header_flags,
             file_size,
@@ -105,8 +105,6 @@ class BinBookHeader:
             page_data_length=page_data_length,
             file_crc32=file_crc32,
             header_crc32=header_crc32,
-            version_major=version_major,
-            version_minor=version_minor,
             header_flags=header_flags,
             header_size=header_size,
         )
@@ -262,8 +260,48 @@ class NavIndexEntry:
         )
 
 
+@dataclass(frozen=True)
+class ChapterIndexEntry:
+    chapter_index: int
+    nav_index: int
+    title: StringRef
+    target_page_number: int
+    level: int = 0
+    nav_type: int = 3
+    source_spine_index: int = 0xFFFFFFFF
+    chapter_flags: int = 0
+
+    def pack(self) -> bytes:
+        return _CHAPTER_INDEX.pack(
+            self.chapter_index,
+            self.nav_index,
+            self.title.offset,
+            self.title.length,
+            self.target_page_number,
+            self.level,
+            self.nav_type,
+            self.source_spine_index,
+            self.chapter_flags,
+        )
+
+    @classmethod
+    def unpack(cls, data: bytes, offset: int = 0) -> "ChapterIndexEntry":
+        values = _CHAPTER_INDEX.unpack_from(data, offset)
+        return cls(
+            chapter_index=values[0],
+            nav_index=values[1],
+            title=StringRef(values[2], values[3]),
+            target_page_number=values[4],
+            level=values[5],
+            nav_type=values[6],
+            source_spine_index=values[7],
+            chapter_flags=values[8],
+        )
+
+
 assert _HEADER.size == 68
 assert _STRING_REF.size == 8
 assert _SECTION.size == SECTION_ENTRY_SIZE
 assert _PAGE_INDEX.size == PAGE_INDEX_ENTRY_SIZE
 assert _NAV_INDEX.size == NAV_INDEX_ENTRY_SIZE
+assert _CHAPTER_INDEX.size == CHAPTER_INDEX_ENTRY_SIZE

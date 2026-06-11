@@ -18,6 +18,8 @@ SECTION_STRING_REF_OFFSETS: dict[SectionId, tuple[int, ...]] = {
     SectionId.RENDITION_IDENTITY: (256, 264),
     SectionId.FONT_POLICY: (36, 44, 52),
     SectionId.TYPOGRAPHY_POLICY: (36,),
+    SectionId.NAV_INDEX: (8, 16),
+    SectionId.CHAPTER_INDEX: (8,),
 }
 
 _DISPLAY_PROFILE = struct.Struct("<HHHHBhBIIHHHHBHB")
@@ -233,7 +235,7 @@ class ReaderRequirementsSection:
     required_features: int
     required_storage_pixel_format_flags: int
     required_grayscale_levels: int
-    required_minimum_minor_version: int
+    reserved0: int
     required_compression_method_flags: int
     max_page_width: int
     max_page_height: int
@@ -248,7 +250,7 @@ class ReaderRequirementsSection:
             required_features=(1 << 0) | (1 << 2) | (1 << 3) | (1 << 4),
             required_storage_pixel_format_flags=int(profile.storage_pixel_format_flag),
             required_grayscale_levels=profile.grayscale_levels,
-            required_minimum_minor_version=1,
+            reserved0=0,
             required_compression_method_flags=1 << CompressionMethod.RLE_PACKBITS,
             max_page_width=profile.logical_width,
             max_page_height=profile.logical_height,
@@ -262,7 +264,7 @@ class ReaderRequirementsSection:
             self.required_features,
             self.required_storage_pixel_format_flags,
             self.required_grayscale_levels,
-            self.required_minimum_minor_version,
+            self.reserved0,
             self.required_compression_method_flags,
             self.max_page_width,
             self.max_page_height,
@@ -281,7 +283,7 @@ class ReaderRequirementsSection:
             required_features=values[1],
             required_storage_pixel_format_flags=values[2],
             required_grayscale_levels=values[3],
-            required_minimum_minor_version=values[4],
+            reserved0=values[4],
             required_compression_method_flags=values[5],
             max_page_width=values[6],
             max_page_height=values[7],

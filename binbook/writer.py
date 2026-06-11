@@ -22,11 +22,13 @@ from .rle import encode_packbits
 from .sections import DisplayProfileSection, LayoutProfileSection, ReaderRequirementsSection
 from .strings import StringTableBuilder
 from .structs import (
+    CHAPTER_INDEX_ENTRY_SIZE,
     HEADER_SIZE,
     NAV_INDEX_ENTRY_SIZE,
     PAGE_INDEX_ENTRY_SIZE,
     SECTION_ENTRY_SIZE,
     BinBookHeader,
+    ChapterIndexEntry,
     PageIndexEntry,
     SectionEntry,
     StringRef,
@@ -120,7 +122,6 @@ def build_binbook(
         "package_identifier": strings.add(book_info.package_identifier or source_info.package_identifier),
         "filename": strings.add(source_info.filename or source_name),
         "compiler": strings.add("binbook-poc"),
-        "version": strings.add("0.1.0"),
         "renderer": strings.add("Pillow"),
         "font_name": strings.add(font_info.display_name),
         "font_path": strings.add(font_info.stable_path),
@@ -134,7 +135,7 @@ def build_binbook(
         (SectionId.READER_REQUIREMENTS, _reader_requirements(profile), 0, 0),
         (SectionId.SOURCE_IDENTITY, _source_identity(source_info, refs["filename"], refs["package_identifier"]), 0, 0),
         (SectionId.BOOK_METADATA, _book_metadata(refs["title"], refs["author"], refs["language"]), 0, 0),
-        (SectionId.RENDITION_IDENTITY, _rendition_identity(refs["compiler"], refs["version"]), 0, 0),
+        (SectionId.RENDITION_IDENTITY, _rendition_identity(refs["compiler"]), 0, 0),
         (SectionId.FONT_POLICY, _font_policy(font_info, refs["font_name"], refs["font_path"], refs["renderer"]), 0, 0),
         (SectionId.TYPOGRAPHY_POLICY, _typography_policy(character_spacing_milli_em), 0, 0),
         (SectionId.IMAGE_POLICY, _image_policy(profile, dither_method), 0, 0),
@@ -144,10 +145,17 @@ def build_binbook(
 
     page_index = _page_index(pages, profile)
     nav_index = _nav_index(nav_entries, nav_title_refs)
+    chapter_index = _chapter_index(nav_entries, nav_title_refs)
     sections.extend(
         [
             (SectionId.PAGE_INDEX, page_index, PAGE_INDEX_ENTRY_SIZE, len(pages)),
             (SectionId.NAV_INDEX, nav_index, NAV_INDEX_ENTRY_SIZE, len(nav_entries)),
+            (
+                SectionId.CHAPTER_INDEX,
+                chapter_index,
+                CHAPTER_INDEX_ENTRY_SIZE,
+                len(_chapter_entries(nav_entries)),
+            ),
         ]
     )
 
@@ -229,6 +237,31 @@ def _nav_index(entries: list[NavEntry], title_refs: list[StringRef]) -> bytes:
     return bytes(out)
 
 
+def _chapter_entries(entries: list[NavEntry]) -> list[tuple[int, NavEntry]]:
+    return [
+        (nav_index, entry)
+        for nav_index, entry in enumerate(entries)
+        if entry.nav_type in (3, 4)
+    ]
+
+
+def _chapter_index(entries: list[NavEntry], title_refs: list[StringRef]) -> bytes:
+    out = bytearray()
+    for chapter_index, (nav_index, entry) in enumerate(_chapter_entries(entries)):
+        out.extend(
+            ChapterIndexEntry(
+                chapter_index=chapter_index,
+                nav_index=nav_index,
+                title=title_refs[nav_index],
+                target_page_number=entry.target_page_number,
+                level=entry.level,
+                nav_type=entry.nav_type,
+                source_spine_index=entry.source_spine_index,
+            ).pack()
+        )
+    return bytes(out)
+
+
 def _display_profile(profile: DisplayProfile, refs: dict[str, StringRef]) -> bytes:
     return DisplayProfileSection.from_profile(
         profile,
@@ -274,8 +307,8 @@ def _book_metadata(title: StringRef, author: StringRef, language: StringRef) -> 
     )
 
 
-def _rendition_identity(compiler_name: StringRef, compiler_version: StringRef) -> bytes:
-    return b"".join([bytes(32 * 8), compiler_name.pack(), compiler_version.pack(), struct.pack("<Q", 0), bytes(32)])
+def _rendition_identity(compiler_name: StringRef) -> bytes:
+    return b"".join([bytes(32 * 8), compiler_name.pack(), StringRef().pack(), struct.pack("<Q", 0), bytes(32)])
 
 
 def _font_policy(font_info: FontInfo, font_name: StringRef, font_path: StringRef, renderer: StringRef) -> bytes:

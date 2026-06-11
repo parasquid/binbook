@@ -1,10 +1,12 @@
 from binbook.constants import MAGIC, SectionId
 from binbook.structs import (
+    CHAPTER_INDEX_ENTRY_SIZE,
     HEADER_SIZE,
     NAV_INDEX_ENTRY_SIZE,
     PAGE_INDEX_ENTRY_SIZE,
     SECTION_ENTRY_SIZE,
     BinBookHeader,
+    ChapterIndexEntry,
     NavIndexEntry,
     PageIndexEntry,
     SectionEntry,
@@ -17,6 +19,7 @@ def test_fixed_struct_sizes_match_v01_spec():
     assert SECTION_ENTRY_SIZE == 40
     assert PAGE_INDEX_ENTRY_SIZE == 76
     assert NAV_INDEX_ENTRY_SIZE == 48
+    assert CHAPTER_INDEX_ENTRY_SIZE == 32
 
 
 def test_header_roundtrips_and_zero_fills_reserved_bytes():
@@ -33,6 +36,7 @@ def test_header_roundtrips_and_zero_fills_reserved_bytes():
     parsed = BinBookHeader.unpack(data)
 
     assert data[:8] == MAGIC
+    assert data[8:12] == bytes(4)
     assert parsed.file_size == 1000
     assert parsed.section_table_offset == 256
     assert parsed.section_count == 1
@@ -58,7 +62,17 @@ def test_section_page_and_nav_entries_roundtrip():
         progress_end_ppm=500000,
     )
     nav = NavIndexEntry(nav_index=0, nav_type=1, title=StringRef(3, 4), target_page_number=0)
+    chapter = ChapterIndexEntry(
+        chapter_index=0,
+        nav_index=2,
+        title=StringRef(3, 4),
+        target_page_number=6,
+        level=1,
+        nav_type=3,
+        source_spine_index=5,
+    )
 
     assert SectionEntry.unpack(section.pack()) == section
     assert PageIndexEntry.unpack(page.pack()) == page
     assert NavIndexEntry.unpack(nav.pack()) == nav
+    assert ChapterIndexEntry.unpack(chapter.pack()) == chapter

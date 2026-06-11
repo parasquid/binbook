@@ -11,6 +11,7 @@ from PIL import Image
 from binbook.cli import main
 from binbook.constants import PageKind, SectionId
 from binbook.reader import BinBookReader
+from binbook.strings import read_string
 import binbook.page_compiler as page_compiler
 import binbook.text_rendering as text_rendering
 
@@ -27,6 +28,13 @@ def test_encode_epub_creates_text_image_and_nav_pages(tmp_path: Path, capsys):
     assert [page.page_kind for page in reader.pages] == [PageKind.TEXT, PageKind.IMAGE, PageKind.TEXT, PageKind.TEXT]
     assert [page.source_spine_index for page in reader.pages] == [0, 0, 0, 1]
     assert reader.sections[SectionId.NAV_INDEX].record_count == 2
+    assert reader.sections[SectionId.CHAPTER_INDEX].record_count == 2
+    string_table = reader._section_data(SectionId.STRING_TABLE)
+    assert [read_string(string_table, chapter.title) for chapter in reader.chapters] == [
+        "Chapter One",
+        "Chapter Two",
+    ]
+    assert [chapter.target_page_number for chapter in reader.chapters] == [0, 3]
 
     assert main(["inspect", str(output), "--validate", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)

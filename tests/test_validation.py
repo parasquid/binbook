@@ -98,6 +98,17 @@ def test_rejects_section_crc_mismatch_when_nonzero(tmp_path: Path):
         BinBookReader.open(path)
 
 
+def test_rejects_bad_chapter_index_entry_size(tmp_path: Path):
+    book = bytearray(_book_bytes())
+    chapter_index = _section(book, SectionId.CHAPTER_INDEX)
+    _patch_section_entry_size(book, SectionId.CHAPTER_INDEX, chapter_index.entry_size - 1)
+
+    path = _write(tmp_path, book)
+
+    with pytest.raises(ValueError, match="unsupported chapter index entry size"):
+        BinBookReader.open(path)
+
+
 def _book_bytes() -> bytes:
     packed_white_page = bytes([0xFF]) * 96_000
     compressed = encode_packbits(packed_white_page)
@@ -127,6 +138,17 @@ def _patch_section_offset(book: bytearray, section_id: SectionId, offset: int) -
         entry = SectionEntry.unpack(bytes(book), entry_offset)
         if entry.section_id == section_id:
             struct.pack_into("<Q", book, entry_offset + 4, offset)
+            return
+    raise AssertionError(f"missing section {section_id.name}")
+
+
+def _patch_section_entry_size(book: bytearray, section_id: SectionId, entry_size: int) -> None:
+    header = BinBookHeader.unpack(bytes(book[:HEADER_SIZE]))
+    for index in range(header.section_count):
+        entry_offset = header.section_table_offset + index * SECTION_ENTRY_SIZE
+        entry = SectionEntry.unpack(bytes(book), entry_offset)
+        if entry.section_id == section_id:
+            struct.pack_into("<I", book, entry_offset + 20, entry_size)
             return
     raise AssertionError(f"missing section {section_id.name}")
 
