@@ -83,7 +83,7 @@ def read_epub(path: Path | str) -> EpubBook:
         metadata = _metadata(opf)
         manifest = _manifest(opf, opf_dir)
         spine = _spine(archive, opf, manifest)
-        nav_points = _nav_points(archive, manifest)
+        nav_points = _nav_points(archive, opf, manifest)
     return EpubBook(
         path=epub_path,
         file_size=len(data),
@@ -167,14 +167,59 @@ def _spine(archive: zipfile.ZipFile, opf: ET.Element, manifest: dict[str, Manife
     return spine
 
 
-def _nav_points(archive: zipfile.ZipFile, manifest: dict[str, ManifestItem]) -> list[NavPoint]:
+def _nav_points(archive: zipfile.ZipFile, opf: ET.Element, manifest: dict[str, ManifestItem]) -> list[NavPoint]:
     nav_item = next((item for item in manifest.values() if "nav" in item.properties.split()), None)
-    if nav_item is None:
+    if nav_item is not None:
+        html = archive.read(nav_item.full_path).decode("utf-8", errors="replace")
+        parser = _NavExtractor(posixpath.dirname(nav_item.full_path))
+        parser.feed(html)
+        return parser.points
+
+    ncx_item = _ncx_item(opf, manifest)
+    if ncx_item is None:
         return []
-    html = archive.read(nav_item.full_path).decode("utf-8", errors="replace")
-    parser = _NavExtractor(posixpath.dirname(nav_item.full_path))
-    parser.feed(html)
-    return parser.points
+    ncx = ET.fromstring(archive.read(ncx_item.full_path))
+    ncx_dir = posixpath.dirname(ncx_item.full_path)
+    points: list[NavPoint] = []
+    for nav_point in _children_by_local_name(ncx, "navPoint"):
+        title = _descendant_text(nav_point, "text")
+        content = next(_children_by_local_name(nav_point, "content"), None)
+        href = (content.attrib.get("src", "") if content is not None else "").split("#", 1)[0]
+        if title and href:
+            full_path = posixpath.normpath(posixpath.join(ncx_dir, href))
+            points.append(NavPoint(title, href, full_path))
+    return points
+
+
+def _ncx_item(opf: ET.Element, manifest: dict[str, ManifestItem]) -> ManifestItem | None:
+    spine = opf.find(".//opf:spine", OPF_NS)
+    if spine is not None:
+        toc_id = spine.attrib.get("toc", "")
+        if toc_id and toc_id in manifest:
+            return manifest[toc_id]
+    return next(
+        (item for item in manifest.values() if item.media_type == "application/x-dtbncx+xml"),
+        None,
+    )
+
+
+def _children_by_local_name(element: ET.Element, name: str):
+    for child in element.iter():
+        if _local_name(child.tag) == name:
+            yield child
+
+
+def _descendant_text(element: ET.Element, name: str) -> str:
+    for child in _children_by_local_name(element, name):
+        if child.text and child.text.strip():
+            return " ".join(child.text.split())
+    return ""
+
+
+def _local_name(tag: str) -> str:
+    if "}" in tag:
+        return tag.rsplit("}", 1)[1]
+    return tag
 
 
 def _text(element: ET.Element | None) -> str:
