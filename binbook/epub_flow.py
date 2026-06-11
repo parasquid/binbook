@@ -31,9 +31,16 @@ class _FlowParser(HTMLParser):
         self.source_full_path = source_full_path
         self.items: list[FlowItem] = []
         self._text_parts: list[str] = []
+        self._ignored_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag.lower() == "img":
+        normalized_tag = tag.lower()
+        if normalized_tag in {"head", "style", "script", "title"}:
+            self._ignored_depth += 1
+            return
+        if self._ignored_depth:
+            return
+        if normalized_tag == "img":
             self._flush_text()
             attrs_dict = dict(attrs)
             src = attrs_dict.get("src")
@@ -41,12 +48,15 @@ class _FlowParser(HTMLParser):
                 self.items.append(FlowItem("image", src, self.spine_index, self.source_full_path))
 
     def handle_data(self, data: str) -> None:
+        if self._ignored_depth:
+            return
         stripped = data.strip()
         if stripped:
             self._text_parts.append(stripped)
 
     def handle_endtag(self, tag: str) -> None:
-        return None
+        if tag.lower() in {"head", "style", "script", "title"} and self._ignored_depth:
+            self._ignored_depth -= 1
 
     def close(self) -> None:
         self._flush_text()

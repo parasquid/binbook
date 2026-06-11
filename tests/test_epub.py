@@ -39,7 +39,31 @@ def test_rough_page_sequence_follows_spine_order(tmp_path: Path):
     assert pages[1].text == "Chapter Two Second paragraph."
 
 
-def _write_minimal_epub(path: Path) -> None:
+def test_rough_page_sequence_ignores_head_style_and_script_text(tmp_path: Path):
+    epub_path = tmp_path / "book.epub"
+    _write_minimal_epub(
+        epub_path,
+        chapter1_html="""<html>
+<head>
+  <title>Cover Page</title>
+  <style>@page { margin: 0; } body { padding: 0; }</style>
+  <script>window.fake = true;</script>
+</head>
+<body><h1>Chapter One</h1><p>First paragraph.</p></body>
+</html>""",
+    )
+
+    book = read_epub(epub_path)
+    pages = book.rough_page_sequence()
+
+    assert pages[0].text == "Chapter One First paragraph."
+
+
+def _write_minimal_epub(
+    path: Path,
+    *,
+    chapter1_html: str = "<html><body><h1>Chapter One</h1><p>First paragraph.</p></body></html>",
+) -> None:
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("mimetype", "application/epub+zip")
         zf.writestr(
@@ -74,6 +98,6 @@ def _write_minimal_epub(path: Path) -> None:
 </package>
 """,
         )
-        zf.writestr("OEBPS/Text/chapter1.xhtml", "<html><body><h1>Chapter One</h1><p>First paragraph.</p></body></html>")
+        zf.writestr("OEBPS/Text/chapter1.xhtml", chapter1_html)
         zf.writestr("OEBPS/Text/chapter2.xhtml", "<html><body><h1>Chapter Two</h1><p>Second paragraph.</p></body></html>")
         zf.writestr("OEBPS/Images/cover.png", b"not-a-real-png-for-parser")

@@ -14,5 +14,28 @@ def test_flow_items_preserve_text_image_text_order():
     assert items[2].value == "After image."
 
 
+def test_flow_items_ignore_head_style_and_script_text():
+    html = """
+    <html>
+      <head>
+        <title>Cover Page</title>
+        <style type="text/css">
+          @page { margin: 0; }
+          body { padding: 0; }
+        </style>
+        <script>window.fake = true;</script>
+      </head>
+      <body>
+        <div><img src="../Images/CoverDesign.jpg" alt="Cover"/></div>
+      </body>
+    </html>
+    """
+
+    items = flow_items(html, 0, "OEBPS/Text/CoverPage.html")
+
+    assert [item.kind for item in items] == ["image"]
+    assert items[0].value == "../Images/CoverDesign.jpg"
+
+
 def test_resolve_image_path_handles_relative_paths_and_fragments():
     assert resolve_image_path("OEBPS/Text/chapter.xhtml", "../Images/pic.png#cover") == "OEBPS/Images/pic.png"

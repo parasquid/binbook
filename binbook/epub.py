@@ -187,11 +187,22 @@ class _TextExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.parts: list[str] = []
+        self._ignored_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() in {"head", "style", "script", "title"}:
+            self._ignored_depth += 1
 
     def handle_data(self, data: str) -> None:
+        if self._ignored_depth:
+            return
         stripped = data.strip()
         if stripped:
             self.parts.append(stripped)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in {"head", "style", "script", "title"} and self._ignored_depth:
+            self._ignored_depth -= 1
 
 
 class _NavExtractor(HTMLParser):
