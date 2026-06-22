@@ -10,3 +10,4 @@ sample-pages/
 sample-output/
 sample-epubs/
 tmp/
+rust/target/

@@ -1,0 +1,15 @@
+[package]
+name = "binbook"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "BinBook binary raster-book format parser"
+
+[features]
+default = ["std", "lz4"]
+std = ["alloc"]
+alloc = []
+lz4 = ["dep:lz4_flex"]
+
+[dependencies]
+lz4_flex = { version = "0.13", default-features = false, features = ["safe-encode", "safe-decode"], optional = true }
