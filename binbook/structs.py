@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import struct
 
 from .constants import MAGIC, SectionId
 
 HEADER_SIZE = 256
 SECTION_ENTRY_SIZE = 40
-PAGE_INDEX_ENTRY_SIZE = 76
+PAGE_INDEX_ENTRY_SIZE = 128
 NAV_INDEX_ENTRY_SIZE = 48
 CHAPTER_INDEX_ENTRY_SIZE = 32
 
 _HEADER = struct.Struct("<8sHHHHQQIHHHHQQII")
 _STRING_REF = struct.Struct("<II")
 _SECTION = struct.Struct("<HHQQIII8s")
-_PAGE_INDEX = struct.Struct("<IHHHHI QIII HHHH II II 16s")
+_PAGE_INDEX = struct.Struct("<IHHHHI I HHHH II II 4s B4B3x 4I4I 20s")
 _NAV_INDEX = struct.Struct("<IHH II II IIIIII")
 _CHAPTER_INDEX = struct.Struct("<II II IHHII")
 
@@ -143,37 +143,58 @@ class SectionEntry:
 
 
 @dataclass(frozen=True)
+class PlaneDir:
+    bitmap: int = 0
+    compression: list[int] = field(default_factory=lambda: [0, 0, 0, 0])
+    offsets: list[int] = field(default_factory=lambda: [0, 0, 0, 0])
+    sizes: list[int] = field(default_factory=lambda: [0, 0, 0, 0])
+
+    def pack(self) -> bytes:
+        return struct.pack(
+            "<B4B3x 4I4I",
+            self.bitmap,
+            *self.compression,
+            *self.offsets,
+            *self.sizes,
+        )
+
+    @classmethod
+    def unpack(cls, data: bytes, offset: int = 0) -> "PlaneDir":
+        bitmap = data[offset]
+        compression = list(data[offset + 1:offset + 5])
+        offsets = list(struct.unpack_from("<4I", data, offset + 8))
+        sizes = list(struct.unpack_from("<4I", data, offset + 24))
+        return cls(bitmap=bitmap, compression=compression, offsets=offsets, sizes=sizes)
+
+
+@dataclass(frozen=True)
 class PageIndexEntry:
     page_number: int
     page_kind: int
     pixel_format: int
     compression_method: int
-    relative_blob_offset: int
-    compressed_size: int
-    uncompressed_size: int
     page_crc32: int
     stored_width: int
     stored_height: int
-    placement_x: int = 0
-    placement_y: int = 0
+    plane_dir: PlaneDir
     update_hint: int = 0
     page_flags: int = 0
+    placement_x: int = 0
+    placement_y: int = 0
     source_spine_index: int = 0xFFFFFFFF
     chapter_nav_index: int = 0xFFFFFFFF
     progress_start_ppm: int = 0
     progress_end_ppm: int = 0
 
     def pack(self) -> bytes:
-        return _PAGE_INDEX.pack(
+        return struct.pack(
+            "<IHHHH I I HHHH II II 40s 44s",
             self.page_number,
             self.page_kind,
             self.pixel_format,
             self.compression_method,
             self.update_hint,
             self.page_flags,
-            self.relative_blob_offset,
-            self.compressed_size,
-            self.uncompressed_size,
             self.page_crc32,
             self.stored_width,
             self.stored_height,
@@ -183,12 +204,14 @@ class PageIndexEntry:
             self.chapter_nav_index,
             self.progress_start_ppm,
             self.progress_end_ppm,
-            bytes(16),
+            self.plane_dir.pack(),
+            bytes(44),  # reserved
         )
 
     @classmethod
     def unpack(cls, data: bytes, offset: int = 0) -> "PageIndexEntry":
-        values = _PAGE_INDEX.unpack_from(data, offset)
+        values = struct.unpack_from("<IHHHH I I HHHH II II", data, offset)
+        plane_dir = PlaneDir.unpack(data, offset + 44)
         return cls(
             page_number=values[0],
             page_kind=values[1],
@@ -196,18 +219,16 @@ class PageIndexEntry:
             compression_method=values[3],
             update_hint=values[4],
             page_flags=values[5],
-            relative_blob_offset=values[6],
-            compressed_size=values[7],
-            uncompressed_size=values[8],
-            page_crc32=values[9],
-            stored_width=values[10],
-            stored_height=values[11],
-            placement_x=values[12],
-            placement_y=values[13],
-            source_spine_index=values[14],
-            chapter_nav_index=values[15],
-            progress_start_ppm=values[16],
-            progress_end_ppm=values[17],
+            page_crc32=values[6],
+            stored_width=values[7],
+            stored_height=values[8],
+            placement_x=values[9],
+            placement_y=values[10],
+            source_spine_index=values[11],
+            chapter_nav_index=values[12],
+            progress_start_ppm=values[13],
+            progress_end_ppm=values[14],
+            plane_dir=plane_dir,
         )
 
 
@@ -302,6 +323,5 @@ class ChapterIndexEntry:
 assert _HEADER.size == 68
 assert _STRING_REF.size == 8
 assert _SECTION.size == SECTION_ENTRY_SIZE
-assert _PAGE_INDEX.size == PAGE_INDEX_ENTRY_SIZE
 assert _NAV_INDEX.size == NAV_INDEX_ENTRY_SIZE
 assert _CHAPTER_INDEX.size == CHAPTER_INDEX_ENTRY_SIZE

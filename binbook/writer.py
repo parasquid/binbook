@@ -30,6 +30,7 @@ from .structs import (
     BinBookHeader,
     ChapterIndexEntry,
     PageIndexEntry,
+    PlaneDir,
     SectionEntry,
     StringRef,
 )
@@ -192,30 +193,34 @@ def build_binbook(
 
 def _page_index(pages: list[EncodedPage], profile: DisplayProfile) -> bytes:
     out = bytearray()
-    relative = 0
     total = len(pages)
+    blob_offset = 0
     for index, page in enumerate(pages):
         start = int(index * 1_000_000 / total)
         end = int((index + 1) * 1_000_000 / total)
+        plane_dir = PlaneDir(
+            bitmap=0x01,
+            compression=[CompressionMethod.RLE_PACKBITS, 0, 0, 0],
+            offsets=[blob_offset, 0, 0, 0],
+            sizes=[len(page.compressed), 0, 0, 0],
+        )
         out.extend(
             PageIndexEntry(
                 page_number=index,
                 page_kind=page.page_kind,
                 pixel_format=profile.storage_pixel_format,
                 compression_method=CompressionMethod.RLE_PACKBITS,
-                relative_blob_offset=relative,
-                compressed_size=len(page.compressed),
-                uncompressed_size=page.uncompressed_size,
                 page_crc32=page.page_crc32,
                 stored_width=profile.storage_width,
                 stored_height=profile.storage_height,
+                plane_dir=plane_dir,
                 source_spine_index=page.source_spine_index,
                 chapter_nav_index=page.chapter_nav_index,
                 progress_start_ppm=start,
                 progress_end_ppm=end,
             ).pack()
         )
-        relative += len(page.compressed)
+        blob_offset += len(page.compressed)
     return bytes(out)
 
 

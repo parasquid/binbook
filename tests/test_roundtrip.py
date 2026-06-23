@@ -27,7 +27,6 @@ def test_png_folder_can_encode_inspect_and_decode(tmp_path: Path, capsys):
     assert len(reader.pages) == 2
     assert len(reader.chapters) == 0
     assert {page.pixel_format for page in reader.pages} == {PixelFormat.GRAY2_PACKED}
-    assert {page.uncompressed_size for page in reader.pages} == {96_000}
 
     assert main(["inspect", str(book), "--validate"]) == 0
     assert "Validation: OK" in capsys.readouterr().out
@@ -67,7 +66,6 @@ def test_png_folder_can_encode_x4_gray1_when_requested(tmp_path: Path):
 
     reader = BinBookReader.open(book)
     assert {page.pixel_format for page in reader.pages} == {PixelFormat.GRAY1_PACKED}
-    assert {page.uncompressed_size for page in reader.pages} == {48_000}
 
 
 def test_png_folder_records_floyd_steinberg_dither_by_default(tmp_path: Path):

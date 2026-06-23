@@ -9,15 +9,16 @@ from binbook.structs import (
     ChapterIndexEntry,
     NavIndexEntry,
     PageIndexEntry,
+    PlaneDir,
     SectionEntry,
     StringRef,
 )
 
 
-def test_fixed_struct_sizes_match_v01_spec():
+def test_fixed_struct_sizes_match_v02_spec():
     assert HEADER_SIZE == 256
     assert SECTION_ENTRY_SIZE == 40
-    assert PAGE_INDEX_ENTRY_SIZE == 76
+    assert PAGE_INDEX_ENTRY_SIZE == 128
     assert NAV_INDEX_ENTRY_SIZE == 48
     assert CHAPTER_INDEX_ENTRY_SIZE == 32
 
@@ -45,14 +46,19 @@ def test_header_roundtrips_and_zero_fills_reserved_bytes():
 
 def test_section_page_and_nav_entries_roundtrip():
     section = SectionEntry(SectionId.PAGE_DATA, 65536, 10, 0, 0, 123)
+    plane = PlaneDir(
+        bitmap=0x07,
+        compression=[1, 1, 2, 0],
+        offsets=[0, 1000, 2000, 0],
+        sizes=[500, 500, 800, 0],
+    )
     page = PageIndexEntry(
         page_number=1,
         page_kind=2,
         pixel_format=2,
         compression_method=1,
-        relative_blob_offset=5,
-        compressed_size=10,
-        uncompressed_size=20,
+        update_hint=0,
+        page_flags=1,
         page_crc32=99,
         stored_width=480,
         stored_height=800,
@@ -60,6 +66,7 @@ def test_section_page_and_nav_entries_roundtrip():
         chapter_nav_index=0xFFFFFFFF,
         progress_start_ppm=0,
         progress_end_ppm=500000,
+        plane_dir=plane,
     )
     nav = NavIndexEntry(nav_index=0, nav_type=1, title=StringRef(3, 4), target_page_number=0)
     chapter = ChapterIndexEntry(
@@ -73,6 +80,13 @@ def test_section_page_and_nav_entries_roundtrip():
     )
 
     assert SectionEntry.unpack(section.pack()) == section
-    assert PageIndexEntry.unpack(page.pack()) == page
+    page_data = page.pack()
+    assert len(page_data) == 128
+    restored = PageIndexEntry.unpack(page_data)
+    assert restored.page_number == 1
+    assert restored.plane_dir.bitmap == 0x07
+    assert restored.plane_dir.compression[2] == 2
+    assert restored.plane_dir.offsets[1] == 1000
+    assert restored.plane_dir.sizes[2] == 800
     assert NavIndexEntry.unpack(nav.pack()) == nav
     assert ChapterIndexEntry.unpack(chapter.pack()) == chapter

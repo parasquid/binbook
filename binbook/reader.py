@@ -35,7 +35,9 @@ from .structs import (
 
 SUPPORTED_READER_FEATURES = (1 << 0) | (1 << 2) | (1 << 3) | (1 << 4)
 SUPPORTED_STORAGE_PIXEL_FORMATS = int(PixelFormatFlag.GRAY1_PACKED | PixelFormatFlag.GRAY2_PACKED)
-SUPPORTED_COMPRESSION_METHOD_FLAGS = 1 << int(CompressionMethod.RLE_PACKBITS)
+SUPPORTED_COMPRESSION_METHOD_FLAGS = (
+    1 << int(CompressionMethod.RLE_PACKBITS)
+)
 
 
 @dataclass
@@ -94,7 +96,6 @@ class BinBookReader:
         required_storage_formats = ReaderRequirementsSection.unpack(
             self._section_data(SectionId.READER_REQUIREMENTS)
         ).required_storage_pixel_format_flags
-        used: list[tuple[int, int]] = []
         previous_progress = 0
         for page in self.pages:
             if page.page_kind == PageKind.MIXED_RESERVED:
@@ -109,19 +110,16 @@ class BinBookReader:
                 raise ValueError("page pixel format does not match reader requirements")
             if page.compression_method != CompressionMethod.RLE_PACKBITS:
                 raise ValueError("unsupported page compression method")
-            start = page.relative_blob_offset
-            end = start + page.compressed_size
-            if end > self.header.page_data_length:
-                raise ValueError("page blob is outside PAGE_DATA")
+            for slot in range(4):
+                if page.plane_dir.bitmap & (1 << slot):
+                    blob_end = page.plane_dir.offsets[slot] + page.plane_dir.sizes[slot]
+                    if blob_end > self.header.page_data_length:
+                        raise ValueError("page blob is outside PAGE_DATA")
             if page.progress_start_ppm > page.progress_end_ppm or page.progress_end_ppm > 1_000_000:
                 raise ValueError("invalid page progress range")
             if page.progress_start_ppm < previous_progress:
                 raise ValueError("page progress is not monotonic")
             previous_progress = page.progress_end_ppm
-            for other_start, other_end in used:
-                if start < other_end and end > other_start:
-                    raise ValueError("page blobs overlap")
-            used.append((start, end))
         chapter_section = self.sections[SectionId.CHAPTER_INDEX]
         if chapter_section.entry_size != CHAPTER_INDEX_ENTRY_SIZE:
             raise ValueError("unsupported chapter index entry size")
@@ -213,13 +211,16 @@ class BinBookReader:
 
     def decode_page_bytes(self, page_number: int) -> tuple[bytes, PageIndexEntry]:
         page = self.pages[page_number]
-        absolute = self.header.page_data_offset + page.relative_blob_offset
-        compressed = self.data[absolute : absolute + page.compressed_size]
-        if page.page_crc32 and crc32(compressed) != page.page_crc32:
-            raise ValueError("page CRC32 mismatch")
-        unpacked = decode_packbits(compressed)
-        if len(unpacked) != page.uncompressed_size:
-            raise ValueError("decompressed page size mismatch")
+        pd = page.plane_dir
+        parts = []
+        for slot in range(4):
+            if not (pd.bitmap & (1 << slot)):
+                continue
+            absolute = self.header.page_data_offset + pd.offsets[slot]
+            compressed = self.data[absolute : absolute + pd.sizes[slot]]
+            method = pd.compression[slot] if (page.page_flags & 1) else page.compression_method
+            parts.append(decode_packbits(compressed))
+        unpacked = b"".join(parts)
         return unpacked, page
 
     def decode_page_to_png(self, page_number: int, output: Path | str) -> None:

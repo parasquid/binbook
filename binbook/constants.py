@@ -52,17 +52,24 @@ class PixelFormat(IntEnum):
     GRAY1_PACKED = 1
     GRAY2_PACKED = 2
     GRAY4_PACKED = 4
+    RGB565 = 8
+    RGB888 = 16
+    RGBA8888 = 32
 
 
 class PixelFormatFlag(IntEnum):
     GRAY1_PACKED = 1 << 0
     GRAY2_PACKED = 1 << 1
     GRAY4_PACKED = 1 << 2
+    RGB565 = 1 << 3
+    RGB888 = 1 << 4
+    RGBA8888 = 1 << 5
 
 
 class CompressionMethod(IntEnum):
     NONE = 0
     RLE_PACKBITS = 1
+    LZ4 = 2
 
 
 class DitherMethod(IntEnum):

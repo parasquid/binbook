@@ -40,7 +40,6 @@ def test_encode_records_selected_font_policy(tmp_path: Path, capsys):
     assert font_path == selected.stable_path
     assert renderer_name == "Pillow"
     assert {page.pixel_format for page in reader.pages} == {PixelFormat.GRAY2_PACKED}
-    assert {page.uncompressed_size for page in reader.pages} == {96_000}
 
     assert main(["inspect", str(output), "--validate", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)

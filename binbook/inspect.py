@@ -39,9 +39,12 @@ def collect_validation_errors(reader: BinBookReader) -> list[str]:
 
 
 def _payload(reader: BinBookReader, validation_errors: list[str] | None) -> dict[str, object]:
-    compressed = sum(page.compressed_size for page in reader.pages)
-    uncompressed = sum(page.uncompressed_size for page in reader.pages)
-    ratio = compressed / uncompressed if uncompressed else 0
+    total_compressed = 0
+    for page in reader.pages:
+        for slot in range(4):
+            if page.plane_dir.bitmap & (1 << slot):
+                total_compressed += page.plane_dir.sizes[slot]
+    ratio = total_compressed / reader.header.page_data_length if reader.header.page_data_length else 0
     payload: dict[str, object] = {
         "format": "BinBook",
         "file_size": reader.header.file_size,
@@ -50,8 +53,7 @@ def _payload(reader: BinBookReader, validation_errors: list[str] | None) -> dict
         "chapter_count": len(reader.chapters),
         "page_data": {"offset": reader.header.page_data_offset, "length": reader.header.page_data_length},
         "compression": {
-            "compressed_bytes": compressed,
-            "uncompressed_bytes": uncompressed,
+            "compressed_bytes": total_compressed,
             "ratio": ratio,
         },
         "sections": [
@@ -72,9 +74,7 @@ def _payload(reader: BinBookReader, validation_errors: list[str] | None) -> dict
                 "page_kind": page.page_kind,
                 "pixel_format": page.pixel_format,
                 "compression_method": page.compression_method,
-                "relative_blob_offset": page.relative_blob_offset,
-                "compressed_size": page.compressed_size,
-                "uncompressed_size": page.uncompressed_size,
+                "plane_bitmap": page.plane_dir.bitmap,
                 "stored_width": page.stored_width,
                 "stored_height": page.stored_height,
                 "progress_start_ppm": page.progress_start_ppm,
@@ -99,7 +99,7 @@ def _text(payload: dict[str, object], *, strict: bool) -> str:
         f"Chapters: {payload['chapter_count']}",
         f"Page data offset: {page_data['offset']}",
         f"Page data length: {page_data['length']}",
-        f"Compression: {compression['compressed_bytes']}/{compression['uncompressed_bytes']} bytes ({compression['ratio']:.2%})",
+        f"Compression: {compression['compressed_bytes']} bytes ({compression['ratio']:.2%})",
         "Section table:",
     ]
     for section in payload["sections"]:
