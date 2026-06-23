@@ -7,7 +7,7 @@ Designed for low-RAM e-ink and embedded display devices.
 
 ## 1. Introduction
 
-BinBook is a **compiled raster-book container**. It stores pre-rendered page content as compressed grayscale page blobs. The format is:
+BinBook is a **compiled raster-book container**. It stores pre-rendered page content as compressed per-plane blobs. The format is:
 
 - **Non-reflowable**: Changing font, margins, or layout requires recompilation
 - **Pre-rendered**: All text rendering, pagination, and image processing happens at compile time
@@ -18,10 +18,10 @@ BinBook is a **compiled raster-book container**. It stores pre-rendered page con
 
 ```
 Compiler (desktop/cloud):
-  EPUB → rendered pages → grayscale packed pixels → compressed blobs → .binbook
+  EPUB → rendered pages → per-plane pixels → compressed plane blobs → .binbook
 
 Firmware/reader (embedded):
-  .binbook → page index → compressed blob → decompress → display
+  .binbook → page index → plane directory → decompress needed planes → display
 ```
 
 The firmware is responsible for: validation, decompression, pixel format conversion, and UI/chrome rendering.
@@ -143,7 +143,7 @@ struct BinBookHeader {
     u16  section_table_entry_size;   // 40
     u16  section_count;              // Number of section table entries
 
-    u16  page_index_entry_size;      // 76
+    u16  page_index_entry_size;      // 128
     u16  nav_index_entry_size;       // 48
 
     u64  page_data_offset;           // Absolute offset to PAGE_DATA
@@ -166,7 +166,7 @@ The fields before `reserved` occupy 68 bytes. The `reserved[188]` tail brings th
 - **file_size**: If nonzero, readers should validate the actual file is at least this size
 - **section_table_offset**: Typically 256 (right after the header)
 - **section_table_entry_size**: Must be 40
-- **page_index_entry_size**: Must be 76
+- **page_index_entry_size**: Must be 128
 - **nav_index_entry_size**: Must be 48
 - **page_data_offset**: Absolute offset to start of page blobs. Typically aligned to 64 KiB.
 - **reserved**: Must be zero-filled by writer. Readers must ignore.
@@ -203,7 +203,7 @@ struct SectionEntry {
 | 32 | IMAGE_POLICY | Yes | No |
 | 33 | COMPRESSION_POLICY | Yes | No |
 | 34 | CHROME_POLICY | Yes | No |
-| 40 | PAGE_INDEX | Yes | Yes (76 bytes each) |
+| 40 | PAGE_INDEX | Yes | Yes (128 bytes each) |
 | 41 | NAV_INDEX | Yes | Yes (48 bytes each) |
 | 42 | PAGE_LABELS_RESERVED | No | Reserved |
 | 43 | CHAPTER_INDEX | Yes | Yes (32 bytes each) |
@@ -259,7 +259,7 @@ struct DisplayProfile {
     i16  logical_to_physical_rotation;  // Clockwise degrees: 0, 90, 180, or 270
     u8   scan_order_hint;               // 1=row_major_left_to_right_top_to_bottom
 
-    u32  supported_storage_pixel_formats; // Bit flags: bit0=GRAY1, bit1=GRAY2, bit2=GRAY4
+    u32  supported_storage_pixel_formats; // Bit flags: bit0=GRAY1, bit1=GRAY2, bit2=GRAY4, bit3=RGB565, bit4=RGB888, bit5=RGBA8888
     u32  native_output_pixel_formats;   // Bit flags for display controller
 
     u16  native_output_format_hint;     // Reserved for firmware
@@ -283,6 +283,9 @@ struct DisplayProfile {
 | 0 | GRAY1_PACKED | 1-bit, 8 pixels per byte |
 | 1 | GRAY2_PACKED | 2-bit, 4 pixels per byte |
 | 2 | GRAY4_PACKED | 4-bit, 2 pixels per byte |
+| 3 | RGB565 | 16-bit, 5-6-5, little-endian |
+| 4 | RGB888 | 24-bit, 8-8-8 |
+| 5 | RGBA8888 | 32-bit, 8-8-8-8 |
 
 **output_gray_mapping values**:
 - `0` = unknown
@@ -343,12 +346,12 @@ struct ReaderRequirements {
     u16  required_output_grayscale_levels; // 2, 4, 16, or 0=unknown
     u16  fallback_output_policy;      // 1=reject, 2=allow_downquantize, 3=allow_dither_to_1bit
 
-    u32  required_compression_methods; // Bit flags (e.g., 0x2 for RLE_PACKBITS)
+    u32  required_compression_methods; // Bit flags (e.g., 0x2 for RLE_PACKBITS, 0x4 for LZ4)
 
     u16  max_stored_page_width_px;    // Maximum page width firmware must support
     u16  max_stored_page_height_px;   // Maximum page height firmware must support
-    u32  max_uncompressed_page_size;  // Maximum decompressed blob size
-    u32  max_compressed_page_size;    // Maximum compressed blob size
+    u32  max_uncompressed_page_size;  // Maximum decompressed size of the largest single plane
+    u32  max_compressed_page_size;    // Maximum compressed size of any single plane blob
 
     u8   reserved[36];
 };
@@ -594,25 +597,23 @@ struct ChromePolicy {
 
 ### 3.18 PAGE_INDEX Section (Record-Based)
 
-Array of `PageIndexEntry` records. Count = `section_entry.record_count`. Size per entry = `header.page_index_entry_size` (76 bytes).
+Array of `PageIndexEntry` records. Count = `section_entry.record_count`. Size per entry = `header.page_index_entry_size` (128 bytes).
 
 ```c
 struct PageIndexEntry {
     u32  page_number;                 // 0-based page index
     u16  page_kind;                   // 1=TEXT, 2=IMAGE, 3=MIXED_RESERVED
-    u16  pixel_format;                // 1=GRAY1, 2=GRAY2, 4=GRAY4
+    u16  pixel_format;                // 1=GRAY1, 2=GRAY2, 4=GRAY4, 8=RGB565, 16=RGB888, 32=RGBA8888
 
-    u16  compression_method;          // 0=NONE, 1=RLE_PACKBITS
+    u16  compression_method;          // Default: 0=NONE, 1=RLE_PACKBITS, 2=LZ4
     u16  update_hint;                 // 0=default, 1=full_refresh, 2=partial_refresh_ok
-    u32  page_flags;                 // Reserved
+    u32  page_flags;                  // bit 0: per_plane_compression (1=each plane uses its own method)
+                                      // bits 1-31: reserved
 
-    u64  relative_blob_offset;        // Relative to header.page_data_offset
-    u32  compressed_size;             // Size of compressed blob
-    u32  uncompressed_size;          // Size of decompressed pixels
-    u32  page_crc32;                 // CRC32 of compressed blob (0 = not computed)
+    u32  page_crc32;                  // CRC32 over all plane blobs (0 = not computed)
 
-    u16  stored_width;                // Pixel width of stored blob
-    u16  stored_height;               // Pixel height of stored blob
+    u16  stored_width;                // Pixel width
+    u16  stored_height;               // Pixel height
     u16  placement_x;                 // X offset within content box (usually 0)
     u16  placement_y;                 // Y offset within content box (usually 0)
 
@@ -622,16 +623,30 @@ struct PageIndexEntry {
     u32  progress_start_ppm;          // Progress at start of page (0 to 1,000,000)
     u32  progress_end_ppm;            // Progress at end of page
 
-    u8   reserved[16];
+    // --- Inline plane directory (32 bytes) ---
+    u8   plane_bitmap;                // Which planes are stored (see section 3.22)
+    u8   plane_compression[4];        // Per-plane compression (only if page_flags bit 0)
+    u8   plane_dir_padding[3];        // Alignment to 4-byte boundary
+    u32  offset_plane_0;              // Byte offset from PAGE_DATA start
+    u32  size_plane_0;                // Compressed size in bytes
+    u32  offset_plane_1;              // Byte offset from PAGE_DATA start
+    u32  size_plane_1;                // Compressed size in bytes
+    u32  offset_plane_2;              // Byte offset from PAGE_DATA start
+    u32  size_plane_2;                // Compressed size in bytes
+    u32  offset_plane_3;              // Byte offset from PAGE_DATA start (future: delta plane)
+    u32  size_plane_3;                // Compressed size in bytes (future)
+
+    u8   reserved[20];                // Future use
 };
 ```
 
-**Absolute blob offset computation**:
-```c
-absolute_offset = header.page_data_offset + page.relative_blob_offset
-```
+Total: 128 bytes per entry.
 
 **progress values**: Parts per million (0 to 1,000,000). Must be monotonically non-decreasing across pages.
+
+**Per-plane compression**: When `page_flags` bit 0 is set, each plane uses its own compression method from `plane_compression[4]`. When clear, all planes use `compression_method`.
+
+**Plane offsets**: `offset_plane_N` is relative to `header.page_data_offset`. Plane blob offsets must be 4-byte aligned within PAGE_DATA.
 
 ### 3.19 NAV_INDEX Section (Record-Based)
 
@@ -696,22 +711,26 @@ Rules:
 
 ### 3.21 PAGE_DATA Section
 
-Raw concatenated compressed page blobs. No page-local headers.
+Raw concatenated plane blobs. No page-local headers — the page index entry's
+plane directory is the authority.
 
 ```
 PAGE_DATA:
-├── [compressed page 0 blob] ─── referenced by PAGE_INDEX[0]
-├── [compressed page 1 blob]
-├── [compressed page 2 blob]
-└── ...
+├── [plane 0 blob page 0]    ← PAGE_INDEX[0].offset_plane_0
+├── [plane 1 blob page 0]    ← PAGE_INDEX[0].offset_plane_1
+├── [plane 2 blob page 0]    ← PAGE_INDEX[0].offset_plane_2
+├── [plane 0 blob page 1]    ← PAGE_INDEX[1].offset_plane_0
+├── ...
 ```
 
 Each blob is:
-1. Read from `header.page_data_offset + page.relative_blob_offset`
-2. Validate size = `page.compressed_size`
+1. Read from `header.page_data_offset + page.offset_plane_N`
+2. Validate size = `page.size_plane_N`
 3. Optionally validate CRC32 if `page.page_crc32 != 0`
-4. Decompress using `page.compression_method`
-5. Verify decompressed size = `page.uncompressed_size`
+4. Decompress using per-plane or page-default compression method
+
+Plane blob offsets must be 4-byte aligned within PAGE_DATA. Writers pad
+between blobs with zero bytes.
 
 ---
 
@@ -734,6 +753,9 @@ Each row is padded to the nearest whole byte boundary:
 | GRAY1_PACKED | 8 | `ceil(width / 8)` bytes |
 | GRAY2_PACKED | 4 | `ceil(width / 4)` bytes |
 | GRAY4_PACKED | 2 | `ceil(width / 2)` bytes |
+| RGB565 | 2 bytes/pixel | `width * 2` bytes |
+| RGB888 | 3 bytes/pixel | `width * 3` bytes |
+| RGBA8888 | 4 bytes/pixel | `width * 4` bytes |
 
 **Rule**: Unused bits in the last byte of each row must be zero-filled by the writer. Readers must ignore unused bits.
 
@@ -781,6 +803,36 @@ Byte layout:
 ```
 
 Canonical values: `0 = black, 15 = white`
+
+### 4.6 RGB565 (16-bit, 5-6-5)
+
+Each pixel is 2 bytes, little-endian:
+```
+bits 15..11 = red (5 bits)
+bits 10..5  = green (6 bits)
+bits 4..0   = blue (5 bits)
+```
+
+Canonical values: standard RGB565 mapping.
+
+### 4.7 RGB888 (24-bit)
+
+Each pixel is 3 bytes:
+```
+byte 0 = red
+byte 1 = green
+byte 2 = blue
+```
+
+### 4.8 RGBA8888 (32-bit)
+
+Each pixel is 4 bytes:
+```
+byte 0 = red
+byte 1 = green
+byte 2 = blue
+byte 3 = alpha
+```
 
 ---
 
@@ -830,6 +882,65 @@ while (input not exhausted) {
 
 ---
 
+## 5.1 Compression Methods
+
+| Value | Method       | Best for |
+|-------|--------------|----------|
+| 0     | NONE         | Already-native pixel data |
+| 1     | RLE_PACKBITS | Uniform content, e-paper MSB/LSB planes |
+| 2     | LZ4          | Textured/dithered content, color, BW planes |
+
+**Per-plane compression**: When `page_flags` bit 0 is set, each plane uses its own method from `plane_compression[4]`. When clear, all planes use `compression_method`.
+
+### 5.2 Decompressed Plane Sizes
+
+The firmware computes decompressed plane sizes from `pixel_format`,
+`stored_width`, and `stored_height`. No `uncompressed_size` field is needed.
+
+| Pixel Format | Plane | Decompressed Size |
+|-------------|-------|-------------------|
+| GRAY1_PACKED | 0 (MSB) | `stored_width / 8 * stored_height` |
+| GRAY1_PACKED | 1 (LSB) | `stored_width / 8 * stored_height` |
+| GRAY1_PACKED | 2 (BW)  | `stored_width / 8 * stored_height` |
+| GRAY2_PACKED | 0 (MSB) | `stored_width / 8 * stored_height` |
+| GRAY2_PACKED | 1 (LSB) | `stored_width / 8 * stored_height` |
+| GRAY2_PACKED | 2 (BW)  | `stored_width / 8 * stored_height` |
+| GRAY4_PACKED | 0 (MSB) | `stored_width / 4 * stored_height` |
+| GRAY4_PACKED | 1 (LSB) | `stored_width / 4 * stored_height` |
+| GRAY4_PACKED | 2 (BW)  | `stored_width / 4 * stored_height` |
+| RGB565       | 0 (full) | `stored_width * 2 * stored_height` |
+| RGB888       | 0 (full) | `stored_width * 3 * stored_height` |
+| RGBA8888     | 0 (full) | `stored_width * 4 * stored_height` |
+
+For e-paper GRAY2, each of the 3 planes (MSB, LSB, BW) is a 1-bit
+framebuffer: `480 / 8 * 480 = 28,800` bytes per plane. The GRAY2 packed
+data (57,600 bytes) is decomposed into these 1-bit planes by the writer.
+
+For color, slot 0 holds the full pixel buffer in the declared format.
+
+### 5.3 Plane Bitmap Interpretation
+
+The `plane_bitmap` bits indicate which of the 4 slot pairs are present. What
+each slot means depends on `pixel_format`:
+
+**GRAY1 / GRAY2 / GRAY4 (e-paper):**
+
+| Bit | Value | Plane | Description |
+|-----|-------|-------|-------------|
+| 0   | 0x01  | 0     | MSB plane |
+| 1   | 0x02  | 1     | LSB plane |
+| 2   | 0x04  | 2     | BW plane (1-bit dithered) |
+| 3   | 0x08  | 3     | Delta plane (future) |
+
+**RGB565 / RGB888 / RGBA8888 (color LCD/OLED):**
+
+| Bit | Value | Plane | Description |
+|-----|-------|-------|-------------|
+| 0   | 0x01  | 0     | Full pixel buffer |
+| 1-3 | —     | —     | Reserved |
+
+---
+
 ## 6. CRC32 and Hashing
 
 ### 6.1 CRC32 (IEEE 802.3 / PKZIP)
@@ -843,7 +954,7 @@ while (input not exhausted) {
 - `header.file_crc32`: Entire file (0 to `header.file_size`), with `file_crc32` field set to 0 during computation
 - `header.header_crc32`: 256-byte header, with `header_crc32` field set to 0 during computation
 - `SectionEntry.crc32`: Section data from `offset` to `offset + length`
-- `PageIndexEntry.page_crc32`: Compressed page blob
+- `PageIndexEntry.page_crc32`: CRC32 over all plane blobs for that page
 
 **If CRC field is 0**: Checksum not computed, validation skipped.
 
@@ -910,17 +1021,26 @@ for (i = 0; i < pi_section.record_count; i++) {
 chapter_section = sections[CHAPTER_INDEX];
 chapter = read_ChapterIndexEntry(chapter_section.offset + chapter_index * chapter_section.entry_size);
 
-// Step 7: Decode a specific page
+// Step 7: Decode a specific page using plane directory
 page = pages[page_number];
-absolute_offset = header.page_data_offset + page.relative_blob_offset;
-compressed_blob = read_bytes(absolute_offset, page.compressed_size);
 
 if (page.page_crc32 != 0) {
-    if (crc32(compressed_blob) != page.page_crc32) error("page CRC mismatch");
+    // CRC32 covers all plane blobs concatenated in slot order
+    crc_data = concat plane blobs for present planes;
+    if (crc32(crc_data) != page.page_crc32) error("page CRC mismatch");
 }
 
-decompressed = decompress(compressed_blob, page.compression_method);
-if (len(decompressed) != page.uncompressed_size) error("size mismatch");
+// Decompress only the planes needed for the current refresh mode
+per_plane = page.page_flags & 1;  // per_plane_compression bit
+for (slot = 0; slot < 4; slot++) {
+    if (!(page.plane_bitmap & (1 << slot))) continue;  // plane not present
+    method = per_plane ? page.plane_compression[slot] : page.compression_method;
+    offset = header.page_data_offset + page.offset_plane[slot];
+    compressed_blob = read_bytes(offset, page.size_plane[slot]);
+    decompressed = decompress(compressed_blob, method);
+    // Decompressed size computed from pixel_format, stored_width, stored_height
+    // Use decompressed data for the appropriate display plane
+}
 
 // Step 8: Convert pixels to display format
 // For xteink-x4-portrait, default pages are GRAY2_PACKED logical portrait pixels.
@@ -983,6 +1103,7 @@ While the section table is authoritative (readers must use it), the recommended 
 | Logical-to-physical rotation | 90 degrees clockwise |
 | Default pixel format | GRAY2_PACKED |
 | Supported lower format | GRAY1_PACKED |
+| Supported color formats | RGB565, RGB888, RGBA8888 |
 | Grayscale levels | 4 for GRAY2, 2 for GRAY1 |
 | GRAY2 row size | 120 bytes (480 / 4) |
 | GRAY1 row size | 60 bytes (480 / 8) |
@@ -1029,16 +1150,19 @@ Readers/firmware should validate:
 - [ ] Section CRC32s valid (if nonzero)
 
 ### Page-Level
-- [ ] `page_index_entry_size` is supported (76)
+- [ ] `page_index_entry_size` is supported (128)
 - [ ] `nav_index_entry_size` is supported (48)
-- [ ] All page blobs within `PAGE_DATA` bounds
-- [ ] No overlapping page blobs
+- [ ] All plane blobs within `PAGE_DATA` bounds
+- [ ] No overlapping plane blobs
+- [ ] Plane blob offsets are 4-byte aligned
 - [ ] `pixel_format` is supported
 - [ ] `compression_method` is supported
 - [ ] `page_kind` != MIXED_RESERVED (3)
 - [ ] `progress_start_ppm` <= `progress_end_ppm`
 - [ ] Progress is monotonically non-decreasing
 - [ ] Page dimensions match layout profile
+- [ ] `plane_bitmap` bits are valid for `pixel_format`
+- [ ] Delta plane bit 3 is not set (future)
 
 ### Chapter-Level
 - [ ] `CHAPTER_INDEX.entry_size` is supported (32)
@@ -1090,7 +1214,7 @@ A minimal `.binbook` file with:
 - Bytes 32-35: `section_table_length` = 296 (0x128 = 40 bytes × 7 sections + 16 bytes for PAGE_DATA)
 - Bytes 36-37: `section_table_entry_size` = 40
 - Bytes 38-39: `section_count` = 15 (all required sections)
-- Bytes 40-41: `page_index_entry_size` = 76
+- Bytes 40-41: `page_index_entry_size` = 128
 - Bytes 42-43: `nav_index_entry_size` = 48
 
 *(Note: Full hex dump would be ~100+ lines. The above shows header structure. In practice, use `binbook inspect` to see a real file's structure.)*
@@ -1178,6 +1302,7 @@ Byte 3: pixels 0-3 of row 3: 11 00 01 10 = 0xC6
 ```c
 #define COMPRESS_NONE         0
 #define COMPRESS_RLE_PACKBITS 1
+#define COMPRESS_LZ4          2
 ```
 
 ### Orientation
