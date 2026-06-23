@@ -8,7 +8,7 @@ pub const SECTION_CHAPTER_INDEX: u16 = 43;
 pub const SECTION_PAGE_DATA: u16 = 50;
 
 pub const SECTION_ENTRY_SIZE: usize = 40;
-pub const PAGE_INDEX_ENTRY_SIZE: usize = 76;
+pub const PAGE_INDEX_ENTRY_SIZE: usize = 128;
 pub const NAV_INDEX_ENTRY_SIZE: usize = 48;
 pub const CHAPTER_INDEX_ENTRY_SIZE: usize = 32;
 

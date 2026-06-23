@@ -20,6 +20,18 @@ pub use page_index::PageInfo;
 pub use reader::Reader;
 pub use chapter_index::ChapterEntry;
 
+pub fn page_plane_uncompressed_size(pixel_format: u16, width: u16, height: u16) -> usize {
+    let pixels = width as usize * height as usize;
+    match pixel_format {
+        page_index::PIXEL_FORMAT_GRAY1_PACKED => pixels / 8,
+        page_index::PIXEL_FORMAT_GRAY2_PACKED => pixels / 4,
+        3 => pixels * 2,
+        4 => pixels * 3,
+        5 => pixels * 4,
+        _ => pixels,
+    }
+}
+
 pub struct Info<'a> {
     pub title: &'a [u8],
     pub subtitle: &'a [u8],
@@ -179,38 +191,66 @@ impl<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> BinBook<R, S> {
         }
         let off = self.page_index_offset + index as u64 * self.page_index_entry_size as u64;
         self.reader.read_at(off, &mut buf[..page_index::PAGE_INDEX_ENTRY_SIZE])?;
-        page_index::parse_page_info_from_bytes(buf, self.page_data_offset)
+        page_index::parse_page_info_from_bytes(buf)
     }
 
     pub fn page(&mut self, index: u32) -> Result<PageRef<'_>, Error> {
         let info = self.page_info(index)?;
-        let uncompressed_size = info.uncompressed_size as usize;
         let buf = self.scratch.as_mut();
-        let compressed_size = info.compressed_size as usize;
-        if buf.len() < compressed_size {
+        let pd = &info.plane_dir;
+        let mut total_compressed = 0usize;
+        for slot in 0..4 {
+            if pd.bitmap & (1 << slot) != 0 {
+                total_compressed += pd.sizes[slot] as usize;
+            }
+        }
+        if buf.len() < total_compressed {
             return Err(Error::OutputBufferTooSmall);
         }
-        self.reader.read_at(info.blob_offset, &mut buf[..compressed_size])?;
+        let mut offset = 0usize;
+        for slot in 0..4 {
+            if pd.bitmap & (1 << slot) != 0 {
+                let absolute = self.page_data_offset + pd.offsets[slot] as u64;
+                self.reader.read_at(absolute, &mut buf[offset..offset + pd.sizes[slot] as usize])?;
+                offset += pd.sizes[slot] as usize;
+            }
+        }
         Ok(PageRef {
             info,
-            compressed_data: &buf[..compressed_size],
-            uncompressed_size,
+            compressed_data: &buf[..total_compressed],
+            uncompressed_size: 0,
         })
     }
 
     pub fn decompress_page(&mut self, index: u32, out: &mut [u8]) -> Result<(), Error> {
         let info = self.page_info(index)?;
-        let uncompressed_size = info.uncompressed_size as usize;
-        if out.len() < uncompressed_size {
+        let plane_size = page_plane_uncompressed_size(
+            info.pixel_format, info.stored_width, info.stored_height,
+        );
+        if out.len() < plane_size {
             return Err(Error::OutputBufferTooSmall);
         }
         let buf = self.scratch.as_mut();
-        let compressed_size = info.compressed_size as usize;
-        if buf.len() < compressed_size {
-            return Err(Error::OutputBufferTooSmall);
+        let pd = &info.plane_dir;
+        let per_plane = info.page_flags & 1 != 0;
+        for slot in 0..4u32 {
+            if pd.bitmap & (1 << slot) == 0 {
+                continue;
+            }
+            let compressed_size = pd.sizes[slot as usize] as usize;
+            if buf.len() < compressed_size {
+                return Err(Error::OutputBufferTooSmall);
+            }
+            let absolute = self.page_data_offset + pd.offsets[slot as usize] as u64;
+            self.reader.read_at(absolute, &mut buf[..compressed_size])?;
+            let method = if per_plane {
+                pd.compression[slot as usize] as u16
+            } else {
+                info.compression_method
+            };
+            decompress::decompress_bytes(method, &buf[..compressed_size], out, plane_size)?;
         }
-        self.reader.read_at(info.blob_offset, &mut buf[..compressed_size])?;
-        decompress::decompress_bytes(info.compression_method, &buf[..compressed_size], out, uncompressed_size)
+        Ok(())
     }
 
     pub fn nav_entry(&mut self, index: u32) -> Result<NavEntry<'_>, Error> {

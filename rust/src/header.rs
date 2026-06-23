@@ -54,7 +54,7 @@ pub(crate) fn parse_header(data: &[u8]) -> Result<Header, Error> {
         page_data_length: read_le64(data, 52),
     };
     if h.section_table_entry_size != 40
-        || h.page_index_entry_size != 76
+        || h.page_index_entry_size != 128
         || h.nav_index_entry_size != 48
         || h.section_table_offset < HEADER_SIZE as u64
         || h.section_count == 0
