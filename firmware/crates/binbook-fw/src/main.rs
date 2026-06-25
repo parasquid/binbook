@@ -1,8 +1,9 @@
-//! Xteink X4 display smoke-test firmware binary.
+//! Xteink X4 BinBook GRAY2 render-probe firmware binary.
 //!
 //! This binary initializes the SSD1677 display using the verified Xteink X4
-//! pins and draws an asymmetric physical-framebuffer pattern. It is the first
-//! hardware bring-up milestone, not the final BinBook reader application.
+//! pins, opens an embedded BinBook fixture, and renders page 0 through the
+//! GRAY2 display path. It is a rendering milestone, not the final reader
+//! application.
 
 #![no_std]
 #![no_main]
@@ -18,13 +19,15 @@ use esp_hal::{
     Blocking,
 };
 use ssd1677_driver::Ssd1677Driver;
-use xteink_hal::{Delay as _, HalError, HalResult, RefreshMode};
+use xteink_hal::{Delay as _, HalError, HalResult};
 
 use esp_backtrace as _;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
 const SPI_FREQUENCY: Rate = Rate::from_mhz(4);
+const PROBE_BOOK: &[u8] = include_bytes!("../fixtures/gray2_probe.binbook");
+const BINBOOK_SCRATCH_BYTES: usize = 8192;
 
 struct Delay(EspDelay);
 
@@ -107,16 +110,16 @@ fn main() -> ! {
 
     let mut display = Ssd1677Driver::new(Spi(spi), cs, dc, rst, busy);
     display
-        .init_with_delay(&delay)
+        .init_grayscale_with_delay(&delay)
         .expect("failed to initialize SSD1677 display");
-    draw_smoke_pattern(&mut display, &delay).expect("failed to draw SSD1677 smoke pattern");
+    render_embedded_probe(&mut display, &delay).expect("failed to render BinBook GRAY2 probe");
 
     loop {
         delay.ms(1000);
     }
 }
 
-fn draw_smoke_pattern<SPI, CS, DC, RST, BUSY>(
+fn render_embedded_probe<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
     delay: &dyn xteink_hal::Delay,
 ) -> HalResult<()>
@@ -127,11 +130,19 @@ where
     RST: xteink_hal::OutputPin,
     BUSY: xteink_hal::InputPin,
 {
-    display.clear_with_delay(delay)?;
-    for (x, y, width, height) in binbook_fw::display::smoke_probe_windows() {
-        display.write_red_solid_window(x, y, width, height, 0xFF)?;
-        display.write_solid_window(x, y, width, height, 0x00)?;
+    let scratch = [0u8; BINBOOK_SCRATCH_BYTES];
+    let mut book =
+        binbook::BinBook::open(PROBE_BOOK, scratch).map_err(|_| HalError::InvalidParam)?;
+    let page = book.page(0).map_err(|_| HalError::InvalidParam)?;
+
+    if page.info.pixel_format != binbook::page_index::PIXEL_FORMAT_GRAY2_PACKED
+        || page.info.compression_method != binbook::page_index::COMPRESSION_RLE_PACKBITS
+        || page.info.stored_width != binbook_fw::display::DISPLAY_WIDTH
+        || page.info.stored_height != binbook_fw::display::DISPLAY_HEIGHT
+        || page.info.plane_dir.bitmap != 0x01
+    {
+        return Err(HalError::InvalidParam);
     }
 
-    display.refresh_with_delay(RefreshMode::Full, delay)
+    binbook_fw::display::display_gray2_page(display, page.compressed_data(), delay)
 }
