@@ -29,8 +29,20 @@ pub(crate) fn parse_nav_entry_from_bytes(
         level: read_le16(bytes, 6),
         title: b"",
         rendered_page_number: read_le32(bytes, 28),
-        parent_nav_index: if parent_raw == u32::MAX { -1 } else { parent_raw as i32 },
-        first_child_nav_index: if first_child_raw == u32::MAX { -1 } else { first_child_raw as i32 },
-        next_sibling_nav_index: if next_sibling_raw == u32::MAX { -1 } else { next_sibling_raw as i32 },
+        parent_nav_index: if parent_raw == u32::MAX {
+            -1
+        } else {
+            parent_raw as i32
+        },
+        first_child_nav_index: if first_child_raw == u32::MAX {
+            -1
+        } else {
+            first_child_raw as i32
+        },
+        next_sibling_nav_index: if next_sibling_raw == u32::MAX {
+            -1
+        } else {
+            next_sibling_raw as i32
+        },
     }
 }

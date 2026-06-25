@@ -1,6 +1,10 @@
 use crate::Error;
 
-pub fn decompress_packbits(input: &[u8], out: &mut [u8], expected_size: usize) -> Result<(), Error> {
+pub fn decompress_packbits(
+    input: &[u8],
+    out: &mut [u8],
+    expected_size: usize,
+) -> Result<(), Error> {
     let mut in_pos = 0;
     let mut out_pos = 0;
 
