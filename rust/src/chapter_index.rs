@@ -1,6 +1,6 @@
-use crate::Error;
 use crate::header::{read_le16, read_le32};
 use crate::section::CHAPTER_INDEX_ENTRY_SIZE;
+use crate::Error;
 
 #[derive(Debug)]
 pub struct ChapterEntry<'a> {

@@ -1,5 +1,5 @@
-use crate::Error;
 use crate::header::{read_le16, read_le32, read_le64};
+use crate::Error;
 
 pub const SECTION_STRING_TABLE: u16 = 1;
 pub const SECTION_PAGE_INDEX: u16 = 40;
