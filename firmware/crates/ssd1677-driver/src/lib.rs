@@ -1,13 +1,26 @@
 //! SSD1677/GDEQ0426T82 e-ink display driver.
 //!
 //! This crate implements the command layer for the SSD1677 controller,
-//! providing GRAY1 partial refresh for the Xteink X4's 800x480 panel.
+//! providing black/white and grayscale refresh paths for the Xteink X4's
+//! 800x480 panel.
 
 #![no_std]
 
 use xteink_hal::{Delay, HalError, HalResult, InputPin, OutputPin, RefreshMode, Spi};
 
 const BUSY_TIMEOUT_MS: u32 = 60_000;
+const SSD1677_LUT_4G: [u8; 112] = [
+    0x80, 0x48, 0x4a, 0x22, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x48,
+    0x68, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x88, 0x48, 0x60, 0x08,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa8, 0x48, 0x45, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x07, 0x1e, 0x1c, 0x02, 0x00, 0x05, 0x01, 0x05, 0x01, 0x02,
+    0x08, 0x01, 0x01, 0x04, 0x04, 0x00, 0x02, 0x01, 0x02, 0x02, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x01, 0x22, 0x22, 0x22, 0x22, 0x22, 0x17, 0x41, 0xa8,
+    0x32, 0x30, 0x00, 0x00,
+];
 
 /// SSD1677 command bytes.
 pub struct Ssd1677;
@@ -27,11 +40,16 @@ impl Ssd1677 {
     pub const MASTER_ACTIVATION: u8 = 0x20;
     pub const BORDER_WAVEFORM: u8 = 0x3C;
     pub const TEMP_SENSOR_CTRL: u8 = 0x18;
+    pub const GATE_VOLTAGE: u8 = 0x03;
+    pub const SOURCE_VOLTAGE: u8 = 0x04;
+    pub const VCOM_VOLTAGE: u8 = 0x2C;
     pub const DISPLAY_UPDATE_CTRL1: u8 = 0x21;
     pub const WRITE_RAM_BW: u8 = 0x24;
     pub const WRITE_RAM_RED: u8 = 0x26;
+    pub const WRITE_LUT: u8 = 0x32;
     pub const UPDATE_CTRL_NORMAL: u8 = 0xF7;
     pub const UPDATE_CTRL_FAST: u8 = 0xFC;
+    pub const UPDATE_CTRL_GRAYSCALE: u8 = 0xC7;
     pub const DATA_ENTRY_X_INC_Y_INC_HORIZONTAL: u8 = 0x03;
 }
 
@@ -110,6 +128,40 @@ where
         self.send_cmd_data(Ssd1677::SET_RAM_Y_ADDR, &[0x00, 0x00, 0xDF, 0x01])?;
         self.send_cmd_data(Ssd1677::SET_RAM_X_COUNTER, &[0x00, 0x00])?;
         self.send_cmd_data(Ssd1677::SET_RAM_Y_COUNTER, &[0x00, 0x00])?;
+
+        Ok(())
+    }
+
+    /// Initialize display with the Xteink X4 four-level grayscale sequence.
+    pub fn init_grayscale_with_delay(&mut self, delay: &dyn Delay) -> HalResult<()> {
+        self.rst.set_high()?;
+        delay.ms(20);
+        self.rst.set_low()?;
+        delay.ms(20);
+        self.rst.set_high()?;
+        delay.ms(200);
+
+        self.wait_ready_with_delay(delay)?;
+
+        self.send_cmd(Ssd1677::SW_RESET)?;
+        self.wait_ready_with_delay(delay)?;
+
+        self.send_cmd_data(Ssd1677::BOOSTER_SOFT_START, &[0xAE, 0xC7, 0xC3, 0xC0, 0x80])?;
+        self.send_cmd_data(Ssd1677::DRIVER_OUTPUT_CTRL, &[0xDF, 0x01, 0x02])?;
+        self.send_cmd_data(
+            Ssd1677::DATA_ENTRY_MODE,
+            &[Ssd1677::DATA_ENTRY_X_INC_Y_INC_HORIZONTAL],
+        )?;
+        self.send_cmd_data(Ssd1677::BORDER_WAVEFORM, &[0x00])?;
+        self.send_cmd_data(Ssd1677::TEMP_SENSOR_CTRL, &[0x80])?;
+        self.send_cmd_data(Ssd1677::SET_RAM_X_ADDR, &[0x00, 0x00, 0x1F, 0x03])?;
+        self.send_cmd_data(Ssd1677::SET_RAM_Y_ADDR, &[0x00, 0x00, 0xDF, 0x01])?;
+        self.send_cmd_data(Ssd1677::SET_RAM_X_COUNTER, &[0x00, 0x00])?;
+        self.send_cmd_data(Ssd1677::SET_RAM_Y_COUNTER, &[0x00, 0x00])?;
+        self.send_cmd_data(Ssd1677::WRITE_LUT, &SSD1677_LUT_4G[..105])?;
+        self.send_cmd_data(Ssd1677::GATE_VOLTAGE, &SSD1677_LUT_4G[105..106])?;
+        self.send_cmd_data(Ssd1677::SOURCE_VOLTAGE, &SSD1677_LUT_4G[106..109])?;
+        self.send_cmd_data(Ssd1677::VCOM_VOLTAGE, &SSD1677_LUT_4G[109..110])?;
 
         Ok(())
     }
@@ -279,8 +331,9 @@ where
         let ctrl = match mode {
             RefreshMode::Full => Ssd1677::UPDATE_CTRL_NORMAL,
             RefreshMode::Partial => Ssd1677::UPDATE_CTRL_FAST,
+            RefreshMode::Grayscale => Ssd1677::UPDATE_CTRL_GRAYSCALE,
         };
-        if matches!(mode, RefreshMode::Partial) {
+        if matches!(mode, RefreshMode::Partial | RefreshMode::Grayscale) {
             self.send_cmd_data(Ssd1677::DISPLAY_UPDATE_CTRL1, &[0x00, 0x00])?;
         }
         self.send_cmd_data(Ssd1677::DISPLAY_UPDATE_CTRL2, &[ctrl])?;
@@ -663,6 +716,51 @@ mod tests {
                 Vec::from([0x00, 0x00]),
                 Vec::from([Ssd1677::DISPLAY_UPDATE_CTRL2]),
                 Vec::from([0xFC]),
+                Vec::from([Ssd1677::MASTER_ACTIVATION]),
+            ],
+        );
+    }
+
+    #[test]
+    fn grayscale_init_writes_lut_and_voltage_commands() {
+        let mut driver = driver();
+
+        driver.init_grayscale_with_delay(&MockDelay).unwrap();
+
+        assert_eq!(
+            data_after(&driver.spi.writes, Ssd1677::BORDER_WAVEFORM),
+            &[0x00],
+        );
+        assert_eq!(data_after(&driver.spi.writes, Ssd1677::WRITE_LUT).len(), 105);
+        assert_eq!(
+            data_after(&driver.spi.writes, Ssd1677::GATE_VOLTAGE).len(),
+            1
+        );
+        assert_eq!(
+            data_after(&driver.spi.writes, Ssd1677::SOURCE_VOLTAGE).len(),
+            3
+        );
+        assert_eq!(
+            data_after(&driver.spi.writes, Ssd1677::VCOM_VOLTAGE).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn grayscale_refresh_matches_squidscript_update_sequence() {
+        let mut driver = driver();
+
+        driver
+            .refresh_with_delay(RefreshMode::Grayscale, &MockDelay)
+            .unwrap();
+
+        assert_eq!(
+            driver.spi.writes,
+            [
+                Vec::from([Ssd1677::DISPLAY_UPDATE_CTRL1]),
+                Vec::from([0x00, 0x00]),
+                Vec::from([Ssd1677::DISPLAY_UPDATE_CTRL2]),
+                Vec::from([0xC7]),
                 Vec::from([Ssd1677::MASTER_ACTIVATION]),
             ],
         );

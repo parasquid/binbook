@@ -84,6 +84,8 @@ pub enum RefreshMode {
     Full,
     /// Partial display refresh.
     Partial,
+    /// Four-level grayscale display refresh.
+    Grayscale,
 }
 
 /// Display trait for e-ink screens.
