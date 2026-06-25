@@ -156,6 +156,7 @@ ad-hoc. Do not add it to `pyproject.toml` — it's only needed for hardware seri
 - Include documentation work explicitly in implementation plans.
 - Create new docs when needed, update related existing docs in the same change, remove or revise obsolete docs.
 - Update `HANDOFF.md` after completing a task when the next agent would benefit from current status, verification evidence, blockers, commands, or remaining work. Keep it ready for another agent to pick up without relying on chat context.
+- `HANDOFF.md` is a current-state snapshot, not a diary. Overwrite the relevant sections with up-to-date information rather than appending new entries. Remove or revise stale content.
 - Write reference docs as current-state facts, not chronological diaries. Omit "we observed", "first this failed", etc.
 - Describe what code currently does in comments, never what it used to do.
 - When a commit deletes or replaces a file, grep for stale references across docs, README, and commit messages. Fix in the same commit.
