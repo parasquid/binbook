@@ -6,7 +6,7 @@ This document records the working flash path for the BinBook bare-metal Rust fir
 
 - Target board: Xteink X4, ESP32-C3 over USB JTAG serial.
 - Firmware artifact: `firmware/target/riscv32imc-unknown-none-elf/release/binbook-fw`.
-- Current firmware behavior: SSD1677 display smoke test that clears the panel and draws one physical-window probe box.
+- Current firmware behavior: SSD1677 display smoke test that clears the panel and draws four physical corner probe boxes.
 - Flash tool: `espflash 4.4.0`.
 
 SquidScript's command:
@@ -25,10 +25,10 @@ Install `espflash` if it is not already installed:
 cargo install espflash
 ```
 
-On this workstation, the installed binary is:
+The flash wrapper defaults to:
 
 ```text
-/var/home/tristan/.cargo/bin/espflash
+${HOME}/.cargo/bin/espflash
 ```
 
 The Xteink X4 is expected at:
@@ -47,18 +47,23 @@ From the repo root:
 firmware/scripts/flash-xteink-x4-smoke.sh
 ```
 
+Use the wrapper above for smoke firmware flashing. Do not use an arbitrary `cargo build --target riscv32imc-unknown-none-elf` from `PATH`; if `cargo` and `rustc` resolve from different toolchain managers, the build can fail with a missing `core` crate or reject nightly-only flags even when the target is installed. The wrapper pins rustup's nightly `cargo` and `rustc`.
+
 Equivalent explicit command:
 
 ```bash
 cd firmware
-RUSTC=/var/home/tristan/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/rustc \
-  /var/home/tristan/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo \
-  build -p binbook-fw --features firmware-bin --target riscv32imc-unknown-none-elf --release
+RUSTC="$(rustup which --toolchain nightly rustc)" \
+  rustup run nightly cargo build \
+  -p binbook-fw \
+  --features firmware-bin \
+  --target riscv32imc-unknown-none-elf \
+  --release
 
-/var/home/tristan/.cargo/bin/espflash flash \
+${ESPFLASH:-${HOME}/.cargo/bin/espflash} flash \
   --non-interactive \
   --chip esp32c3 \
-  --port /dev/ttyACM0 \
+  --port "${ESPFLASH_PORT:-/dev/ttyACM0}" \
   --flash-size 16mb \
   target/riscv32imc-unknown-none-elf/release/binbook-fw
 ```
@@ -77,23 +82,31 @@ Without this descriptor, `espflash` connects to the chip but refuses the image w
 
 ## Verified flash result
 
-On 2026-06-25, the command above flashed successfully with:
+On 2026-06-25, the command above flashed the four-corner smoke firmware successfully with:
 
 ```text
 Chip type:         esp32c3 (revision v0.4)
 Crystal frequency: 40 MHz
 Flash size:        16MB
 Features:          WiFi, BLE
-App/part. size:    89,840/16,384,000 bytes, 0.55%
+App/part. size:    90,784/16,384,000 bytes, 0.55%
 Flashing has completed!
 ```
 
-Verified display result after reset on 2026-06-25: a clear screen followed by one filled physical probe box:
+Verified display result after reset on 2026-06-25:
 
-- one filled black 128×96 box at physical coordinate `(0, 0)`,
+- four filled black 128×96 boxes,
+- one box at each physical display corner,
 - no center vertical stripe.
 
-The smoke firmware first clears both SSD1677 RAM planes to white and performs a full refresh. It then writes one 128×96 black window using SSD1677 window writes and performs another full refresh. This keeps the first hardware milestone focused on reset, init, RAM-window writes, and full refresh. It does not yet verify BinBook page decoding, flash storage, buttons, serial commands, four-corner coverage, or logical portrait orientation.
+Current smoke-test display behavior: a clear screen followed by four filled physical probe boxes:
+
+- one filled black 128×96 box at physical coordinate `(0, 0)`,
+- one filled black 128×96 box at physical coordinate `(672, 0)`,
+- one filled black 128×96 box at physical coordinate `(0, 384)`,
+- one filled black 128×96 box at physical coordinate `(672, 384)`.
+
+The smoke firmware first clears both SSD1677 RAM planes to white and performs a full refresh. It then writes four 128×96 black windows using SSD1677 window writes and performs another full refresh. This keeps the hardware milestone focused on reset, init, RAM-window writes, coordinate coverage, and full refresh. It does not yet verify BinBook page decoding, flash storage, buttons, serial commands, or logical portrait orientation.
 
 ## Driver details captured from bring-up
 

@@ -67,13 +67,16 @@ cd cli && cargo check
 
 Expected current result: pass with default features. Do not enable `serial-device` unless the host has `libudev.pc`.
 
-On this host, the target build requires explicit rustup paths because `cargo` and `rustc` on `PATH` are Homebrew binaries:
+Use rustup's pinned nightly `cargo` and `rustc` for the target build. Do not rely on arbitrary tools from `PATH`; if `cargo` and `rustc` resolve from different toolchain managers, the build can fail with a missing `core` crate or reject nightly-only flags even when the target is installed.
 
 ```bash
 cd firmware
-RUSTC=/var/home/tristan/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/rustc \
-  /var/home/tristan/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo \
-  build -p binbook-fw --features firmware-bin --target riscv32imc-unknown-none-elf --release
+RUSTC="$(rustup which --toolchain nightly rustc)" \
+  rustup run nightly cargo build \
+  -p binbook-fw \
+  --features firmware-bin \
+  --target riscv32imc-unknown-none-elf \
+  --release
 ```
 
 Expected current result: pass. Current smoke-test binary:
@@ -90,7 +93,7 @@ Flash the smoke firmware from the repository root with:
 firmware/scripts/flash-xteink-x4-smoke.sh
 ```
 
-The script uses `/var/home/tristan/.cargo/bin/espflash` by default, flashes `/dev/ttyACM0` by default, sets `--chip esp32c3`, and sets the verified Xteink X4 flash size `--flash-size 16mb`. Override `ESPFLASH`, `ESPFLASH_PORT`, `CARGO`, `RUSTC`, or `IMAGE` only when the host layout differs.
+The script uses `${HOME}/.cargo/bin/espflash` by default, flashes `/dev/ttyACM0` by default, sets `--chip esp32c3`, and sets the verified Xteink X4 flash size `--flash-size 16mb`. Override `ESPFLASH`, `ESPFLASH_PORT`, `CARGO`, `RUSTC`, or `IMAGE` only when the host layout differs.
 
 Smoke-test behavior after flashing:
 
@@ -740,9 +743,12 @@ Prefer this command on the current host:
 
 ```bash
 cd firmware
-RUSTC=/var/home/tristan/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/rustc \
-  /var/home/tristan/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo \
-  build -p binbook-fw --features firmware-bin --target riscv32imc-unknown-none-elf --release
+RUSTC="$(rustup which --toolchain nightly rustc)" \
+  rustup run nightly cargo build \
+  -p binbook-fw \
+  --features firmware-bin \
+  --target riscv32imc-unknown-none-elf \
+  --release
 ```
 
 Expected: pass.

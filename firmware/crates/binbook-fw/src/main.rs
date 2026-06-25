@@ -25,8 +25,6 @@ use esp_backtrace as _;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 const SPI_FREQUENCY: Rate = Rate::from_mhz(4);
-const PROBE_BOX_WIDTH: u16 = 128;
-const PROBE_BOX_HEIGHT: u16 = 96;
 
 struct Delay(EspDelay);
 
@@ -130,8 +128,10 @@ where
     BUSY: xteink_hal::InputPin,
 {
     display.clear_with_delay(delay)?;
-    display.write_red_solid_window(0, 0, PROBE_BOX_WIDTH, PROBE_BOX_HEIGHT, 0xFF)?;
-    display.write_solid_window(0, 0, PROBE_BOX_WIDTH, PROBE_BOX_HEIGHT, 0x00)?;
+    for (x, y, width, height) in binbook_fw::display::smoke_probe_windows() {
+        display.write_red_solid_window(x, y, width, height, 0xFF)?;
+        display.write_solid_window(x, y, width, height, 0x00)?;
+    }
 
     display.refresh_with_delay(RefreshMode::Full, delay)
 }

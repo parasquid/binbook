@@ -7,16 +7,44 @@ pub const PAGE_WIDTH: u16 = 480;
 pub const PAGE_HEIGHT: u16 = 800;
 pub const DISPLAY_WIDTH: u16 = 800;
 pub const DISPLAY_HEIGHT: u16 = 480;
+pub const PROBE_BOX_WIDTH: u16 = 128;
+pub const PROBE_BOX_HEIGHT: u16 = 96;
 
 pub fn logical_to_physical(logical_x: u16, logical_y: u16) -> (u16, u16) {
     (PAGE_HEIGHT - 1 - logical_y, logical_x)
 }
 
+pub fn smoke_probe_windows() -> [(u16, u16, u16, u16); 4] {
+    [
+        (0, 0, PROBE_BOX_WIDTH, PROBE_BOX_HEIGHT),
+        (
+            DISPLAY_WIDTH - PROBE_BOX_WIDTH,
+            0,
+            PROBE_BOX_WIDTH,
+            PROBE_BOX_HEIGHT,
+        ),
+        (
+            0,
+            DISPLAY_HEIGHT - PROBE_BOX_HEIGHT,
+            PROBE_BOX_WIDTH,
+            PROBE_BOX_HEIGHT,
+        ),
+        (
+            DISPLAY_WIDTH - PROBE_BOX_WIDTH,
+            DISPLAY_HEIGHT - PROBE_BOX_HEIGHT,
+            PROBE_BOX_WIDTH,
+            PROBE_BOX_HEIGHT,
+        ),
+    ]
+}
+
 pub fn build_display_smoke_row(row: u16, row_buf: &mut [u8; DISPLAY_ROW_BYTES]) {
     row_buf.fill(0xFF);
 
-    if row < 96 {
-        row_buf[..16].fill(0x00);
+    if row < PROBE_BOX_HEIGHT || row >= DISPLAY_HEIGHT - PROBE_BOX_HEIGHT {
+        let probe_byte_width = usize::from(PROBE_BOX_WIDTH / 8);
+        row_buf[..probe_byte_width].fill(0x00);
+        row_buf[DISPLAY_ROW_BYTES - probe_byte_width..].fill(0x00);
     }
 }
 

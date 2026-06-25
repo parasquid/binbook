@@ -16,7 +16,8 @@
 ### Firmware Build Commands
 
 - Run firmware host tests: `cd firmware && cargo test --workspace`
-- Build firmware binary: `cd firmware && cargo build -p binbook-fw --features firmware-bin --target riscv32imc-unknown-none-elf --release`
+- Build firmware binary with rustup's pinned nightly `cargo` and `rustc`, not arbitrary tools from `PATH`:
+  `cd firmware && RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin --target riscv32imc-unknown-none-elf --release`
 - Build CLI: `cd cli && cargo build`
 
 ### Modularity Constraint
@@ -44,6 +45,7 @@ Rules:
 
 - Use `uv` for dependency management and command execution (Python side).
 - Use `cargo` for Rust firmware work.
+- Do not trial-run commands in the sandbox when repo guidance or prior evidence shows they need host access. Run known host-bound commands with escalation up front, including `git add`, `git commit`, history rewrites, `git push`/`gh`, hardware flashing or serial access, and dependency/network fetches.
 - Install/sync dependencies with:
 
 ```bash
@@ -108,6 +110,7 @@ uv run binbook view test.binbook
 
 - Include documentation work explicitly in implementation plans.
 - Create new docs when needed, update related existing docs in the same change, remove or revise obsolete docs.
+- Update `HANDOFF.md` after completing a task when the next agent would benefit from current status, verification evidence, blockers, commands, or remaining work. Keep it ready for another agent to pick up without relying on chat context.
 - Write reference docs as current-state facts, not chronological diaries. Omit "we observed", "first this failed", etc.
 - Describe what code currently does in comments, never what it used to do.
 - When a commit deletes or replaces a file, grep for stale references across docs, README, and commit messages. Fix in the same commit.

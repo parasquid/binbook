@@ -1,6 +1,6 @@
 use binbook_fw::display::{
-    build_display_smoke_row, decompress_row, logical_to_physical, stream_gray1_rows,
-    DISPLAY_ROW_BYTES, GRAY1_ROW_BYTES,
+    build_display_smoke_row, decompress_row, logical_to_physical, smoke_probe_windows,
+    stream_gray1_rows, DISPLAY_ROW_BYTES, GRAY1_ROW_BYTES,
 };
 use binbook_fw::flash::{FlashStorage, FILE_ENTRY_SIZE};
 use binbook_fw::input::{decode_buttons, Button};
@@ -65,18 +65,34 @@ fn streams_rows_from_packbits_runs_crossing_row_boundaries() {
 }
 
 #[test]
-fn builds_single_top_left_display_probe_rows() {
+fn builds_four_corner_display_probe_rows() {
     let mut row = [0u8; DISPLAY_ROW_BYTES];
 
     build_display_smoke_row(0, &mut row);
     assert_eq!(&row[0..16], &[0x00; 16]);
-    assert_eq!(&row[16..], &[0xFF; DISPLAY_ROW_BYTES - 16]);
+    assert_eq!(&row[16..84], &[0xFF; 68]);
+    assert_eq!(&row[84..], &[0x00; 16]);
 
     build_display_smoke_row(100, &mut row);
     assert!(row.iter().all(|byte| *byte == 0xFF));
 
     build_display_smoke_row(400, &mut row);
-    assert!(row.iter().all(|byte| *byte == 0xFF));
+    assert_eq!(&row[0..16], &[0x00; 16]);
+    assert_eq!(&row[16..84], &[0xFF; 68]);
+    assert_eq!(&row[84..], &[0x00; 16]);
+}
+
+#[test]
+fn smoke_probe_windows_cover_all_physical_corners() {
+    assert_eq!(
+        smoke_probe_windows(),
+        [
+            (0, 0, 128, 96),
+            (672, 0, 128, 96),
+            (0, 384, 128, 96),
+            (672, 384, 128, 96),
+        ],
+    );
 }
 
 #[test]
