@@ -85,6 +85,7 @@ uv run binbook view test.binbook
 - If branch isolation seems important, ask first and explain why.
 - Never use `git add -A` or `git add .`. Always stage specific files by path.
 - Never amend, force-push, or rewrite history without explicit user request.
+- Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) for all commit messages. Format: `<type>[optional scope]: <description>` where type is one of `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, or `revert`.
 
 ## Implementation Guidelines
 
