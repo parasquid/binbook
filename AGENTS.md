@@ -46,6 +46,8 @@ Rules:
 - Use `uv` for dependency management and command execution (Python side).
 - Use `cargo` for Rust firmware work.
 - Do not trial-run commands in the sandbox when repo guidance or prior evidence shows they need host access. Run known host-bound commands with escalation up front, including `git add`, `git commit`, history rewrites, `git push`/`gh`, hardware flashing or serial access, and dependency/network fetches.
+- For hardware, USB, serial, flashing, monitor, SD-card, block-device, or mounted-media work, never treat sandboxed `/dev`, `/run/media`, mount, or port visibility as evidence. Do not run a sandboxed "quick check" first. Use a single escalated command up front, or clearly state that host/device access was not checked.
+- If a hardware or serial command is part of the requested verification, run the actual host-bound command with escalation instead of substituting a sandboxed existence check. Only report "not visible", "not connected", or "blocked" after an escalated host check fails.
 - Install/sync dependencies with:
 
 ```bash
@@ -86,6 +88,7 @@ uv run binbook view test.binbook
 - Never use `git add -A` or `git add .`. Always stage specific files by path.
 - Never amend, force-push, or rewrite history without explicit user request.
 - Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) for all commit messages. Format: `<type>[optional scope]: <description>` where type is one of `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, or `revert`.
+- When implementing a written plan, always use a todo tracker and keep it current as tasks move from pending to in progress to complete.
 
 ## Implementation Guidelines
 
