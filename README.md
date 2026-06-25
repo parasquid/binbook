@@ -11,7 +11,7 @@ The current implementation supports:
 - viewing a `.binbook` in a Pygame desktop simulation viewer
 - generating a local font kerning proof for bundled fonts
 
-The first supported profile is `xteink-x4-portrait`, stored by default as canonical row-major `GRAY2_PACKED` pages at logical `480x800`, with physical panel metadata `800x480` and logical-to-physical rotation `90` degrees clockwise. `GRAY1_PACKED` output is available as an explicit fast/lower-quality option.
+The first supported profile is `xteink-x4-portrait`, stored by default as canonical row-major `GRAY2_PACKED` pages for the Xteink X4 physical `800x480` panel, with logical reading metadata `480x800` and logical-to-physical rotation `270` degrees clockwise. `GRAY1_PACKED` output is available as an explicit fast/lower-quality option.
 The default bundled reading font is Literata, licensed under the SIL Open Font License.
 
 ## Documentation

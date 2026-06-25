@@ -6,7 +6,7 @@ This document records the working flash path for the BinBook bare-metal Rust fir
 
 - Target board: Xteink X4, ESP32-C3 over USB JTAG serial.
 - Firmware artifact: `firmware/target/riscv32imc-unknown-none-elf/release/binbook-fw`.
-- Current firmware behavior: SSD1677 display smoke test that clears the panel and draws four physical corner probe boxes.
+- Current firmware behavior: SSD1677 GRAY2 BinBook render probe that opens an embedded `.binbook` fixture and renders page 0.
 - Flash tool: `espflash 4.4.0`.
 
 SquidScript's command:
@@ -44,10 +44,10 @@ If the device appears elsewhere, set `ESPFLASH_PORT` to the correct path.
 From the repo root:
 
 ```bash
-firmware/scripts/flash-xteink-x4-smoke.sh
+firmware/scripts/flash-xteink-x4-gray2-probe.sh
 ```
 
-Use the wrapper above for smoke firmware flashing. Do not use an arbitrary `cargo build --target riscv32imc-unknown-none-elf` from `PATH`; if `cargo` and `rustc` resolve from different toolchain managers, the build can fail with a missing `core` crate or reject nightly-only flags even when the target is installed. The wrapper pins rustup's nightly `cargo` and `rustc`.
+Use the wrapper above for render-probe firmware flashing. Do not use an arbitrary `cargo build --target riscv32imc-unknown-none-elf` from `PATH`; if `cargo` and `rustc` resolve from different toolchain managers, the build can fail with a missing `core` crate or reject nightly-only flags even when the target is installed. The wrapper pins rustup's nightly `cargo` and `rustc`.
 
 Equivalent explicit command:
 
@@ -80,9 +80,9 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 Without this descriptor, `espflash` connects to the chip but refuses the image with an error saying the ESP-IDF App Descriptor is missing.
 
-## Verified flash result
+## Verified smoke flash result
 
-On 2026-06-25, the command above flashed the four-corner smoke firmware successfully with:
+On 2026-06-25, the previous four-corner smoke firmware flashed successfully with:
 
 ```text
 Chip type:         esp32c3 (revision v0.4)
@@ -99,14 +99,34 @@ Verified display result after reset on 2026-06-25:
 - one box at each physical display corner,
 - no center vertical stripe.
 
-Current smoke-test display behavior: a clear screen followed by four filled physical probe boxes:
+The previous smoke-test display behavior was a clear screen followed by four filled physical probe boxes:
 
 - one filled black 128×96 box at physical coordinate `(0, 0)`,
 - one filled black 128×96 box at physical coordinate `(672, 0)`,
 - one filled black 128×96 box at physical coordinate `(0, 384)`,
 - one filled black 128×96 box at physical coordinate `(672, 384)`.
 
-The smoke firmware first clears both SSD1677 RAM planes to white and performs a full refresh. It then writes four 128×96 black windows using SSD1677 window writes and performs another full refresh. This keeps the hardware milestone focused on reset, init, RAM-window writes, coordinate coverage, and full refresh. It does not yet verify BinBook page decoding, flash storage, buttons, serial commands, or logical portrait orientation.
+The smoke firmware first cleared both SSD1677 RAM planes to white and performed a full refresh. It then wrote four 128×96 black windows using SSD1677 window writes and performed another full refresh. That milestone focused on reset, init, RAM-window writes, coordinate coverage, and full refresh.
+
+## Current GRAY2 render probe
+
+The current `binbook-fw` binary initializes the SSD1677 grayscale path, opens `firmware/crates/binbook-fw/fixtures/gray2_probe.binbook` via `include_bytes!`, and renders page 0. The fixture is a single current-writer `GRAY2_PACKED` page stored at `800x480` with four vertical grayscale bands and asymmetric edge markers.
+
+Expected display result:
+
+- one full-screen BinBook-rendered page,
+- four visible tones: black, dark gray, light gray, and white,
+- asymmetric corner/edge markers matching the stored physical orientation,
+- no center vertical stripe or repeated malformed bands.
+
+The verified Rust GRAY2 plane mapping for the Xteink X4 grayscale LUT is:
+
+| BinBook value | Meaning | SSD1677 secondary/red RAM | SSD1677 black RAM |
+|---------------|---------|---------------------------|-------------------|
+| 0 | black | active | active |
+| 1 | dark gray | active | inactive |
+| 2 | light gray | inactive | active |
+| 3 | white | inactive | inactive |
 
 ## Driver details captured from bring-up
 
@@ -122,5 +142,7 @@ The Rust SSD1677 driver must match SquidScript's working SSD1677 path:
 - Clear/probe path: clear both `0x26` secondary/red RAM and `0x24` black RAM to white before drawing probe windows.
 - Full refresh sequence: `0x22 = [0xF7]`, then `0x20`.
 - Partial refresh sequence: `0x21 = [0x00, 0x00]`, `0x22 = [0xFC]`, then `0x20`.
+- Grayscale init additionally writes the SquidScript four-gray LUT with command `0x32`, gate voltage `0x03`, source voltage `0x04`, and VCOM voltage `0x2C`.
+- Grayscale refresh sequence: `0x21 = [0x00, 0x00]`, `0x22 = [0xC7]`, then `0x20`.
 
 Do not convert X coordinates to byte addresses for these commands. A prior Rust version sent `0x44 = [0x00, 0x63]` and `0x4E = [0x00]`, which produced malformed multi-stripe output even though the panel refreshed.

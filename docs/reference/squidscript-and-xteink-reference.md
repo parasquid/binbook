@@ -121,14 +121,19 @@ BUSY pin: active-high, 60-second timeout in driver.
 4. Build grayscale MSB buffer for light gray + dark gray pixels
 5. Call `displayGrayBuffer()` to apply grayscale overlay
 
-#### Native XTH Pixel Mapping (different from BinBook canonical)
+#### Rust Firmware GRAY2 Plane Mapping
 
-| XTH Value | Meaning | BinBook Canonical |
-|-----------|---------|-------------------|
-| 0 | white | 3 (white) |
-| 1 | dark gray | 1 (dark gray) |
-| 2 | light gray | 2 (light gray) |
-| 3 | black | 0 (black) |
+The Rust firmware renders current writer output by converting canonical
+`GRAY2_PACKED` bytes into the SSD1677 secondary/red RAM plane and black RAM
+plane. Hardware verification on the Xteink X4 showed that the two middle tones
+must be assigned as below for the SquidScript four-gray LUT path:
+
+| BinBook Canonical | Meaning | Red/MSB plane | Black/LSB plane |
+|-------------------|---------|---------------|-----------------|
+| 0 | black | active | active |
+| 1 | dark gray | active | inactive |
+| 2 | light gray | inactive | active |
+| 3 | white | inactive | inactive |
 
 BinBook stores canonical values. Firmware converts to native at display time.
 
