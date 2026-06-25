@@ -5,7 +5,6 @@ const MAGIC: &[u8] = b"BINBOOK\0";
 
 #[derive(Debug)]
 pub struct Header {
-    pub file_size: u64,
     pub section_table_offset: u64,
     pub section_table_length: u32,
     pub section_table_entry_size: u16,
@@ -42,8 +41,8 @@ pub(crate) fn parse_header(data: &[u8]) -> Result<Header, Error> {
     if header_size as usize != HEADER_SIZE {
         return Err(Error::UnsupportedVersion);
     }
+    let file_size = read_le64(data, 16);
     let h = Header {
-        file_size: read_le64(data, 16),
         section_table_offset: read_le64(data, 24),
         section_table_length: read_le32(data, 32),
         section_table_entry_size: read_le16(data, 36),
@@ -53,7 +52,8 @@ pub(crate) fn parse_header(data: &[u8]) -> Result<Header, Error> {
         page_data_offset: read_le64(data, 44),
         page_data_length: read_le64(data, 52),
     };
-    if h.section_table_entry_size != 40
+    if file_size < HEADER_SIZE as u64
+        || h.section_table_entry_size != 40
         || h.page_index_entry_size != 128
         || h.nav_index_entry_size != 48
         || h.section_table_offset < HEADER_SIZE as u64

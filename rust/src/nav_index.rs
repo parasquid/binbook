@@ -1,6 +1,4 @@
-use crate::Error;
 use crate::header::{read_le16, read_le32};
-use crate::section::NAV_INDEX_ENTRY_SIZE;
 
 pub const NAV_TYPE_CHAPTER: u16 = 3;
 pub const NAV_TYPE_SECTION: u16 = 4;
