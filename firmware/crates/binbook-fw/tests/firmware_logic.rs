@@ -1,6 +1,7 @@
 use binbook_fw::display::{
-    build_display_smoke_row, decompress_row, logical_to_physical, smoke_probe_windows,
-    stream_gray1_rows, DISPLAY_ROW_BYTES, GRAY1_ROW_BYTES,
+    build_display_smoke_row, decompress_row, gray2_row_to_ssd1677_planes, logical_to_physical,
+    smoke_probe_windows, stream_gray1_rows, stream_gray2_rows, DISPLAY_ROW_BYTES,
+    GRAY1_ROW_BYTES, GRAY2_ROW_BYTES,
 };
 use binbook_fw::flash::{FlashStorage, FILE_ENTRY_SIZE};
 use binbook_fw::input::{decode_buttons, Button};
@@ -62,6 +63,48 @@ fn streams_rows_from_packbits_runs_crossing_row_boundaries() {
     let mut expected_second = vec![0xAA; 6];
     expected_second.extend_from_slice(&[0x55; 54]);
     assert_eq!(rows[1], (1, expected_second));
+}
+
+#[test]
+fn streams_gray2_rows_from_packbits_runs_crossing_row_boundaries() {
+    let input = [
+        0xFF, 0xAA, // repeat 128 bytes
+        0xD1, 0xAA, // repeat 82 bytes: fills row 0 and starts row 1
+        0xFF, 0xBB, // repeat 128 bytes
+        0xBD, 0xBB, // repeat 62 bytes: finishes row 1
+    ];
+
+    let mut rows = Vec::new();
+    stream_gray2_rows(&input, 2, |row_index, row| {
+        rows.push((row_index, row.to_vec()));
+        Ok::<(), ()>(())
+    })
+    .unwrap();
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0], (0, vec![0xAA; GRAY2_ROW_BYTES]));
+
+    let mut expected_second = vec![0xAA; 10];
+    expected_second.extend_from_slice(&[0xBB; 190]);
+    assert_eq!(rows[1], (1, expected_second));
+}
+
+#[test]
+fn gray2_row_conversion_maps_canonical_levels_to_ssd1677_planes() {
+    let mut gray2 = [0xFFu8; GRAY2_ROW_BYTES];
+    let mut red = [0u8; DISPLAY_ROW_BYTES];
+    let mut black = [0u8; DISPLAY_ROW_BYTES];
+
+    gray2[0] = 0b00011011; // black, dark gray, light gray, white at physical x 0..3
+
+    gray2_row_to_ssd1677_planes(&gray2, &mut red, &mut black);
+
+    assert_eq!(red[DISPLAY_ROW_BYTES - 1], 0xFC);
+    assert_eq!(black[DISPLAY_ROW_BYTES - 1], 0xFA);
+    assert!(red[..DISPLAY_ROW_BYTES - 1].iter().all(|byte| *byte == 0xFF));
+    assert!(black[..DISPLAY_ROW_BYTES - 1]
+        .iter()
+        .all(|byte| *byte == 0xFF));
 }
 
 #[test]

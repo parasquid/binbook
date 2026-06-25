@@ -2,6 +2,7 @@ use ssd1677_driver::Ssd1677Driver;
 use xteink_hal::{HalResult, InputPin, OutputPin, RefreshMode, Spi};
 
 pub const GRAY1_ROW_BYTES: usize = 60;
+pub const GRAY2_ROW_BYTES: usize = 200;
 pub const DISPLAY_ROW_BYTES: usize = 100;
 pub const PAGE_WIDTH: u16 = 480;
 pub const PAGE_HEIGHT: u16 = 800;
@@ -68,6 +69,61 @@ where
     display.refresh_with_delay(RefreshMode::Partial, &NoDelay)
 }
 
+pub fn display_gray2_page<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    compressed_data: &[u8],
+    delay: &dyn xteink_hal::Delay,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_gray2_plane(display, compressed_data, true)?;
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_gray2_plane(display, compressed_data, false)?;
+    display.refresh_with_delay(RefreshMode::Grayscale, delay)
+}
+
+fn stream_gray2_plane<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    compressed_data: &[u8],
+    red_plane: bool,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    let mut decoder = PackBitsStream::new(compressed_data);
+    let mut gray2_row = [0u8; GRAY2_ROW_BYTES];
+    let mut red = [0u8; DISPLAY_ROW_BYTES];
+    let mut black = [0u8; DISPLAY_ROW_BYTES];
+
+    if red_plane {
+        display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |row, row_buf| {
+            let _ = row;
+            gray2_row.fill(0);
+            decoder.fill(&mut gray2_row);
+            gray2_row_to_ssd1677_planes(&gray2_row, &mut red, &mut black);
+            row_buf.copy_from_slice(&red);
+        })
+    } else {
+        display.write_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |row, row_buf| {
+            let _ = row;
+            gray2_row.fill(0);
+            decoder.fill(&mut gray2_row);
+            gray2_row_to_ssd1677_planes(&gray2_row, &mut red, &mut black);
+            row_buf.copy_from_slice(&black);
+        })
+    }
+}
+
 pub fn stream_gray1_rows<E>(
     compressed_data: &[u8],
     row_count: u16,
@@ -83,6 +139,64 @@ pub fn stream_gray1_rows<E>(
     }
 
     Ok(())
+}
+
+pub fn stream_gray2_rows<E>(
+    compressed_data: &[u8],
+    row_count: u16,
+    mut write_row: impl FnMut(u16, &[u8; GRAY2_ROW_BYTES]) -> Result<(), E>,
+) -> Result<(), E> {
+    let mut decoder = PackBitsStream::new(compressed_data);
+    let mut row_buf = [0u8; GRAY2_ROW_BYTES];
+
+    for row in 0..row_count {
+        row_buf.fill(0);
+        decoder.fill(&mut row_buf);
+        write_row(row, &row_buf)?;
+    }
+
+    Ok(())
+}
+
+pub fn gray2_row_to_ssd1677_planes(
+    gray2_row: &[u8; GRAY2_ROW_BYTES],
+    red_row: &mut [u8; DISPLAY_ROW_BYTES],
+    black_row: &mut [u8; DISPLAY_ROW_BYTES],
+) {
+    red_row.fill(0xFF);
+    black_row.fill(0xFF);
+
+    for (byte_index, packed) in gray2_row.iter().copied().enumerate() {
+        let physical_x = (byte_index * 4) as u16;
+        for pixel in 0..4 {
+            let gray = (packed >> (6 - pixel * 2)) & 0x03;
+            let xth = gray2_to_xteink_value(gray);
+            let x = physical_x + pixel as u16;
+            if xth & 0x02 != 0 {
+                clear_ssd1677_pixel(red_row, x);
+            }
+            if xth & 0x01 != 0 {
+                clear_ssd1677_pixel(black_row, x);
+            }
+        }
+    }
+}
+
+fn gray2_to_xteink_value(gray: u8) -> u8 {
+    match gray & 0x03 {
+        0 => 3,
+        1 => 2,
+        2 => 1,
+        _ => 0,
+    }
+}
+
+fn clear_ssd1677_pixel(row: &mut [u8; DISPLAY_ROW_BYTES], physical_x: u16) {
+    if physical_x >= DISPLAY_WIDTH {
+        return;
+    }
+    let ram_x = DISPLAY_WIDTH - 1 - physical_x;
+    row[usize::from(ram_x / 8)] &= !(0x80 >> (ram_x % 8));
 }
 
 pub fn decompress_row(input: &[u8], output: &mut [u8]) -> usize {
