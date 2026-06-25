@@ -1,0 +1,113 @@
+# Xteink X4 BinBook Firmware Flashing
+
+This document records the working flash path for the BinBook bare-metal Rust firmware. It is separate from SquidScript's `squidc target flash` flow.
+
+## Scope
+
+- Target board: Xteink X4, ESP32-C3 over USB JTAG serial.
+- Firmware artifact: `firmware/target/riscv32imc-unknown-none-elf/release/binbook-fw`.
+- Current firmware behavior: SSD1677 display smoke test that clears the panel and draws one physical-window probe box.
+- Flash tool: `espflash 4.4.0`.
+
+SquidScript's command:
+
+```bash
+cargo run -p squidc -- target flash --target xteink-x4
+```
+
+is not the right command for this repo's Rust artifact. It wraps Zephyr's `west flash` for SquidScript's `build/zephyr/xteink-x4/zephyr.bin`.
+
+## Prerequisites
+
+Install `espflash` if it is not already installed:
+
+```bash
+cargo install espflash
+```
+
+On this workstation, the installed binary is:
+
+```text
+/var/home/tristan/.cargo/bin/espflash
+```
+
+The Xteink X4 is expected at:
+
+```text
+/dev/ttyACM0
+```
+
+If the device appears elsewhere, set `ESPFLASH_PORT` to the correct path.
+
+## Working command
+
+From the repo root:
+
+```bash
+firmware/scripts/flash-xteink-x4-smoke.sh
+```
+
+Equivalent explicit command:
+
+```bash
+cd firmware
+RUSTC=/var/home/tristan/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/rustc \
+  /var/home/tristan/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo \
+  build -p binbook-fw --features firmware-bin --target riscv32imc-unknown-none-elf --release
+
+/var/home/tristan/.cargo/bin/espflash flash \
+  --non-interactive \
+  --chip esp32c3 \
+  --port /dev/ttyACM0 \
+  --flash-size 16mb \
+  target/riscv32imc-unknown-none-elf/release/binbook-fw
+```
+
+Do not pass `--monitor` for this smoke test. The firmware does not currently emit a useful serial protocol, and USB reset/re-enumeration can disrupt monitor sessions.
+
+## Firmware requirements for `espflash`
+
+The `binbook-fw` binary must include an ESP-IDF app descriptor:
+
+```rust
+esp_bootloader_esp_idf::esp_app_desc!();
+```
+
+Without this descriptor, `espflash` connects to the chip but refuses the image with an error saying the ESP-IDF App Descriptor is missing.
+
+## Verified flash result
+
+On 2026-06-25, the command above flashed successfully with:
+
+```text
+Chip type:         esp32c3 (revision v0.4)
+Crystal frequency: 40 MHz
+Flash size:        16MB
+Features:          WiFi, BLE
+App/part. size:    89,840/16,384,000 bytes, 0.55%
+Flashing has completed!
+```
+
+Verified display result after reset on 2026-06-25: a clear screen followed by one filled physical probe box:
+
+- one filled black 128×96 box at physical coordinate `(0, 0)`,
+- no center vertical stripe.
+
+The smoke firmware first clears both SSD1677 RAM planes to white and performs a full refresh. It then writes one 128×96 black window using SSD1677 window writes and performs another full refresh. This keeps the first hardware milestone focused on reset, init, RAM-window writes, and full refresh. It does not yet verify BinBook page decoding, flash storage, buttons, serial commands, four-corner coverage, or logical portrait orientation.
+
+## Driver details captured from bring-up
+
+The Rust SSD1677 driver must match SquidScript's working SSD1677 path:
+
+- Data entry mode: `0x03`, X-increment/Y-increment horizontal write mode.
+- Hardware reset: physical reset high for 20 ms, low for 20 ms, high for 200 ms, then wait for ready.
+- Init sequence: `0x12`, wait ready, `0x18 = [0x80]`, `0x0C = [0xAE, 0xC7, 0xC3, 0xC0, 0x80]`, `0x01 = [0xDF, 0x01, 0x02]`, `0x11 = [0x03]`, `0x3C = [0x01]`, then full window.
+- X RAM address range command `0x44`: four bytes, little-endian 16-bit physical pixel coordinates: `x0_lo, x0_hi, x1_lo, x1_hi`.
+- Y RAM address range command `0x45`: four bytes, little-endian 16-bit physical row coordinates: `y0_lo, y0_hi, y1_lo, y1_hi`.
+- X counter command `0x4E`: two bytes, little-endian 16-bit physical pixel coordinate.
+- Y counter command `0x4F`: two bytes, little-endian 16-bit physical row coordinate.
+- Clear/probe path: clear both `0x26` secondary/red RAM and `0x24` black RAM to white before drawing probe windows.
+- Full refresh sequence: `0x22 = [0xF7]`, then `0x20`.
+- Partial refresh sequence: `0x21 = [0x00, 0x00]`, `0x22 = [0xFC]`, then `0x20`.
+
+Do not convert X coordinates to byte addresses for these commands. A prior Rust version sent `0x44 = [0x00, 0x63]` and `0x4E = [0x00]`, which produced malformed multi-stripe output even though the panel refreshed.

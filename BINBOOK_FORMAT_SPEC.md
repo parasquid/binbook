@@ -1100,7 +1100,7 @@ While the section table is authoritative (readers must use it), the recommended 
 | Logical dimensions | 480 × 800 px |
 | Physical dimensions | 800 × 480 px (device is physically landscape) |
 | Logical orientation | Portrait |
-| Logical-to-physical rotation | 90 degrees clockwise |
+| Logical-to-physical rotation | 270 degrees clockwise |
 | Default pixel format | GRAY2_PACKED |
 | Supported lower format | GRAY1_PACKED |
 | Supported color formats | RGB565, RGB888, RGBA8888 |
@@ -1109,10 +1109,10 @@ While the section table is authoritative (readers must use it), the recommended 
 | GRAY1 row size | 60 bytes (480 / 8) |
 | Compression | RLE_PACKBITS |
 
-**Logical-to-physical rotation mapping for 90 degrees clockwise**:
+**Logical-to-physical rotation mapping for 270 degrees clockwise**:
 ```
-physical_x = logical_y
-physical_y = logical_width_px - 1 - logical_x
+physical_x = logical_height_px - 1 - logical_y
+physical_y = logical_x
 ```
 
 The stored page blob remains logical portrait `480x800` row-major data. Firmware rotates into the physical `800x480` display framebuffer.
@@ -1179,7 +1179,7 @@ Readers/firmware should validate:
 - [ ] `READER_REQUIREMENTS.required_storage_pixel_formats` matches the emitted page format
 - [ ] `DISPLAY_PROFILE.logical_width/height` = (480, 800)
 - [ ] `DISPLAY_PROFILE.physical_width/height` = (800, 480)
-- [ ] `DISPLAY_PROFILE.logical_to_physical_rotation` = 90
+- [ ] `DISPLAY_PROFILE.logical_to_physical_rotation` = 270
 - [ ] `LAYOUT_PROFILE.full_page_width/height` matches display profile
 
 ---

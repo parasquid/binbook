@@ -1,0 +1,14 @@
+[package]
+name = "binbook-cli"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "CLI tool for BinBook device management"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+binbook = { path = "../rust" }
+serialport = { version = "4", optional = true }
+
+[features]
+serial-device = ["dep:serialport"]

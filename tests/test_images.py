@@ -1,4 +1,7 @@
-from binbook.images import _luma_to_gray1, _luma_to_gray2, _luma_to_gray2_pixels
+from PIL import Image
+
+from binbook.images import _luma_to_gray1, _luma_to_gray2, _luma_to_gray2_pixels, storage_image_to_logical
+from binbook.profiles import XTEINK_X4_PORTRAIT
 
 
 def test_luma_to_gray1_thresholds_to_black_or_white():
@@ -29,3 +32,18 @@ def test_gray2_dither_false_preserves_direct_threshold_quantization():
     pixels = _luma_to_gray2_pixels(bytes([127] * 8), 8, 1, dither=False)
 
     assert pixels == [1] * 8
+
+
+def test_storage_image_to_logical_uses_verified_x4_270_rotation():
+    image = Image.new("L", (800, 480), 255)
+    image.putpixel((779, 10), 0)
+
+    logical = storage_image_to_logical(
+        image,
+        logical_width=XTEINK_X4_PORTRAIT.logical_width,
+        logical_height=XTEINK_X4_PORTRAIT.logical_height,
+        logical_to_physical_rotation=XTEINK_X4_PORTRAIT.logical_to_physical_rotation,
+    )
+
+    assert logical.size == (480, 800)
+    assert logical.getpixel((10, 20)) == 0

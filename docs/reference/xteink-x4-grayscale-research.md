@@ -69,18 +69,18 @@ CrossPoint's text/font rendering also has grayscale paths. `GfxRenderer` exposes
 
 ## Rotation
 
-CrossPoint uses logical portrait coordinates of `480x800` and maps them to the physical `800x480` panel by rotating 90 degrees clockwise:
+Hardware verification through the SquidScript Xteink X4 target metadata uses logical portrait coordinates of `480x800` and maps them to the physical `800x480` panel by rotating 270 degrees clockwise:
 
 ```text
-physical_x = logical_y
-physical_y = panel_height - 1 - logical_x
+physical_x = logical_height - 1 - logical_y
+physical_y = logical_x
 ```
 
 For BinBook's `xteink-x4-portrait` profile, this corresponds to:
 
 ```text
-physical_x = logical_y
-physical_y = logical_width_px - 1 - logical_x
+physical_x = logical_height_px - 1 - logical_y
+physical_y = logical_x
 ```
 
 ## BinBook Implications

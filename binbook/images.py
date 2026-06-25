@@ -57,11 +57,11 @@ def storage_image_to_logical(image: Image.Image, *, logical_width: int, logical_
     if rotation == 0:
         logical = image
     elif rotation == 90:
-        logical = image.rotate(90, expand=True)
+        logical = image.rotate(270, expand=True)
     elif rotation == 180:
         logical = image.rotate(180, expand=True)
     elif rotation == 270:
-        logical = image.rotate(270, expand=True)
+        logical = image.rotate(90, expand=True)
     else:
         raise ValueError(f"unsupported logical-to-physical rotation: {logical_to_physical_rotation}")
     if logical.size != (logical_width, logical_height):
@@ -107,11 +107,11 @@ def _orient_pixels_to_storage(pixels: list[int], profile: DisplayProfile) -> lis
             raise ValueError("storage dimensions do not match logical dimensions for zero-rotation profile")
         return pixels
     if rotation == 90:
-        return _rotate_pixels_90_clockwise(pixels, profile.logical_width, profile.logical_height)
+        return _rotate_pixels_270_clockwise(pixels, profile.logical_width, profile.logical_height)
     if rotation == 180:
         return _rotate_pixels_180(pixels, profile.logical_width, profile.logical_height)
     if rotation == 270:
-        return _rotate_pixels_270_clockwise(pixels, profile.logical_width, profile.logical_height)
+        return _rotate_pixels_90_clockwise(pixels, profile.logical_width, profile.logical_height)
     raise ValueError(f"unsupported logical-to-physical rotation: {profile.logical_to_physical_rotation}")
 
 

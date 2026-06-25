@@ -1,0 +1,31 @@
+[package]
+name = "binbook-fw"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "BinBook firmware for Xteink X4"
+
+[dependencies]
+xteink-hal = { path = "../xteink-hal" }
+ssd1677-driver = { path = "../ssd1677-driver" }
+binbook = { path = "../../../rust", default-features = false }
+esp-backtrace = { version = "0.19.0", features = ["esp32c3", "panic-handler", "println"], optional = true }
+esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32c3"], optional = true }
+esp-hal = { version = "1.1.1", features = ["esp32c3", "unstable"], optional = true }
+esp-println = { version = "0.17.0", default-features = false, features = ["esp32c3", "jtag-serial"], optional = true }
+
+[features]
+firmware-bin = [
+    "dep:esp-backtrace",
+    "dep:esp-bootloader-esp-idf",
+    "dep:esp-hal",
+    "dep:esp-println",
+]
+
+[[bin]]
+name = "binbook-fw"
+path = "src/main.rs"
+test = false
+doctest = false
+bench = false
+required-features = ["firmware-bin"]

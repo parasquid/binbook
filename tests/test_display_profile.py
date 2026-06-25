@@ -22,7 +22,7 @@ def test_x4_profile_metadata_is_gray2_portrait_with_explicit_rotation(tmp_path):
     image_policy = reader._section_data(SectionId.IMAGE_POLICY)
 
     assert struct.unpack_from("<HHHH", display, 24) == (480, 800, 800, 480)
-    assert struct.unpack_from("<BhB", display, 32) == (1, 90, 1)
+    assert struct.unpack_from("<BhB", display, 32) == (1, 270, 1)
     supported_formats = int(PixelFormatFlag.GRAY1_PACKED | PixelFormatFlag.GRAY2_PACKED)
     assert struct.unpack_from("<I", display, 36)[0] == supported_formats
     assert struct.unpack_from("<I", display, 40)[0] == supported_formats
