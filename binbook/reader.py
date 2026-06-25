@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .checksums import crc32
@@ -24,11 +24,16 @@ from .structs import (
     HEADER_SIZE,
     CHAPTER_INDEX_ENTRY_SIZE,
     NAV_INDEX_ENTRY_SIZE,
+    PAGE_CHUNK_INDEX_ENTRY_SIZE,
     PAGE_INDEX_ENTRY_SIZE,
+    PAGE_TRANSITION_INDEX_ENTRY_SIZE,
     SECTION_ENTRY_SIZE,
     BinBookHeader,
     ChapterIndexEntry,
+    NavIndexEntry,
+    PageChunkIndexEntry,
     PageIndexEntry,
+    PageTransitionIndexEntry,
     SectionEntry,
     StringRef,
 )
@@ -48,16 +53,20 @@ class BinBookReader:
     sections: dict[SectionId, SectionEntry]
     pages: list[PageIndexEntry]
     chapters: list[ChapterIndexEntry]
+    page_chunks: list[PageChunkIndexEntry] = field(default_factory=list)
+    page_transitions: list[PageTransitionIndexEntry] = field(default_factory=list)
 
     @classmethod
     def open(cls, path: Path | str, *, validate: bool = True) -> "BinBookReader":
-        book_path = Path(path)
-        data = book_path.read_bytes()
+        path = Path(path)
+        data = path.read_bytes()
         header = BinBookHeader.unpack(data[:HEADER_SIZE])
         sections = _read_sections(data, header)
         pages = _read_pages(data, sections)
         chapters = _read_chapters(data, sections)
-        reader = cls(book_path, data, header, sections, pages, chapters)
+        page_chunks = _read_page_chunks(data, sections)
+        page_transitions = _read_page_transitions(data, sections)
+        reader = cls(path, data, header, sections, pages, chapters, page_chunks, page_transitions)
         if validate:
             reader.validate()
         return reader
@@ -132,6 +141,22 @@ class BinBookReader:
                 raise ValueError("chapter target page is out of range")
             if chapter.nav_type not in (3, 4):
                 raise ValueError("chapter index contains non-selectable nav type")
+        chunk_section = self.sections.get(SectionId.PAGE_CHUNK_INDEX)
+        if chunk_section is not None:
+            if chunk_section.entry_size != PAGE_CHUNK_INDEX_ENTRY_SIZE:
+                raise ValueError("unsupported page chunk index entry size")
+            if chunk_section.record_count != len(self.page_chunks):
+                raise ValueError("page chunk index count mismatch")
+            for chunk in self.page_chunks:
+                chunk_end = chunk.page_data_offset + chunk.compressed_size
+                if chunk_end > self.header.page_data_length:
+                    raise ValueError("page chunk is outside PAGE_DATA")
+        transition_section = self.sections.get(SectionId.PAGE_TRANSITION_INDEX)
+        if transition_section is not None:
+            if transition_section.entry_size != PAGE_TRANSITION_INDEX_ENTRY_SIZE:
+                raise ValueError("unsupported page transition index entry size")
+            if transition_section.record_count != len(self.page_transitions):
+                raise ValueError("page transition index count mismatch")
 
     def _validate_reader_requirements(self) -> None:
         data = self._section_data(SectionId.READER_REQUIREMENTS)
@@ -212,6 +237,8 @@ class BinBookReader:
     def decode_page_bytes(self, page_number: int) -> tuple[bytes, PageIndexEntry]:
         page = self.pages[page_number]
         pd = page.plane_dir
+        if pd.bitmap == 0x07 and page.pixel_format == PixelFormat.GRAY2_PACKED:
+            return self._decode_x4_native_page(page)
         parts = []
         for slot in range(4):
             if not (pd.bitmap & (1 << slot)):
@@ -222,6 +249,49 @@ class BinBookReader:
             parts.append(decode_packbits(compressed))
         unpacked = b"".join(parts)
         return unpacked, page
+
+    def _decode_x4_native_page(self, page: PageIndexEntry) -> tuple[bytes, PageIndexEntry]:
+        from .pixels import (
+            X4_PHYSICAL_HEIGHT,
+            X4_PHYSICAL_WIDTH,
+            X4_ROW_BYTES,
+            pack_gray2,
+        )
+        pd = page.plane_dir
+        planes_data: list[bytes] = []
+        for slot in range(3):
+            if not (pd.bitmap & (1 << slot)):
+                planes_data.append(b"\xff" * (X4_ROW_BYTES * X4_PHYSICAL_HEIGHT))
+                continue
+            absolute = self.header.page_data_offset + pd.offsets[slot]
+            compressed = self.data[absolute : absolute + pd.sizes[slot]]
+            planes_data.append(decode_packbits(compressed))
+        msb_rows = planes_data[0]
+        lsb_rows = planes_data[1]
+        logical_width = 480
+        logical_height = 800
+        pixels = [3] * (logical_width * logical_height)
+        for physical_y in range(X4_PHYSICAL_HEIGHT):
+            for physical_x in range(X4_PHYSICAL_WIDTH):
+                ram_x = X4_PHYSICAL_WIDTH - 1 - physical_x
+                byte_idx = ram_x // 8
+                bit_mask = 0x80 >> (ram_x % 8)
+                msb_set = (msb_rows[physical_y * X4_ROW_BYTES + byte_idx] & bit_mask) != 0
+                lsb_set = (lsb_rows[physical_y * X4_ROW_BYTES + byte_idx] & bit_mask) != 0
+                if msb_set and lsb_set:
+                    gray = 3
+                elif msb_set and not lsb_set:
+                    gray = 2
+                elif not msb_set and lsb_set:
+                    gray = 1
+                else:
+                    gray = 0
+                logical_x = physical_y
+                logical_y = X4_PHYSICAL_WIDTH - 1 - physical_x
+                if 0 <= logical_x < logical_width and 0 <= logical_y < logical_height:
+                    pixels[logical_y * logical_width + logical_x] = gray
+        packed = pack_gray2(pixels, logical_width, logical_height)
+        return packed, page
 
     def decode_page_to_png(self, page_number: int, output: Path | str) -> None:
         unpacked, page = self.decode_page_bytes(page_number)
@@ -259,5 +329,25 @@ def _read_chapters(data: bytes, sections: dict[SectionId, SectionEntry]) -> list
         return []
     return [
         ChapterIndexEntry.unpack(data, section.offset + index * section.entry_size)
+        for index in range(section.record_count)
+    ]
+
+
+def _read_page_chunks(data: bytes, sections: dict[SectionId, SectionEntry]) -> list[PageChunkIndexEntry]:
+    section = sections.get(SectionId.PAGE_CHUNK_INDEX)
+    if section is None:
+        return []
+    return [
+        PageChunkIndexEntry.unpack(data, section.offset + index * section.entry_size)
+        for index in range(section.record_count)
+    ]
+
+
+def _read_page_transitions(data: bytes, sections: dict[SectionId, SectionEntry]) -> list[PageTransitionIndexEntry]:
+    section = sections.get(SectionId.PAGE_TRANSITION_INDEX)
+    if section is None:
+        return []
+    return [
+        PageTransitionIndexEntry.unpack(data, section.offset + index * section.entry_size)
         for index in range(section.record_count)
     ]

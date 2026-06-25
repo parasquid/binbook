@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Build a deterministic four-page navigation probe fixture for Xteink X4 firmware testing.
 
-Page 0: gray-band page preserved byte-for-byte from gray2_probe.binbook
+Page 0: gray-band page rendered from source
 Page 1: checkerboard pattern (160px cells)
 Page 2: four-tone vertical stripes
 Page 3: lorem ipsum text rendered through Pillow
+
+All pages use X4 native 3-plane (bitmap=0x07) storage.
 """
 from __future__ import annotations
 
@@ -19,11 +21,11 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from binbook.constants import CompressionMethod, PixelFormat
 from binbook.images import pil_image_to_packed
+from binbook.page_compiler import encoded_page
 from binbook.profiles import get_profile
-from binbook.rle import encode_packbits
 from binbook.reader import BinBookReader
-from binbook.writer import EncodedPage, build_binbook
-from binbook.checksums import crc32
+from binbook.rle import decode_packbits
+from binbook.writer import BookInfo, NavEntry, build_binbook
 
 FIXTURE_DIR = REPO_ROOT / "firmware" / "crates" / "binbook-fw" / "fixtures"
 SOURCE_FIXTURE = FIXTURE_DIR / "gray2_probe.binbook"
@@ -84,12 +86,14 @@ LOREM_TEXT = (
 
 
 def _page_data_slice(reader: BinBookReader, page_index: int) -> bytes:
-    """Return the raw compressed page-data bytes for a single plane (slot 0)."""
+    """Return the raw compressed page-data bytes for all planes of a page."""
     page = reader.pages[page_index]
     pd = page.plane_dir
-    offset = reader.header.page_data_offset + pd.offsets[0]
-    size = pd.sizes[0]
-    return reader.data[offset : offset + size]
+    total = sum(pd.sizes[slot] for slot in range(4) if pd.bitmap & (1 << slot))
+    offset = reader.header.page_data_offset + min(
+        pd.offsets[slot] for slot in range(4) if pd.bitmap & (1 << slot)
+    )
+    return reader.data[offset : offset + total]
 
 
 def _make_checkerboard(profile) -> Image.Image:
@@ -157,48 +161,28 @@ def main() -> None:
         print(f"Source fixture not found: {SOURCE_FIXTURE}", file=sys.stderr)
         sys.exit(1)
 
-    original = BinBookReader.open(SOURCE_FIXTURE, validate=True)
+    original = BinBookReader.open(SOURCE_FIXTURE, validate=False)
     profile = get_profile(PROFILE_NAME)
 
-    # Page 0: preserve original gray-band payload byte-for-byte.
-    original_compressed = _page_data_slice(original, 0)
-    page0_uncompressed = profile.logical_width * profile.logical_height // 4
-    page0 = EncodedPage(
-        compressed=original_compressed,
-        uncompressed_size=page0_uncompressed,
-        page_crc32=original.pages[0].page_crc32,
-        page_kind=original.pages[0].page_kind,
-    )
+    # Page 0: gray-band page (decode compressed source, then re-encode as X4 native)
+    compressed_source = _page_data_slice(original, 0)
+    page0_packed = decode_packbits(compressed_source)
+    page0 = encoded_page(page0_packed, original.pages[0].page_kind, original.pages[0].source_spine_index)
 
     # Page 1: checkerboard
     checker_img = _make_checkerboard(profile)
     checker_packed = pil_image_to_packed(checker_img, profile, dither=False)
-    checker_compressed = encode_packbits(checker_packed)
-    page1 = EncodedPage(
-        compressed=checker_compressed,
-        uncompressed_size=len(checker_packed),
-        page_crc32=crc32(checker_compressed),
-    )
+    page1 = encoded_page(checker_packed, 0, 0)
 
     # Page 2: stripes
     stripes_img = _make_stripes(profile)
     stripes_packed = pil_image_to_packed(stripes_img, profile, dither=False)
-    stripes_compressed = encode_packbits(stripes_packed)
-    page2 = EncodedPage(
-        compressed=stripes_compressed,
-        uncompressed_size=len(stripes_packed),
-        page_crc32=crc32(stripes_compressed),
-    )
+    page2 = encoded_page(stripes_packed, 0, 0)
 
     # Page 3: lorem ipsum
     lorem_img = _make_lorem_ipsum(profile)
     lorem_packed = pil_image_to_packed(lorem_img, profile, dither=False)
-    lorem_compressed = encode_packbits(lorem_packed)
-    page3 = EncodedPage(
-        compressed=lorem_compressed,
-        uncompressed_size=len(lorem_packed),
-        page_crc32=crc32(lorem_compressed),
-    )
+    page3 = encoded_page(lorem_packed, 0, 0)
 
     pages = [page0, page1, page2, page3]
     book_bytes = build_binbook(pages, profile, source_name="nav-probe")
@@ -208,17 +192,21 @@ def main() -> None:
     # --- Self-checks ---
     reader = BinBookReader.open(OUTPUT_FIXTURE, validate=True)
     assert len(reader.pages) == 4, f"expected 4 pages, got {len(reader.pages)}"
-    assert reader.pages[0].plane_dir.sizes[0] == original.pages[0].plane_dir.sizes[0], \
-        f"page 0 size mismatch: {reader.pages[0].plane_dir.sizes[0]} != {original.pages[0].plane_dir.sizes[0]}"
-    assert _page_data_slice(reader, 0) == original_compressed, "page 0 payload byte-for-byte mismatch"
-    for page in reader.pages:
-        assert page.pixel_format == PixelFormat.GRAY2_PACKED, f"wrong pixel format: {page.pixel_format}"
+    for i, page in enumerate(reader.pages):
+        assert page.pixel_format == PixelFormat.GRAY2_PACKED, f"page {i} wrong pixel format: {page.pixel_format}"
         assert (page.stored_width, page.stored_height) == (800, 480), \
-            f"wrong stored dimensions: {page.stored_width}x{page.stored_height}"
-        assert page.plane_dir.bitmap == 0x01, f"wrong plane bitmap: {page.plane_dir.bitmap}"
+            f"page {i} wrong stored dimensions: {page.stored_width}x{page.stored_height}"
+        assert page.plane_dir.bitmap == 0x07, f"page {i} wrong plane bitmap: {page.plane_dir.bitmap:#x}"
+    assert len(reader.page_chunks) == len(reader.pages) * 3 * 30, \
+        f"expected {len(reader.pages) * 3 * 30} chunk records, got {len(reader.page_chunks)}"
+    expected_transitions = max(0, len(reader.pages) - 1) * 2
+    assert len(reader.page_transitions) == expected_transitions, \
+        f"expected {expected_transitions} transition records, got {len(reader.page_transitions)}"
 
-    sizes = [p.plane_dir.sizes[0] for p in reader.pages]
-    print(f"nav_probe.binbook: {len(reader.pages)} pages, compressed sizes: {sizes}")
+    sizes = [[page.plane_dir.sizes[s] for s in range(4)] for page in reader.pages]
+    print(f"nav_probe.binbook: {len(reader.pages)} pages, {len(reader.page_chunks)} chunks, {len(reader.page_transitions)} transitions")
+    for i, s in enumerate(sizes):
+        print(f"  page {i} plane sizes: {s}")
 
 
 if __name__ == "__main__":

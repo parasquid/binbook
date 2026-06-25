@@ -3,12 +3,16 @@ from binbook.structs import (
     CHAPTER_INDEX_ENTRY_SIZE,
     HEADER_SIZE,
     NAV_INDEX_ENTRY_SIZE,
+    PAGE_CHUNK_INDEX_ENTRY_SIZE,
     PAGE_INDEX_ENTRY_SIZE,
+    PAGE_TRANSITION_INDEX_ENTRY_SIZE,
     SECTION_ENTRY_SIZE,
     BinBookHeader,
     ChapterIndexEntry,
     NavIndexEntry,
+    PageChunkIndexEntry,
     PageIndexEntry,
+    PageTransitionIndexEntry,
     PlaneDir,
     SectionEntry,
     StringRef,
@@ -90,3 +94,36 @@ def test_section_page_and_nav_entries_roundtrip():
     assert restored.plane_dir.sizes[2] == 800
     assert NavIndexEntry.unpack(nav.pack()) == nav
     assert ChapterIndexEntry.unpack(chapter.pack()) == chapter
+
+
+def test_page_chunk_index_entry_roundtrip():
+    entry = PageChunkIndexEntry(
+        page_number=7,
+        plane_slot=2,
+        chunk_index=29,
+        row_start=464,
+        row_count=16,
+        page_data_offset=123456,
+        compressed_size=321,
+        uncompressed_size=1600,
+    )
+
+    restored = PageChunkIndexEntry.unpack(entry.pack())
+
+    assert restored == entry
+    assert len(entry.pack()) == PAGE_CHUNK_INDEX_ENTRY_SIZE
+
+
+def test_page_transition_index_entry_roundtrip():
+    entry = PageTransitionIndexEntry(
+        from_page_number=4,
+        to_page_number=5,
+        changed_chunk_mask=0b10101,
+        first_changed_chunk=0,
+        changed_chunk_count=5,
+    )
+
+    restored = PageTransitionIndexEntry.unpack(entry.pack())
+
+    assert restored == entry
+    assert len(entry.pack()) == PAGE_TRANSITION_INDEX_ENTRY_SIZE

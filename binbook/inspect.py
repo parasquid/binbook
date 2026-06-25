@@ -51,6 +51,8 @@ def _payload(reader: BinBookReader, validation_errors: list[str] | None) -> dict
         "section_count": len(reader.sections),
         "page_count": len(reader.pages),
         "chapter_count": len(reader.chapters),
+        "chunk_count": len(reader.page_chunks),
+        "transition_count": len(reader.page_transitions),
         "page_data": {"offset": reader.header.page_data_offset, "length": reader.header.page_data_length},
         "compression": {
             "compressed_bytes": total_compressed,

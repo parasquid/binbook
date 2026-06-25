@@ -117,3 +117,58 @@ def xteink_xth_value(gray2_value: int) -> int:
 
 def gray2_to_luma(value: int) -> int:
     return [0, 85, 170, 255][value]
+
+
+X4_PHYSICAL_WIDTH = 800
+X4_PHYSICAL_HEIGHT = 480
+X4_ROW_BYTES = 100
+X4_CHUNK_ROWS = 16
+X4_CHUNK_BYTES = X4_ROW_BYTES * X4_CHUNK_ROWS
+X4_CHUNKS_PER_PLANE = X4_PHYSICAL_HEIGHT // X4_CHUNK_ROWS
+
+
+def x4_logical_to_physical(logical_x: int, logical_y: int) -> tuple[int, int]:
+    return 799 - logical_y, logical_x
+
+
+def _clear_native_bit(row: bytearray, physical_x: int) -> None:
+    ram_x = X4_PHYSICAL_WIDTH - 1 - physical_x
+    row[ram_x // 8] &= ~(0x80 >> (ram_x % 8)) & 0xFF
+
+
+def gray2_packed_to_x4_native_planes(data: bytes, storage_width: int, storage_height: int) -> tuple[bytes, bytes, bytes]:
+    if storage_width != X4_PHYSICAL_WIDTH or storage_height != X4_PHYSICAL_HEIGHT:
+        raise ValueError(
+            f"xteink-x4-portrait native planes require {X4_PHYSICAL_WIDTH}x{X4_PHYSICAL_HEIGHT} "
+            f"storage data, got {storage_width}x{storage_height}"
+        )
+    pixels = unpack_gray2(data, storage_width, storage_height)
+    msb_rows = [bytearray([0xFF] * X4_ROW_BYTES) for _ in range(X4_PHYSICAL_HEIGHT)]
+    lsb_rows = [bytearray([0xFF] * X4_ROW_BYTES) for _ in range(X4_PHYSICAL_HEIGHT)]
+    bw_rows = [bytearray([0xFF] * X4_ROW_BYTES) for _ in range(X4_PHYSICAL_HEIGHT)]
+
+    for storage_y in range(storage_height):
+        for storage_x in range(storage_width):
+            gray = pixels[storage_y * storage_width + storage_x]
+            if gray in (0, 1):
+                _clear_native_bit(msb_rows[storage_y], storage_x)
+            if gray in (0, 2):
+                _clear_native_bit(lsb_rows[storage_y], storage_x)
+            if gray < 2:
+                _clear_native_bit(bw_rows[storage_y], storage_x)
+
+    return (
+        b"".join(msb_rows),
+        b"".join(lsb_rows),
+        b"".join(bw_rows),
+    )
+
+
+def split_x4_plane_chunks(plane: bytes) -> list[bytes]:
+    expected = X4_ROW_BYTES * X4_PHYSICAL_HEIGHT
+    if len(plane) != expected:
+        raise ValueError(f"expected {expected} bytes, got {len(plane)}")
+    return [
+        plane[i * X4_CHUNK_BYTES : (i + 1) * X4_CHUNK_BYTES]
+        for i in range(X4_CHUNKS_PER_PLANE)
+    ]

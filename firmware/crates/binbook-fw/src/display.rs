@@ -1,5 +1,7 @@
 use ssd1677_driver::Ssd1677Driver;
-use xteink_hal::{HalResult, InputPin, OutputPin, RefreshMode, Spi};
+use xteink_hal::{HalResult, HalError, InputPin, OutputPin, RefreshMode, Spi};
+
+use crate::refresh::{RefreshDecision, RefreshState, X4_CHUNK_COUNT};
 
 pub const GRAY1_ROW_BYTES: usize = 60;
 pub const GRAY2_ROW_BYTES: usize = 200;
@@ -10,6 +12,7 @@ pub const DISPLAY_WIDTH: u16 = 800;
 pub const DISPLAY_HEIGHT: u16 = 480;
 pub const PROBE_BOX_WIDTH: u16 = 128;
 pub const PROBE_BOX_HEIGHT: u16 = 96;
+pub const X4_CHUNK_ROWS: u16 = 16;
 
 pub fn logical_to_physical(logical_x: u16, logical_y: u16) -> (u16, u16) {
     (PAGE_HEIGHT - 1 - logical_y, logical_x)
@@ -241,6 +244,14 @@ pub fn is_supported_embedded_gray2_page(page: &binbook::PageInfo) -> bool {
         && page.plane_dir.bitmap == 0x01
 }
 
+pub fn is_supported_x4_native_gray2_page(page: &binbook::PageInfo) -> bool {
+    page.pixel_format == binbook::page_index::PIXEL_FORMAT_GRAY2_PACKED
+        && page.compression_method == binbook::page_index::COMPRESSION_RLE_PACKBITS
+        && page.stored_width == DISPLAY_WIDTH
+        && page.stored_height == DISPLAY_HEIGHT
+        && (page.plane_dir.bitmap & 0x07) == 0x07
+}
+
 pub fn embedded_page_slice<'a>(
     book_bytes: &'a [u8],
     page_data_offset: u64,
@@ -258,6 +269,322 @@ pub fn embedded_page_slice<'a>(
         return None;
     }
     Some(&book_bytes[start..end])
+}
+
+pub fn embedded_chunk_slice<'a>(
+    book_bytes: &'a [u8],
+    page_data_offset: u64,
+    chunk: &binbook::chunk_index::PageChunkEntry,
+) -> Option<&'a [u8]> {
+    let offset = page_data_offset.checked_add(chunk.page_data_offset as u64)?;
+    let start = usize::try_from(offset).ok()?;
+    let size = usize::try_from(chunk.compressed_size).ok()?;
+    let end = start.checked_add(size)?;
+    if end > book_bytes.len() {
+        return None;
+    }
+    Some(&book_bytes[start..end])
+}
+
+pub fn find_transition_mask(
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    previous_page: Option<u32>,
+    target_page: u32,
+) -> Option<u32> {
+    let prev = previous_page?;
+    if prev == target_page {
+        return None;
+    }
+    for i in 0..book.transition_count() {
+        if let Ok(entry) = book.transition_entry(i) {
+            if entry.from_page_number == prev && entry.to_page_number == target_page {
+                return Some(entry.changed_chunk_mask);
+            }
+        }
+    }
+    None
+}
+
+pub fn display_page_with_policy<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    delay: &dyn xteink_hal::Delay,
+    refresh_state: &mut RefreshState,
+    target_page: u32,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    let page_info = book
+        .page_info(target_page)
+        .map_err(|_| HalError::InvalidParam)?;
+    if !is_supported_x4_native_gray2_page(&page_info) {
+        return Err(HalError::InvalidParam);
+    }
+
+    let transition_mask = find_transition_mask(book, refresh_state.previous_page(), target_page);
+    let decision = refresh_state.decide(target_page, transition_mask);
+
+    match decision {
+        RefreshDecision::Noop => return Ok(()),
+        RefreshDecision::FullGrayscale => {
+            stream_full_grayscale(display, book, book_bytes, target_page, delay)?;
+        }
+        RefreshDecision::AdjacentDirtyPartial { changed_chunk_mask } => {
+            let prev = refresh_state.previous_page().unwrap();
+            stream_bw_differential_chunked(
+                display,
+                book,
+                book_bytes,
+                prev,
+                target_page,
+                changed_chunk_mask,
+                delay,
+            )?;
+        }
+        RefreshDecision::FullScreenDifferential => {
+            let prev = refresh_state.previous_page().unwrap();
+            stream_bw_differential_full(display, book, book_bytes, prev, target_page, delay)?;
+        }
+    }
+
+    refresh_state.record_success(target_page, decision);
+    Ok(())
+}
+
+fn stream_full_grayscale<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    target_page: u32,
+    delay: &dyn xteink_hal::Delay,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    let open = book.open_info();
+    let pd = &book.page_info(target_page).map_err(|_| HalError::InvalidParam)?.plane_dir;
+
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_plane_chunks_to_red(display, book_bytes, open.page_data_offset, &pd, 0, delay)?;
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_plane_chunks_to_black(display, book_bytes, open.page_data_offset, &pd, 1, delay)?;
+    display.refresh_with_delay(RefreshMode::Grayscale, delay)
+}
+
+fn stream_bw_differential_chunked<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    prev_page: u32,
+    target_page: u32,
+    changed_mask: u32,
+    delay: &dyn xteink_hal::Delay,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    let open = book.open_info();
+    let prev_pd = &book.page_info(prev_page).map_err(|_| HalError::InvalidParam)?.plane_dir;
+    let target_pd = &book.page_info(target_page).map_err(|_| HalError::InvalidParam)?.plane_dir;
+
+    for chunk_idx in 0..X4_CHUNK_COUNT {
+        if changed_mask & (1 << chunk_idx) == 0 {
+            continue;
+        }
+        let y = chunk_idx as u16 * X4_CHUNK_ROWS;
+        display.set_window(0, y, DISPLAY_WIDTH, X4_CHUNK_ROWS)?;
+        stream_single_chunk_to_red(
+            display, book_bytes, open.page_data_offset, prev_pd, 2, chunk_idx,
+        )?;
+        display.set_window(0, y, DISPLAY_WIDTH, X4_CHUNK_ROWS)?;
+        stream_single_chunk_to_black(
+            display, book_bytes, open.page_data_offset, target_pd, 2, chunk_idx,
+        )?;
+    }
+
+    display.refresh_with_delay(RefreshMode::Partial, delay)
+}
+
+fn stream_bw_differential_full<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    prev_page: u32,
+    target_page: u32,
+    delay: &dyn xteink_hal::Delay,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    let open = book.open_info();
+    let prev_pd = &book.page_info(prev_page).map_err(|_| HalError::InvalidParam)?.plane_dir;
+    let target_pd = &book.page_info(target_page).map_err(|_| HalError::InvalidParam)?.plane_dir;
+
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_plane_chunks_to_red(display, book_bytes, open.page_data_offset, prev_pd, 2, delay)?;
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_plane_chunks_to_black(display, book_bytes, open.page_data_offset, target_pd, 2, delay)?;
+    display.refresh_with_delay(RefreshMode::Partial, delay)
+}
+
+fn stream_plane_chunks_to_red<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book_bytes: &[u8],
+    page_data_offset: u64,
+    pd: &binbook::page_index::PlaneDir,
+    plane_slot: usize,
+    _delay: &dyn xteink_hal::Delay,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    let slot_offset = pd.offsets[plane_slot];
+    let slot_size = pd.sizes[plane_slot];
+    let abs = page_data_offset + slot_offset as u64;
+    let start = abs as usize;
+    let end = start + slot_size as usize;
+    if end > book_bytes.len() {
+        return Err(HalError::InvalidParam);
+    }
+    let compressed = &book_bytes[start..end];
+    display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |row, row_buf| {
+        let _ = row;
+        stream_compressed_row(compressed, row as usize, row_buf);
+    })
+}
+
+fn stream_plane_chunks_to_black<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book_bytes: &[u8],
+    page_data_offset: u64,
+    pd: &binbook::page_index::PlaneDir,
+    plane_slot: usize,
+    _delay: &dyn xteink_hal::Delay,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    let slot_offset = pd.offsets[plane_slot];
+    let slot_size = pd.sizes[plane_slot];
+    let abs = page_data_offset + slot_offset as u64;
+    let start = abs as usize;
+    let end = start + slot_size as usize;
+    if end > book_bytes.len() {
+        return Err(HalError::InvalidParam);
+    }
+    let compressed = &book_bytes[start..end];
+    display.write_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |row, row_buf| {
+        let _ = row;
+        stream_compressed_row(compressed, row as usize, row_buf);
+    })
+}
+
+fn stream_compressed_row(compressed: &[u8], row: usize, row_buf: &mut [u8; DISPLAY_ROW_BYTES]) {
+    let mut decoder = PackBitsStream::new(compressed);
+    let mut skip = [0u8; DISPLAY_ROW_BYTES];
+    for _ in 0..row {
+        decoder.fill(&mut skip);
+    }
+    row_buf.fill(0xFF);
+    decoder.fill(row_buf);
+}
+
+fn stream_single_chunk_to_red<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book_bytes: &[u8],
+    page_data_offset: u64,
+    pd: &binbook::page_index::PlaneDir,
+    plane_slot: usize,
+    chunk_idx: u8,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    let slot_offset = pd.offsets[plane_slot];
+    let abs = page_data_offset + slot_offset as u64;
+    let start = abs as usize;
+    if start >= book_bytes.len() {
+        return Err(HalError::InvalidParam);
+    }
+    let compressed = &book_bytes[start..];
+    let mut decoder = PackBitsStream::new(compressed);
+    let mut skip = [0u8; DISPLAY_ROW_BYTES];
+    let skip_rows = chunk_idx as usize * X4_CHUNK_ROWS as usize;
+    for _ in 0..skip_rows {
+        decoder.fill(&mut skip);
+    }
+    display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(X4_CHUNK_ROWS, |row, row_buf| {
+        let _ = row;
+        row_buf.fill(0xFF);
+        decoder.fill(row_buf);
+    })?;
+    Ok(())
+}
+
+fn stream_single_chunk_to_black<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book_bytes: &[u8],
+    page_data_offset: u64,
+    pd: &binbook::page_index::PlaneDir,
+    plane_slot: usize,
+    chunk_idx: u8,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    let slot_offset = pd.offsets[plane_slot];
+    let abs = page_data_offset + slot_offset as u64;
+    let start = abs as usize;
+    if start >= book_bytes.len() {
+        return Err(HalError::InvalidParam);
+    }
+    let compressed = &book_bytes[start..];
+    let mut decoder = PackBitsStream::new(compressed);
+    let mut skip = [0u8; DISPLAY_ROW_BYTES];
+    let skip_rows = chunk_idx as usize * X4_CHUNK_ROWS as usize;
+    for _ in 0..skip_rows {
+        decoder.fill(&mut skip);
+    }
+    display.write_frame_rows::<DISPLAY_ROW_BYTES>(X4_CHUNK_ROWS, |row, row_buf| {
+        let _ = row;
+        row_buf.fill(0xFF);
+        decoder.fill(row_buf);
+    })?;
+    Ok(())
 }
 
 struct NoDelay;

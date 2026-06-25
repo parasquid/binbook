@@ -8,10 +8,11 @@ from .epub import EpubBook
 from .epub_flow import flow_items, resolve_image_path
 from .fonts import FontInfo
 from .images import image_bytes_to_packed
+from .pixels import gray2_packed_to_x4_native_planes, split_x4_plane_chunks
 from .profiles import DisplayProfile
 from .rle import encode_packbits
 from .text_rendering import render_text_to_packed
-from .writer import EncodedPage, NavEntry
+from .writer import EncodedPage, EncodedPlane, NavEntry
 
 
 def compile_pages(
@@ -61,11 +62,19 @@ def text_pages(text: str, profile: DisplayProfile, spine_index: int, font: FontI
 
 
 def encoded_page(packed: bytes, kind: int, spine_index: int) -> EncodedPage:
-    compressed = encode_packbits(packed)
+    msb, lsb, bw = gray2_packed_to_x4_native_planes(packed, 800, 480)
+    planes: list[EncodedPlane] = []
+    crc_parts: list[bytes] = []
+    for slot, plane in enumerate((msb, lsb, bw)):
+        chunks = tuple(encode_packbits(chunk) for chunk in split_x4_plane_chunks(plane))
+        encoded = EncodedPlane(slot=slot, chunks=chunks, uncompressed_size=len(plane))
+        planes.append(encoded)
+        crc_parts.append(encoded.compressed)
     return EncodedPage(
-        compressed=compressed,
-        uncompressed_size=len(packed),
-        page_crc32=crc32(compressed),
+        compressed=b"".join(crc_parts),
+        uncompressed_size=sum(p.uncompressed_size for p in planes),
+        page_crc32=crc32(b"".join(crc_parts)),
         page_kind=kind,
         source_spine_index=spine_index,
+        planes=tuple(planes),
     )

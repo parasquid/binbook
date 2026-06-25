@@ -76,7 +76,7 @@ fn decompresses_rle_page() {
     let data: &[u8] = include_bytes!("fixtures/sample.binbook");
     let scratch = [0u8; 4096];
     let mut book = BinBook::open(data, scratch).unwrap();
-    let mut out = vec![0u8; 96000];
+    let mut out = vec![0u8; 48000];
     book.decompress_page(0, &mut out).unwrap();
     assert!(out.iter().all(|&b| b == 0xFF));
 }
@@ -86,7 +86,7 @@ fn decompresses_page_one() {
     let data: &[u8] = include_bytes!("fixtures/sample.binbook");
     let scratch = [0u8; 4096];
     let mut book = BinBook::open(data, scratch).unwrap();
-    let mut out = vec![0u8; 96000];
+    let mut out = vec![0u8; 48000];
     book.decompress_page(1, &mut out).unwrap();
     assert!(out.iter().all(|&b| b == 0x00));
 }
@@ -109,10 +109,81 @@ fn page_ref_exposes_current_packed_gray2_blob() {
 
     let page = book.page(0).unwrap();
 
-    assert_eq!(page.uncompressed_size, 96_000);
+    assert_eq!(page.uncompressed_size, 48_000);
+    let total: u32 = page.info.plane_dir.sizes.iter().sum();
     assert_eq!(
         page.compressed_data().len(),
-        page.info.plane_dir.sizes[0] as usize
+        total as usize
     );
     assert_eq!(&page.compressed_data()[..8], &[0xFF; 8]);
+}
+
+#[test]
+fn reads_chunk_and_transition_counts() {
+    let book = open_fixture();
+    assert_eq!(book.chunk_count(), 180);
+    assert_eq!(book.transition_count(), 2);
+}
+
+#[test]
+fn reads_chunk_entries() {
+    let mut book = open_fixture();
+
+    let c0 = book.chunk_entry(0).unwrap();
+    assert_eq!(c0.page_number, 0);
+    assert_eq!(c0.plane_slot, 0);
+    assert_eq!(c0.chunk_index, 0);
+    assert_eq!(c0.row_start, 0);
+    assert_eq!(c0.row_count, 16);
+    assert_eq!(c0.compressed_size, 26);
+    assert_eq!(c0.uncompressed_size, 1600);
+
+    let c1 = book.chunk_entry(1).unwrap();
+    assert_eq!(c1.page_number, 0);
+    assert_eq!(c1.plane_slot, 0);
+    assert_eq!(c1.chunk_index, 1);
+    assert_eq!(c1.row_start, 16);
+    assert_eq!(c1.row_count, 16);
+    assert_eq!(c1.compressed_size, 26);
+    assert_eq!(c1.uncompressed_size, 1600);
+
+    let c30 = book.chunk_entry(30).unwrap();
+    assert_eq!(c30.page_number, 0);
+    assert_eq!(c30.plane_slot, 1);
+    assert_eq!(c30.chunk_index, 0);
+}
+
+#[test]
+fn reads_transition_entries() {
+    let mut book = open_fixture();
+
+    let t0 = book.transition_entry(0).unwrap();
+    assert_eq!(t0.from_page_number, 0);
+    assert_eq!(t0.to_page_number, 1);
+    assert_eq!(t0.changed_chunk_mask, 0x3FFFFFFF);
+    assert_eq!(t0.first_changed_chunk, 0);
+    assert_eq!(t0.changed_chunk_count, 30);
+    assert_eq!(t0.flags, 0);
+
+    let t1 = book.transition_entry(1).unwrap();
+    assert_eq!(t1.from_page_number, 1);
+    assert_eq!(t1.to_page_number, 0);
+}
+
+#[test]
+fn chunk_out_of_range() {
+    let mut book = open_fixture();
+    match book.chunk_entry(999) {
+        Err(binbook::Error::InvalidSection) => {}
+        _ => panic!("expected InvalidSection for out-of-range chunk"),
+    }
+}
+
+#[test]
+fn transition_out_of_range() {
+    let mut book = open_fixture();
+    match book.transition_entry(999) {
+        Err(binbook::Error::InvalidSection) => {}
+        _ => panic!("expected InvalidSection for out-of-range transition"),
+    }
 }

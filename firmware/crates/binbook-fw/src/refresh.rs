@@ -1,0 +1,61 @@
+pub const X4_CHUNK_COUNT: u8 = 30;
+pub const DEFAULT_FULL_REFRESH_CADENCE: u32 = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshDecision {
+    FullGrayscale,
+    AdjacentDirtyPartial { changed_chunk_mask: u32 },
+    FullScreenDifferential,
+    Noop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RefreshState {
+    previous_page: Option<u32>,
+    fast_refresh_count: u32,
+    full_refresh_cadence: u32,
+}
+
+impl RefreshState {
+    pub const fn new() -> Self {
+        Self {
+            previous_page: None,
+            fast_refresh_count: 0,
+            full_refresh_cadence: DEFAULT_FULL_REFRESH_CADENCE,
+        }
+    }
+
+    pub fn decide(&self, target_page: u32, transition_mask: Option<u32>) -> RefreshDecision {
+        let Some(previous_page) = self.previous_page else {
+            return RefreshDecision::FullGrayscale;
+        };
+        if previous_page == target_page {
+            return RefreshDecision::Noop;
+        }
+        if self.fast_refresh_count >= self.full_refresh_cadence {
+            return RefreshDecision::FullGrayscale;
+        }
+        if let Some(mask) = transition_mask {
+            return RefreshDecision::AdjacentDirtyPartial {
+                changed_chunk_mask: mask,
+            };
+        }
+        RefreshDecision::FullScreenDifferential
+    }
+
+    pub fn record_success(&mut self, target_page: u32, decision: RefreshDecision) {
+        self.previous_page = Some(target_page);
+        match decision {
+            RefreshDecision::FullGrayscale => self.fast_refresh_count = 0,
+            RefreshDecision::AdjacentDirtyPartial { .. }
+            | RefreshDecision::FullScreenDifferential => {
+                self.fast_refresh_count = self.fast_refresh_count.saturating_add(1);
+            }
+            RefreshDecision::Noop => {}
+        }
+    }
+
+    pub fn previous_page(&self) -> Option<u32> {
+        self.previous_page
+    }
+}

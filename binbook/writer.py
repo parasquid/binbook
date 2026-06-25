@@ -25,15 +25,30 @@ from .structs import (
     CHAPTER_INDEX_ENTRY_SIZE,
     HEADER_SIZE,
     NAV_INDEX_ENTRY_SIZE,
+    PAGE_CHUNK_INDEX_ENTRY_SIZE,
     PAGE_INDEX_ENTRY_SIZE,
+    PAGE_TRANSITION_INDEX_ENTRY_SIZE,
     SECTION_ENTRY_SIZE,
     BinBookHeader,
     ChapterIndexEntry,
+    PageChunkIndexEntry,
     PageIndexEntry,
+    PageTransitionIndexEntry,
     PlaneDir,
     SectionEntry,
     StringRef,
 )
+
+
+@dataclass(frozen=True)
+class EncodedPlane:
+    slot: int
+    chunks: tuple[bytes, ...]
+    uncompressed_size: int
+
+    @property
+    def compressed(self) -> bytes:
+        return b"".join(self.chunks)
 
 
 @dataclass(frozen=True)
@@ -44,6 +59,7 @@ class EncodedPage:
     page_kind: int = PageKind.IMAGE
     source_spine_index: int = UINT32_MAX
     chapter_nav_index: int = UINT32_MAX
+    planes: tuple[EncodedPlane, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -147,6 +163,8 @@ def build_binbook(
     page_index = _page_index(pages, profile)
     nav_index = _nav_index(nav_entries, nav_title_refs)
     chapter_index = _chapter_index(nav_entries, nav_title_refs)
+    chunk_index = _chunk_index(pages)
+    transition_index = _transition_index(pages)
     sections.extend(
         [
             (SectionId.PAGE_INDEX, page_index, PAGE_INDEX_ENTRY_SIZE, len(pages)),
@@ -157,6 +175,8 @@ def build_binbook(
                 CHAPTER_INDEX_ENTRY_SIZE,
                 len(_chapter_entries(nav_entries)),
             ),
+            (SectionId.PAGE_CHUNK_INDEX, chunk_index, PAGE_CHUNK_INDEX_ENTRY_SIZE, len(chunk_index) // PAGE_CHUNK_INDEX_ENTRY_SIZE),
+            (SectionId.PAGE_TRANSITION_INDEX, transition_index, PAGE_TRANSITION_INDEX_ENTRY_SIZE, len(transition_index) // PAGE_TRANSITION_INDEX_ENTRY_SIZE if transition_index else 0),
         ]
     )
 
@@ -198,12 +218,31 @@ def _page_index(pages: list[EncodedPage], profile: DisplayProfile) -> bytes:
     for index, page in enumerate(pages):
         start = int(index * 1_000_000 / total)
         end = int((index + 1) * 1_000_000 / total)
-        plane_dir = PlaneDir(
-            bitmap=0x01,
-            compression=[CompressionMethod.RLE_PACKBITS, 0, 0, 0],
-            offsets=[blob_offset, 0, 0, 0],
-            sizes=[len(page.compressed), 0, 0, 0],
-        )
+        if page.planes:
+            bitmap = 0
+            compression = [0, 0, 0, 0]
+            offsets = [0, 0, 0, 0]
+            sizes = [0, 0, 0, 0]
+            for plane in page.planes:
+                bitmap |= 1 << plane.slot
+                compression[plane.slot] = CompressionMethod.RLE_PACKBITS
+                offsets[plane.slot] = blob_offset
+                sizes[plane.slot] = len(plane.compressed)
+                blob_offset += len(plane.compressed)
+            plane_dir = PlaneDir(
+                bitmap=bitmap,
+                compression=compression,
+                offsets=offsets,
+                sizes=sizes,
+            )
+        else:
+            plane_dir = PlaneDir(
+                bitmap=0x01,
+                compression=[CompressionMethod.RLE_PACKBITS, 0, 0, 0],
+                offsets=[blob_offset, 0, 0, 0],
+                sizes=[len(page.compressed), 0, 0, 0],
+            )
+            blob_offset += len(page.compressed)
         out.extend(
             PageIndexEntry(
                 page_number=index,
@@ -220,7 +259,6 @@ def _page_index(pages: list[EncodedPage], profile: DisplayProfile) -> bytes:
                 progress_end_ppm=end,
             ).pack()
         )
-        blob_offset += len(page.compressed)
     return bytes(out)
 
 
@@ -265,6 +303,76 @@ def _chapter_index(entries: list[NavEntry], title_refs: list[StringRef]) -> byte
             ).pack()
         )
     return bytes(out)
+
+
+def _chunk_index(pages: list[EncodedPage]) -> bytes:
+    from .pixels import X4_CHUNK_ROWS
+    out = bytearray()
+    global_offset = 0
+    for page_index, page in enumerate(pages):
+        if not page.planes:
+            continue
+        page_start = global_offset
+        for plane in page.planes:
+            chunk_offset = page_start
+            for chunk_index, chunk_data in enumerate(plane.chunks):
+                out.extend(
+                    PageChunkIndexEntry(
+                        page_number=page_index,
+                        plane_slot=plane.slot,
+                        chunk_index=chunk_index,
+                        row_start=chunk_index * X4_CHUNK_ROWS,
+                        row_count=X4_CHUNK_ROWS,
+                        page_data_offset=chunk_offset,
+                        compressed_size=len(chunk_data),
+                        uncompressed_size=1600,
+                    ).pack()
+                )
+                chunk_offset += len(chunk_data)
+            page_start = chunk_offset
+        global_offset = page_start
+    return bytes(out)
+
+
+def _transition_index(pages: list[EncodedPage]) -> bytes:
+    if len(pages) < 2:
+        return b""
+    out = bytearray()
+    for i in range(len(pages) - 1):
+        for from_page, to_page in [(i, i + 1), (i + 1, i)]:
+            mask, first, count = _compare_bw_chunks(pages[from_page], pages[to_page])
+            out.extend(
+                PageTransitionIndexEntry(
+                    from_page_number=from_page,
+                    to_page_number=to_page,
+                    changed_chunk_mask=mask,
+                    first_changed_chunk=first,
+                    changed_chunk_count=count,
+                ).pack()
+            )
+    return bytes(out)
+
+
+def _compare_bw_chunks(from_page: EncodedPage, to_page: EncodedPage) -> tuple[int, int, int]:
+    from .rle import decode_packbits
+    from .pixels import X4_CHUNK_ROWS, X4_ROW_BYTES
+    from_plane = next((p for p in from_page.planes if p.slot == 2), None)
+    to_plane = next((p for p in to_page.planes if p.slot == 2), None)
+    if from_plane is None or to_plane is None:
+        return 0, 0, 0
+    mask = 0
+    changed_chunks: list[int] = []
+    for chunk_idx in range(len(from_plane.chunks)):
+        from_data = decode_packbits(from_plane.chunks[chunk_idx])
+        to_data = decode_packbits(to_plane.chunks[chunk_idx])
+        if from_data != to_data:
+            mask |= 1 << chunk_idx
+            changed_chunks.append(chunk_idx)
+    if not changed_chunks:
+        return 0, 0, 0
+    first = changed_chunks[0]
+    last = changed_chunks[-1]
+    return mask, first, last - first + 1
 
 
 def _display_profile(profile: DisplayProfile, refs: dict[str, StringRef]) -> bytes:

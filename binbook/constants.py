@@ -25,6 +25,8 @@ class SectionId(IntEnum):
     NAV_INDEX = 41
     PAGE_LABELS_RESERVED = 42
     CHAPTER_INDEX = 43
+    PAGE_CHUNK_INDEX = 44
+    PAGE_TRANSITION_INDEX = 45
     PAGE_DATA = 50
 
 
@@ -44,6 +46,8 @@ REQUIRED_SECTIONS = {
     SectionId.PAGE_INDEX,
     SectionId.NAV_INDEX,
     SectionId.CHAPTER_INDEX,
+    SectionId.PAGE_CHUNK_INDEX,
+    SectionId.PAGE_TRANSITION_INDEX,
     SectionId.PAGE_DATA,
 }
 

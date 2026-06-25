@@ -207,6 +207,8 @@ struct SectionEntry {
 | 41 | NAV_INDEX | Yes | Yes (48 bytes each) |
 | 42 | PAGE_LABELS_RESERVED | No | Reserved |
 | 43 | CHAPTER_INDEX | Yes | Yes (32 bytes each) |
+| 44 | PAGE_CHUNK_INDEX | Yes | Yes (24 bytes each) |
+| 45 | PAGE_TRANSITION_INDEX | Yes | Yes (24 bytes each) |
 | 50 | PAGE_DATA | Yes | No (raw blobs) |
 | 60-63 | RESERVED | No | Reserved for future use |
 
@@ -624,7 +626,7 @@ struct PageIndexEntry {
     u32  progress_end_ppm;            // Progress at end of page
 
     // --- Inline plane directory (32 bytes) ---
-    u8   plane_bitmap;                // Which planes are stored (see section 3.22)
+    u8   plane_bitmap;                // Which planes are stored (see section 5.3)
     u8   plane_compression[4];        // Per-plane compression (only if page_flags bit 0)
     u8   plane_dir_padding[3];        // Alignment to 4-byte boundary
     u32  offset_plane_0;              // Byte offset from PAGE_DATA start
@@ -709,7 +711,80 @@ Rules:
 - `title` must reference `STRING_TABLE` and may be reused from the matching
   `NAV_INDEX` entry.
 
-### 3.21 PAGE_DATA Section
+### 3.21 PAGE_CHUNK_INDEX Section (Record-Based)
+
+Array of `PageChunkIndexEntry` records. Count =
+`section_entry.record_count`. Size per entry = `section_entry.entry_size`
+(24 bytes).
+
+This section gives readers direct access to independently compressed chunks
+inside a page plane. It exists so constrained firmware can decode and stream a
+bounded number of display rows without loading or scanning a full plane.
+
+For `xteink-x4-portrait`, every page stores 3 planes and every plane stores 30
+chunks, so each page has 90 chunk records.
+
+```c
+struct PageChunkIndexEntry {
+    u32 page_number;        // PAGE_INDEX page_number
+    u8  plane_slot;         // 0=MSB/red, 1=LSB/black, 2=BW, 3=future
+    u8  chunk_index;        // 0-based chunk index within the plane
+    u16 row_start;          // First physical row in this chunk
+    u16 row_count;          // Number of physical rows in this chunk
+    u16 reserved0;          // Must be 0
+    u32 page_data_offset;   // Byte offset from PAGE_DATA start
+    u32 compressed_size;    // Compressed chunk size in bytes
+    u32 uncompressed_size;  // Decompressed chunk size in bytes
+};
+```
+
+Rules:
+
+- Records are sorted by `page_number`, then `plane_slot`, then `chunk_index`.
+- `page_data_offset` is relative to `header.page_data_offset`.
+- Every chunk range must be fully contained inside its parent plane blob from
+  `PAGE_INDEX`.
+- For `xteink-x4-portrait`, `row_count` is 16, `uncompressed_size` is 1600,
+  and each plane has chunk indices 0 through 29.
+
+### 3.22 PAGE_TRANSITION_INDEX Section (Record-Based)
+
+Array of `PageTransitionIndexEntry` records. Count =
+`section_entry.record_count`. Size per entry = `section_entry.entry_size`
+(24 bytes).
+
+This section is a compiler-generated fast-path for page transitions. It lets
+firmware perform chunk-level differential BW partial refresh without comparing
+previous and current page chunks on-device.
+
+For `xteink-x4-portrait`, writers emit records for adjacent page transitions in
+both directions: `N -> N+1` and `N+1 -> N`.
+
+```c
+struct PageTransitionIndexEntry {
+    u32 from_page_number;      // Previous displayed page
+    u32 to_page_number;        // Target page
+    u32 changed_chunk_mask;    // Bit N set when BW chunk N differs
+    u16 first_changed_chunk;   // First changed chunk, or 0 if none
+    u16 changed_chunk_count;   // Contiguous window covering changed chunks
+    u16 flags;                 // Must be 0
+    u16 reserved0;             // Must be 0
+    u32 reserved1;             // Must be 0
+};
+```
+
+Rules:
+
+- `from_page_number` and `to_page_number` must reference existing pages.
+- `changed_chunk_mask` uses bit `chunk_index`; X4 uses bits 0 through 29.
+- If `changed_chunk_mask == 0`, then `first_changed_chunk == 0` and
+  `changed_chunk_count == 0`.
+- Firmware may use either the exact mask or the contiguous
+  `first_changed_chunk`/`changed_chunk_count` window.
+- Non-adjacent jumps need not have transition records. Firmware may fall back to
+  full-screen BW differential partial refresh.
+
+### 3.23 PAGE_DATA Section
 
 Raw concatenated plane blobs. No page-local headers — the page index entry's
 plane directory is the authority.
@@ -728,6 +803,11 @@ Each blob is:
 2. Validate size = `page.size_plane_N`
 3. Optionally validate CRC32 if `page.page_crc32 != 0`
 4. Decompress using per-plane or page-default compression method
+
+If `PAGE_CHUNK_INDEX` records exist for the blob, constrained readers may read
+and decompress each chunk independently instead of reading the full blob. Chunk
+records do not add headers inside `PAGE_DATA`; they are metadata pointing at
+subranges of the raw plane blobs.
 
 Plane blob offsets must be 4-byte aligned within PAGE_DATA. Writers pad
 between blobs with zero bytes.
@@ -913,8 +993,9 @@ The firmware computes decompressed plane sizes from `pixel_format`,
 | RGBA8888     | 0 (full) | `stored_width * 4 * stored_height` |
 
 For e-paper GRAY2, each of the 3 planes (MSB, LSB, BW) is a 1-bit
-framebuffer: `480 / 8 * 480 = 28,800` bytes per plane. The GRAY2 packed
-data (57,600 bytes) is decomposed into these 1-bit planes by the writer.
+framebuffer. For `xteink-x4-portrait`, planes are stored in physical SSD1677
+order: `800 / 8 * 480 = 48,000` bytes per plane. The logical GRAY2 page is
+decomposed into these 1-bit display planes by the writer.
 
 For color, slot 0 holds the full pixel buffer in the declared format.
 
@@ -997,7 +1078,8 @@ for (i = 0; i < header.section_count; i++) {
 required = {STRING_TABLE, DISPLAY_PROFILE, LAYOUT_PROFILE, READER_REQUIREMENTS,
             SOURCE_IDENTITY, BOOK_METADATA, RENDITION_IDENTITY,
             FONT_POLICY, TYPOGRAPHY_POLICY, IMAGE_POLICY, COMPRESSION_POLICY,
-            CHROME_POLICY, PAGE_INDEX, NAV_INDEX, CHAPTER_INDEX, PAGE_DATA};
+            CHROME_POLICY, PAGE_INDEX, NAV_INDEX, CHAPTER_INDEX,
+            PAGE_CHUNK_INDEX, PAGE_TRANSITION_INDEX, PAGE_DATA};
 for (id in required) {
     if (id not in sections) error("missing required section");
 }
@@ -1021,7 +1103,11 @@ for (i = 0; i < pi_section.record_count; i++) {
 chapter_section = sections[CHAPTER_INDEX];
 chapter = read_ChapterIndexEntry(chapter_section.offset + chapter_index * chapter_section.entry_size);
 
-// Step 7: Decode a specific page using plane directory
+// Step 7: Read chunk and transition metadata
+chunk_section = sections[PAGE_CHUNK_INDEX];
+transition_section = sections[PAGE_TRANSITION_INDEX];
+
+// Step 8: Decode a specific page using plane directory and optional chunks
 page = pages[page_number];
 
 if (page.page_crc32 != 0) {
@@ -1042,10 +1128,13 @@ for (slot = 0; slot < 4; slot++) {
     // Use decompressed data for the appropriate display plane
 }
 
-// Step 8: Convert pixels to display format
-// For xteink-x4-portrait, default pages are GRAY2_PACKED logical portrait pixels.
-// Firmware rotates logical pixels into the physical framebuffer using
-// DISPLAY_PROFILE.logical_to_physical_rotation.
+// Constrained readers may instead iterate PAGE_CHUNK_INDEX entries for the
+// selected page/plane, decompress each chunk, and stream it immediately.
+
+// Step 9: Use pixels in the profile's storage order
+// For xteink-x4-portrait, default GRAY2 pages are stored as native SSD1677
+// physical-order planes. The writer has already applied logical-to-physical
+// rotation and display-plane decomposition.
 ```
 
 ---
@@ -1076,8 +1165,10 @@ While the section table is authoritative (readers must use it), the recommended 
 5. NAV_INDEX
 6. CHAPTER_INDEX
 7. PAGE_INDEX
-8. Zero padding
-9. PAGE_DATA
+8. PAGE_CHUNK_INDEX
+9. PAGE_TRANSITION_INDEX
+10. Zero padding
+11. PAGE_DATA
 
 ### 8.4 String Table Construction
 
@@ -1105,8 +1196,9 @@ While the section table is authoritative (readers must use it), the recommended 
 | Supported lower format | GRAY1_PACKED |
 | Supported color formats | RGB565, RGB888, RGBA8888 |
 | Grayscale levels | 4 for GRAY2, 2 for GRAY1 |
-| GRAY2 row size | 120 bytes (480 / 4) |
-| GRAY1 row size | 60 bytes (480 / 8) |
+| Logical GRAY2 row size | 120 bytes (480 / 4) |
+| Native plane row size | 100 bytes (800 / 8) |
+| Native chunk size | 16 rows = 1,600 bytes decompressed |
 | Compression | RLE_PACKBITS |
 
 **Logical-to-physical rotation mapping for 270 degrees clockwise**:
@@ -1115,9 +1207,21 @@ physical_x = logical_height_px - 1 - logical_y
 physical_y = logical_x
 ```
 
-The stored page blob remains logical portrait `480x800` row-major data. Firmware rotates into the physical `800x480` display framebuffer.
+For `xteink-x4-portrait`, the compiler stores default `GRAY2_PACKED` output as
+SSD1677-native 1-bit planes in physical `800x480` row order. The compiler
+applies the logical-to-physical rotation before writing page data. Firmware does
+not need to rotate logical portrait pixels on the device.
 
-The default X4 output for BinBook is canonical `GRAY2_PACKED`. A compiler may emit `GRAY1_PACKED` for an explicit lower-quality or fast-mode configuration, but readers must not assume all X4 books are 1-bit.
+Required GRAY2 planes for X4:
+
+| Plane slot | Bitmap | Contents | SSD1677 RAM |
+|------------|--------|----------|-------------|
+| 0 | 0x01 | MSB/red grayscale plane | secondary/red RAM (`0x26`) |
+| 1 | 0x02 | LSB/black grayscale plane | black RAM (`0x24`) |
+| 2 | 0x04 | BW fast-refresh plane | black RAM for current page, red RAM for previous page |
+
+Each plane is divided into 30 independently compressed 16-row chunks. Chunk
+metadata is stored in `PAGE_CHUNK_INDEX`.
 
 **Canonical GRAY2 values**:
 - `0 = black`
@@ -1129,7 +1233,19 @@ The default X4 output for BinBook is canonical `GRAY2_PACKED`. A compiler may em
 - `0 = black`
 - `1 = white`
 
-**X4 display-backend note**: X4 firmware should convert from canonical BinBook `GRAY2_PACKED` into its native grayscale buffer/update sequence.
+These canonical values define rendering input. For X4 output, the writer
+converts them to native SSD1677 plane polarity. White bits remain set; active
+pigment bits are cleared.
+
+**Default refresh behavior**:
+
+- First render or cleanup cadence: stream plane 0 to red RAM, plane 1 to black
+  RAM, then trigger grayscale refresh.
+- Adjacent page turn with a transition record: stream only changed BW chunks
+  from the previous page to red RAM and current page to black RAM, then trigger
+  partial refresh.
+- Non-adjacent jump without a transition record: stream the full previous BW
+  plane and full current BW plane, then trigger partial refresh.
 
 ---
 
@@ -1152,6 +1268,8 @@ Readers/firmware should validate:
 ### Page-Level
 - [ ] `page_index_entry_size` is supported (128)
 - [ ] `nav_index_entry_size` is supported (48)
+- [ ] `PAGE_CHUNK_INDEX.entry_size` is supported (24)
+- [ ] `PAGE_TRANSITION_INDEX.entry_size` is supported (24)
 - [ ] All plane blobs within `PAGE_DATA` bounds
 - [ ] No overlapping plane blobs
 - [ ] Plane blob offsets are 4-byte aligned
@@ -1163,6 +1281,14 @@ Readers/firmware should validate:
 - [ ] Page dimensions match layout profile
 - [ ] `plane_bitmap` bits are valid for `pixel_format`
 - [ ] Delta plane bit 3 is not set (future)
+
+### Chunk-Level
+- [ ] Chunk records are sorted by page, plane slot, then chunk index
+- [ ] Chunk records reference existing pages and present plane slots
+- [ ] Chunk `page_data_offset` and `compressed_size` are within `PAGE_DATA`
+- [ ] Chunk ranges are contained within their parent plane blob
+- [ ] `uncompressed_size` matches profile chunk geometry
+- [ ] X4 GRAY2 pages have 90 chunk records: 3 planes × 30 chunks
 
 ### Chapter-Level
 - [ ] `CHAPTER_INDEX.entry_size` is supported (32)
@@ -1176,6 +1302,10 @@ Readers/firmware should validate:
 
 ### Profile-Specific (xteink-x4-portrait)
 - [ ] Pages are `GRAY2_PACKED` by default, or `GRAY1_PACKED` only when the file/profile explicitly declares the lower-quality storage format
+- [ ] Default `GRAY2_PACKED` pages set `plane_bitmap = 0x07`
+- [ ] Default GRAY2 plane blobs are physical `800x480` native 1-bit planes
+- [ ] Default GRAY2 planes are chunked as 30 chunks of 16 rows each
+- [ ] Adjacent page pairs have forward and backward transition records
 - [ ] `READER_REQUIREMENTS.required_storage_pixel_formats` matches the emitted page format
 - [ ] `DISPLAY_PROFILE.logical_width/height` = (480, 800)
 - [ ] `DISPLAY_PROFILE.physical_width/height` = (800, 480)
@@ -1188,8 +1318,12 @@ Readers/firmware should validate:
 
 ### 11.1 Minimal Valid File (Hex Dump)
 
+This example is illustrative only and must be regenerated after the
+`PAGE_CHUNK_INDEX` and `PAGE_TRANSITION_INDEX` sections are implemented in the
+writer. The section layouts above are authoritative.
+
 A minimal `.binbook` file with:
-- 1 page (GRAY2_PACKED, 480×800, RLE compressed)
+- 1 page (GRAY2_PACKED for `xteink-x4-portrait`)
 - No navigation entries
 - Minimal metadata
 

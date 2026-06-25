@@ -5,12 +5,16 @@ pub const SECTION_STRING_TABLE: u16 = 1;
 pub const SECTION_PAGE_INDEX: u16 = 40;
 pub const SECTION_NAV_INDEX: u16 = 41;
 pub const SECTION_CHAPTER_INDEX: u16 = 43;
+pub const SECTION_PAGE_CHUNK_INDEX: u16 = 44;
+pub const SECTION_PAGE_TRANSITION_INDEX: u16 = 45;
 pub const SECTION_PAGE_DATA: u16 = 50;
 
 pub const SECTION_ENTRY_SIZE: usize = 40;
 pub const PAGE_INDEX_ENTRY_SIZE: usize = 128;
 pub const NAV_INDEX_ENTRY_SIZE: usize = 48;
 pub const CHAPTER_INDEX_ENTRY_SIZE: usize = 32;
+pub const PAGE_CHUNK_INDEX_ENTRY_SIZE: usize = 24;
+pub const PAGE_TRANSITION_INDEX_ENTRY_SIZE: usize = 24;
 
 #[derive(Debug, Clone, Default)]
 pub struct Section {
@@ -36,6 +40,8 @@ pub(crate) struct RequiredSections {
     pub page_index: Section,
     pub nav_index: Section,
     pub chapter_index: Section,
+    pub page_chunk_index: Option<Section>,
+    pub page_transition_index: Option<Section>,
     pub page_data: Section,
 }
 
@@ -49,6 +55,8 @@ pub(crate) fn parse_sections_from_table(
     let mut page_index = Section::default();
     let mut nav_index = Section::default();
     let mut chapter_index = Section::default();
+    let mut page_chunk_index = None;
+    let mut page_transition_index = None;
     let mut page_data = Section::default();
 
     for i in 0..section_count {
@@ -63,6 +71,8 @@ pub(crate) fn parse_sections_from_table(
             SECTION_PAGE_INDEX => page_index = section,
             SECTION_NAV_INDEX => nav_index = section,
             SECTION_CHAPTER_INDEX => chapter_index = section,
+            SECTION_PAGE_CHUNK_INDEX => page_chunk_index = Some(section),
+            SECTION_PAGE_TRANSITION_INDEX => page_transition_index = Some(section),
             SECTION_PAGE_DATA => page_data = section,
             _ => {}
         }
@@ -104,6 +114,8 @@ pub(crate) fn parse_sections_from_table(
         page_index,
         nav_index,
         chapter_index,
+        page_chunk_index,
+        page_transition_index,
         page_data,
     })
 }

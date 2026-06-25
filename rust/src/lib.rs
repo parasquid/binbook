@@ -1,6 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub mod chapter_index;
+pub mod chunk_index;
 pub mod decompress;
 pub mod error;
 mod header;
@@ -12,19 +13,22 @@ pub mod reader;
 mod rle;
 pub mod section;
 pub mod string_table;
+pub mod transition_index;
 
 pub use chapter_index::ChapterEntry;
+pub use chunk_index::PageChunkEntry;
 pub use decompress::decompress_page;
 pub use error::Error;
 pub use nav_index::NavEntry;
 pub use page_index::PageInfo;
 pub use reader::Reader;
+pub use transition_index::PageTransitionEntry;
 
 pub fn page_plane_uncompressed_size(pixel_format: u16, width: u16, height: u16) -> usize {
     let pixels = width as usize * height as usize;
     match pixel_format {
         page_index::PIXEL_FORMAT_GRAY1_PACKED => pixels / 8,
-        page_index::PIXEL_FORMAT_GRAY2_PACKED => pixels / 4,
+        page_index::PIXEL_FORMAT_GRAY2_PACKED => pixels / 8,
         3 => pixels * 2,
         4 => pixels * 3,
         5 => pixels * 4,
@@ -75,6 +79,12 @@ pub struct BinBook<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> {
     nav_index_entry_size: u16,
     chapter_index_offset: u64,
     chapter_index_entry_size: u16,
+    page_chunk_index_offset: u64,
+    page_chunk_index_entry_size: u16,
+    page_chunk_count: u32,
+    page_transition_index_offset: u64,
+    page_transition_index_entry_size: u16,
+    page_transition_count: u32,
     page_data_offset: u64,
     page_count: u32,
     nav_count: u32,
@@ -132,6 +142,30 @@ impl<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> BinBook<R, S> {
             nav_index_entry_size: sections.nav_index.entry_size as u16,
             chapter_index_offset: sections.chapter_index.offset,
             chapter_index_entry_size: sections.chapter_index.entry_size as u16,
+            page_chunk_index_offset: sections
+                .page_chunk_index
+                .as_ref()
+                .map_or(0, |s| s.offset),
+            page_chunk_index_entry_size: sections
+                .page_chunk_index
+                .as_ref()
+                .map_or(0, |s| s.entry_size as u16),
+            page_chunk_count: sections
+                .page_chunk_index
+                .as_ref()
+                .map_or(0, |s| s.record_count),
+            page_transition_index_offset: sections
+                .page_transition_index
+                .as_ref()
+                .map_or(0, |s| s.offset),
+            page_transition_index_entry_size: sections
+                .page_transition_index
+                .as_ref()
+                .map_or(0, |s| s.entry_size as u16),
+            page_transition_count: sections
+                .page_transition_index
+                .as_ref()
+                .map_or(0, |s| s.record_count),
             page_data_offset: sections.page_data.offset,
             page_count: sections.page_index.record_count,
             nav_count: sections.nav_index.record_count,
@@ -305,5 +339,42 @@ impl<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> BinBook<R, S> {
             title_len,
             self.page_count,
         )?)
+    }
+
+    pub fn chunk_count(&self) -> u32 {
+        self.page_chunk_count
+    }
+
+    pub fn transition_count(&self) -> u32 {
+        self.page_transition_count
+    }
+
+    pub fn chunk_entry(&mut self, index: u32) -> Result<PageChunkEntry, Error> {
+        if self.page_chunk_index_offset == 0 || index >= self.page_chunk_count {
+            return Err(Error::InvalidSection);
+        }
+        let buf = self.scratch.as_mut();
+        let size = chunk_index::PAGE_CHUNK_INDEX_ENTRY_SIZE;
+        if buf.len() < size {
+            return Err(Error::OutputBufferTooSmall);
+        }
+        let off = self.page_chunk_index_offset + index as u64 * self.page_chunk_index_entry_size as u64;
+        self.reader.read_at(off, &mut buf[..size])?;
+        chunk_index::parse_page_chunk_entry(&buf[..size])
+    }
+
+    pub fn transition_entry(&mut self, index: u32) -> Result<PageTransitionEntry, Error> {
+        if self.page_transition_index_offset == 0 || index >= self.page_transition_count {
+            return Err(Error::InvalidSection);
+        }
+        let buf = self.scratch.as_mut();
+        let size = transition_index::PAGE_TRANSITION_INDEX_ENTRY_SIZE;
+        if buf.len() < size {
+            return Err(Error::OutputBufferTooSmall);
+        }
+        let off = self.page_transition_index_offset
+            + index as u64 * self.page_transition_index_entry_size as u64;
+        self.reader.read_at(off, &mut buf[..size])?;
+        transition_index::parse_page_transition_entry(&buf[..size])
     }
 }

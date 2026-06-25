@@ -10,6 +10,8 @@ SECTION_ENTRY_SIZE = 40
 PAGE_INDEX_ENTRY_SIZE = 128
 NAV_INDEX_ENTRY_SIZE = 48
 CHAPTER_INDEX_ENTRY_SIZE = 32
+PAGE_CHUNK_INDEX_ENTRY_SIZE = 24
+PAGE_TRANSITION_INDEX_ENTRY_SIZE = 24
 
 _HEADER = struct.Struct("<8sHHHHQQIHHHHQQII")
 _STRING_REF = struct.Struct("<II")
@@ -17,6 +19,8 @@ _SECTION = struct.Struct("<HHQQIII8s")
 _PAGE_INDEX = struct.Struct("<IHHHHI I HHHH II II 4s B4B3x 4I4I 20s")
 _NAV_INDEX = struct.Struct("<IHH II II IIIIII")
 _CHAPTER_INDEX = struct.Struct("<II II IHHII")
+_PAGE_CHUNK_INDEX = struct.Struct("<IBBHHHIII")
+_PAGE_TRANSITION_INDEX = struct.Struct("<IIIHHHHI")
 
 
 @dataclass(frozen=True)
@@ -320,8 +324,108 @@ class ChapterIndexEntry:
         )
 
 
+@dataclass(frozen=True)
+class PageChunkIndexEntry:
+    page_number: int
+    plane_slot: int
+    chunk_index: int
+    row_start: int
+    row_count: int
+    page_data_offset: int
+    compressed_size: int
+    uncompressed_size: int
+    reserved0: int = 0
+
+    def pack(self) -> bytes:
+        return _PAGE_CHUNK_INDEX.pack(
+            self.page_number,
+            self.plane_slot,
+            self.chunk_index,
+            self.row_start,
+            self.row_count,
+            self.reserved0,
+            self.page_data_offset,
+            self.compressed_size,
+            self.uncompressed_size,
+        )
+
+    @classmethod
+    def unpack(cls, data: bytes, offset: int = 0) -> "PageChunkIndexEntry":
+        (
+            page_number,
+            plane_slot,
+            chunk_index,
+            row_start,
+            row_count,
+            reserved0,
+            page_data_offset,
+            compressed_size,
+            uncompressed_size,
+        ) = _PAGE_CHUNK_INDEX.unpack_from(data, offset)
+        return cls(
+            page_number=page_number,
+            plane_slot=plane_slot,
+            chunk_index=chunk_index,
+            row_start=row_start,
+            row_count=row_count,
+            reserved0=reserved0,
+            page_data_offset=page_data_offset,
+            compressed_size=compressed_size,
+            uncompressed_size=uncompressed_size,
+        )
+
+
+@dataclass(frozen=True)
+class PageTransitionIndexEntry:
+    from_page_number: int
+    to_page_number: int
+    changed_chunk_mask: int
+    first_changed_chunk: int
+    changed_chunk_count: int
+    flags: int = 0
+    reserved0: int = 0
+    reserved1: int = 0
+
+    def pack(self) -> bytes:
+        return _PAGE_TRANSITION_INDEX.pack(
+            self.from_page_number,
+            self.to_page_number,
+            self.changed_chunk_mask,
+            self.first_changed_chunk,
+            self.changed_chunk_count,
+            self.flags,
+            self.reserved0,
+            self.reserved1,
+        )
+
+    @classmethod
+    def unpack(cls, data: bytes, offset: int = 0) -> "PageTransitionIndexEntry":
+        (
+            from_page_number,
+            to_page_number,
+            changed_chunk_mask,
+            first_changed_chunk,
+            changed_chunk_count,
+            flags,
+            reserved0,
+            reserved1,
+        ) = _PAGE_TRANSITION_INDEX.unpack_from(data, offset)
+        return cls(
+            from_page_number=from_page_number,
+            to_page_number=to_page_number,
+            changed_chunk_mask=changed_chunk_mask,
+            first_changed_chunk=first_changed_chunk,
+            changed_chunk_count=changed_chunk_count,
+            flags=flags,
+            reserved0=reserved0,
+            reserved1=reserved1,
+        )
+
+
 assert _HEADER.size == 68
 assert _STRING_REF.size == 8
 assert _SECTION.size == SECTION_ENTRY_SIZE
 assert _NAV_INDEX.size == NAV_INDEX_ENTRY_SIZE
 assert _CHAPTER_INDEX.size == CHAPTER_INDEX_ENTRY_SIZE
+assert _PAGE_CHUNK_INDEX.size == PAGE_CHUNK_INDEX_ENTRY_SIZE
+assert _PAGE_TRANSITION_INDEX.size == PAGE_TRANSITION_INDEX_ENTRY_SIZE

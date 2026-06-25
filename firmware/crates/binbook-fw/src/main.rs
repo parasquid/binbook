@@ -131,7 +131,8 @@ fn main() -> ! {
     let page_count = book.page_count();
 
     let mut current_page: u32 = 0;
-    render_current_page(&mut display, &mut book, &delay, current_page);
+    let mut refresh_state = binbook_fw::refresh::RefreshState::new();
+    render_current_page(&mut display, &mut book, &delay, &mut refresh_state, current_page);
 
     let mut input_state = binbook_fw::input::InputState::new();
     let mut tick: u64 = 0;
@@ -178,7 +179,7 @@ fn main() -> ! {
                     if new_page != current_page {
                         current_page = new_page;
                         dbgprintln!("[NAV] rendering page {}", current_page);
-                        render_current_page(&mut display, &mut book, &delay, current_page);
+                        render_current_page(&mut display, &mut book, &delay, &mut refresh_state, current_page);
                     }
                 }
             }
@@ -190,6 +191,7 @@ fn render_current_page<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
     book: &mut binbook::BinBook<&[u8], &mut [u8; BINBOOK_SCRATCH_BYTES]>,
     delay: &dyn xteink_hal::Delay,
+    refresh_state: &mut binbook_fw::refresh::RefreshState,
     page_index: u32,
 ) where
     SPI: xteink_hal::Spi,
@@ -198,22 +200,14 @@ fn render_current_page<SPI, CS, DC, RST, BUSY>(
     RST: xteink_hal::OutputPin,
     BUSY: xteink_hal::InputPin,
 {
-    let page_info = book
-        .page_info(page_index)
-        .expect("failed to read page info");
-
-    if !binbook_fw::display::is_supported_embedded_gray2_page(&page_info) {
-        panic!("unsupported page format");
+    if let Err(e) = binbook_fw::display::display_page_with_policy(
+        display,
+        book,
+        &PROBE_BOOK,
+        delay,
+        refresh_state,
+        page_index,
+    ) {
+        dbgprintln!("[NAV] display error on page {}: {:?}", page_index, e);
     }
-
-    let open = book.open_info();
-    let slice = binbook_fw::display::embedded_page_slice(
-        PROBE_BOOK,
-        open.page_data_offset,
-        &page_info,
-    )
-    .expect("failed to locate compressed page slice");
-
-    binbook_fw::display::display_gray2_page(display, slice, delay)
-        .expect("failed to render page to display");
 }

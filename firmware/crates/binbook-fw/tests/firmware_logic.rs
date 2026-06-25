@@ -1,11 +1,12 @@
 use binbook_fw::display::{
-    build_display_smoke_row, decompress_row, embedded_page_slice, gray2_row_to_ssd1677_planes,
-    is_supported_embedded_gray2_page, logical_to_physical, smoke_probe_windows, stream_gray1_rows,
-    stream_gray2_rows, DISPLAY_HEIGHT, DISPLAY_ROW_BYTES, DISPLAY_WIDTH, GRAY1_ROW_BYTES,
-    GRAY2_ROW_BYTES,
+    build_display_smoke_row, decompress_row, embedded_chunk_slice, embedded_page_slice,
+    gray2_row_to_ssd1677_planes, is_supported_embedded_gray2_page, is_supported_x4_native_gray2_page,
+    logical_to_physical, smoke_probe_windows, stream_gray1_rows, stream_gray2_rows,
+    DISPLAY_HEIGHT, DISPLAY_ROW_BYTES, DISPLAY_WIDTH, GRAY1_ROW_BYTES, GRAY2_ROW_BYTES,
 };
 use binbook_fw::flash::{FlashStorage, FILE_ENTRY_SIZE};
 use binbook_fw::input::{apply_page_turn, decode_buttons, page_turn_for_button, Button, ButtonEvent, InputState, PageTurn};
+use binbook_fw::refresh::{RefreshDecision, RefreshState};
 use binbook_fw::serial::{parse_command, Command};
 use xteink_hal::{Flash, HalResult};
 
@@ -317,6 +318,79 @@ fn supported_embedded_gray2_page_passes_validation() {
 }
 
 #[test]
+fn x4_native_page_with_three_plane_bitmap_passes_validation() {
+    use binbook::page_index::{COMPRESSION_RLE_PACKBITS, PIXEL_FORMAT_GRAY2_PACKED, PlaneDir};
+
+    const PACKBITS: u8 = COMPRESSION_RLE_PACKBITS as u8;
+
+    let info = binbook::PageInfo {
+        page_number: 0,
+        page_kind: 0,
+        pixel_format: PIXEL_FORMAT_GRAY2_PACKED,
+        compression_method: COMPRESSION_RLE_PACKBITS,
+        page_flags: 0,
+        page_crc32: 0,
+        stored_width: DISPLAY_WIDTH,
+        stored_height: DISPLAY_HEIGHT,
+        placement_x: 0,
+        placement_y: 0,
+        progress_start_ppm: 0,
+        progress_end_ppm: 0,
+        chapter_nav_index: -1,
+        plane_dir: PlaneDir {
+            bitmap: 0x07,
+            compression: [PACKBITS, PACKBITS, PACKBITS, 0],
+            offsets: [0, 780, 1560, 0],
+            sizes: [780, 780, 780, 0],
+        },
+    };
+    assert!(is_supported_x4_native_gray2_page(&info));
+    assert!(!is_supported_embedded_gray2_page(&info));
+}
+
+#[test]
+fn embedded_chunk_slice_returns_compressed_chunk_data() {
+    use binbook::chunk_index::PageChunkEntry;
+
+    let mut book_bytes = vec![0u8; 200];
+    book_bytes[10..13].copy_from_slice(&[0xAA, 0xBB, 0xCC]);
+
+    let chunk = PageChunkEntry {
+        page_number: 0,
+        plane_slot: 0,
+        chunk_index: 0,
+        row_start: 0,
+        row_count: 16,
+        page_data_offset: 0,
+        compressed_size: 3,
+        uncompressed_size: 1600,
+    };
+
+    let slice = embedded_chunk_slice(&book_bytes, 10, &chunk).unwrap();
+    assert_eq!(slice, &[0xAA, 0xBB, 0xCC]);
+}
+
+#[test]
+fn embedded_chunk_slice_rejects_out_of_bounds() {
+    use binbook::chunk_index::PageChunkEntry;
+
+    let book_bytes = vec![0u8; 20];
+
+    let chunk = PageChunkEntry {
+        page_number: 0,
+        plane_slot: 0,
+        chunk_index: 0,
+        row_start: 0,
+        row_count: 16,
+        page_data_offset: 0,
+        compressed_size: 30,
+        uncompressed_size: 1600,
+    };
+
+    assert!(embedded_chunk_slice(&book_bytes, 0, &chunk).is_none());
+}
+
+#[test]
 fn unsupported_plane_bitmap_rejected() {
     use binbook::page_index::{COMPRESSION_RLE_PACKBITS, PIXEL_FORMAT_GRAY2_PACKED, PlaneDir};
 
@@ -412,6 +486,86 @@ fn embedded_page_slice_rejects_out_of_bounds() {
     };
 
     assert!(embedded_page_slice(&book_bytes, 10, &info).is_none());
+}
+
+#[test]
+fn refresh_policy_seeds_with_full_grayscale() {
+    let state = RefreshState::new();
+    assert_eq!(state.decide(0, None), RefreshDecision::FullGrayscale);
+}
+
+#[test]
+fn refresh_policy_uses_adjacent_dirty_mask_after_seed() {
+    let mut state = RefreshState::new();
+    let seed = state.decide(0, None);
+    state.record_success(0, seed);
+
+    assert_eq!(
+        state.decide(1, Some(0b101)),
+        RefreshDecision::AdjacentDirtyPartial {
+            changed_chunk_mask: 0b101
+        }
+    );
+}
+
+#[test]
+fn refresh_policy_uses_full_screen_differential_for_jump_without_transition() {
+    let mut state = RefreshState::new();
+    let seed = state.decide(0, None);
+    state.record_success(0, seed);
+
+    assert_eq!(state.decide(9, None), RefreshDecision::FullScreenDifferential);
+}
+
+#[test]
+fn refresh_policy_cleanup_after_five_fast_refreshes() {
+    let mut state = RefreshState::new();
+    let seed = state.decide(0, None);
+    state.record_success(0, seed);
+    for page in 1..=5 {
+        let decision = state.decide(page, Some(1));
+        if page < 5 {
+            assert!(matches!(decision, RefreshDecision::AdjacentDirtyPartial { .. }));
+        }
+        state.record_success(page, decision);
+    }
+
+    assert_eq!(state.decide(6, Some(1)), RefreshDecision::FullGrayscale);
+}
+
+#[test]
+fn refresh_policy_noop_for_same_page() {
+    let mut state = RefreshState::new();
+    let seed = state.decide(0, None);
+    state.record_success(0, seed);
+
+    assert_eq!(state.decide(0, Some(0xFFFFFFFF)), RefreshDecision::Noop);
+}
+
+#[test]
+fn failed_render_does_not_advance_previous_page() {
+    let state = RefreshState::new();
+    assert_eq!(state.previous_page(), None);
+}
+
+#[test]
+fn refresh_state_fast_count_resets_on_full_grayscale() {
+    let mut state = RefreshState::new();
+    let seed = state.decide(0, None);
+    state.record_success(0, seed);
+
+    for page in 1..=5 {
+        let decision = state.decide(page, Some(1));
+        state.record_success(page, decision);
+    }
+
+    let cleanup = state.decide(6, Some(1));
+    assert_eq!(cleanup, RefreshDecision::FullGrayscale);
+    state.record_success(6, cleanup);
+    assert_eq!(state.previous_page(), Some(6));
+
+    let next = state.decide(7, Some(1));
+    assert!(matches!(next, RefreshDecision::AdjacentDirtyPartial { .. }));
 }
 
 impl MockFlash {
