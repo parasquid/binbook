@@ -21,12 +21,22 @@ The default bundled reading font is Literata, licensed under the SIL Open Font L
 
 ## Development
 
-Use `uv` for local setup and test execution:
+Use `uv` for local setup and test execution. The repository pins the local
+Python interpreter in `.python-version`; keep it at Python 3.13 unless the
+dependency lockfile is refreshed and verified on a newer interpreter.
+`pygame==2.6.1` has locked Linux wheels for CPython 3.13, but newer
+interpreters can make `uv` fall back to building pygame from source.
 
 ```bash
+uv run python --version
 uv sync --dev
 uv run pytest -q
 ```
+
+On the atomic Linux development host, install missing host tools with Homebrew,
+not `dnf` or `rpm-ostree`. If pygame tries to compile and fails with a missing
+compiler such as `gcc-13`, check that `uv run python --version` reports Python
+3.13 before installing compiler packages.
 
 Run the CLI through `uv`:
 

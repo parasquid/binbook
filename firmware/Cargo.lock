@@ -21,6 +21,7 @@ dependencies = [
  "esp-bootloader-esp-idf",
  "esp-hal",
  "esp-println",
+ "nb 1.1.0",
  "ssd1677-driver",
  "xteink-hal",
 ]

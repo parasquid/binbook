@@ -1,22 +1,25 @@
 use binbook_fw::display::{
-    build_display_smoke_row, decompress_row, gray2_row_to_ssd1677_planes, logical_to_physical,
-    smoke_probe_windows, stream_gray1_rows, stream_gray2_rows, DISPLAY_ROW_BYTES,
-    GRAY1_ROW_BYTES, GRAY2_ROW_BYTES,
+    build_display_smoke_row, decompress_row, embedded_page_slice, gray2_row_to_ssd1677_planes,
+    is_supported_embedded_gray2_page, logical_to_physical, smoke_probe_windows, stream_gray1_rows,
+    stream_gray2_rows, DISPLAY_HEIGHT, DISPLAY_ROW_BYTES, DISPLAY_WIDTH, GRAY1_ROW_BYTES,
+    GRAY2_ROW_BYTES,
 };
 use binbook_fw::flash::{FlashStorage, FILE_ENTRY_SIZE};
-use binbook_fw::input::{decode_buttons, Button};
+use binbook_fw::input::{apply_page_turn, decode_buttons, page_turn_for_button, Button, ButtonEvent, InputState, PageTurn};
 use binbook_fw::serial::{parse_command, Command};
 use xteink_hal::{Flash, HalResult};
 
 #[test]
 fn decodes_adc_ladder_buttons() {
-    assert_eq!(decode_buttons(500, 3000), Some(Button::Right));
-    assert_eq!(decode_buttons(1000, 3000), Some(Button::Left));
-    assert_eq!(decode_buttons(1800, 3000), Some(Button::Select));
-    assert_eq!(decode_buttons(2300, 3000), Some(Button::Back));
-    assert_eq!(decode_buttons(0, 1500), Some(Button::Up));
-    assert_eq!(decode_buttons(0, 500), Some(Button::Down));
-    assert_eq!(decode_buttons(0, 0), None);
+    assert_eq!(decode_buttons(500, 4095), Some(Button::Right));
+    assert_eq!(decode_buttons(1000, 4095), Some(Button::Left));
+    assert_eq!(decode_buttons(1800, 4095), Some(Button::Select));
+    assert_eq!(decode_buttons(2800, 4095), Some(Button::Select));
+    assert_eq!(decode_buttons(3500, 4095), Some(Button::Back));
+    assert_eq!(decode_buttons(4095, 500), Some(Button::Down));
+    assert_eq!(decode_buttons(4095, 1500), Some(Button::Up));
+    assert_eq!(decode_buttons(4095, 2280), Some(Button::Up));
+    assert_eq!(decode_buttons(4095, 4095), None);
 }
 
 #[test]
@@ -227,8 +230,188 @@ fn page_source_reads_exact_compressed_page_slice() {
     assert_eq!(out, [2, 3, 4]);
 }
 
+#[test]
+fn directional_buttons_map_to_page_turns() {
+    assert_eq!(page_turn_for_button(Button::Right), Some(PageTurn::Next));
+    assert_eq!(page_turn_for_button(Button::Down), Some(PageTurn::Next));
+    assert_eq!(page_turn_for_button(Button::Left), Some(PageTurn::Previous));
+    assert_eq!(page_turn_for_button(Button::Up), Some(PageTurn::Previous));
+    assert_eq!(page_turn_for_button(Button::Select), None);
+    assert_eq!(page_turn_for_button(Button::Back), None);
+    assert_eq!(page_turn_for_button(Button::Power), None);
+}
+
+#[test]
+fn page_turns_clamp_at_book_edges() {
+    assert_eq!(apply_page_turn(0, 4, PageTurn::Previous), 0);
+    assert_eq!(apply_page_turn(0, 4, PageTurn::Next), 1);
+    assert_eq!(apply_page_turn(2, 4, PageTurn::Previous), 1);
+    assert_eq!(apply_page_turn(2, 4, PageTurn::Next), 3);
+    assert_eq!(apply_page_turn(3, 4, PageTurn::Next), 3);
+    assert_eq!(apply_page_turn(0, 0, PageTurn::Next), 0);
+    assert_eq!(apply_page_turn(0, 4, PageTurn::First), 0);
+    assert_eq!(apply_page_turn(3, 4, PageTurn::First), 0);
+    assert_eq!(apply_page_turn(0, 4, PageTurn::Last), 3);
+    assert_eq!(apply_page_turn(3, 4, PageTurn::Last), 3);
+}
+
 struct MockFlash {
     bytes: [u8; 512],
+}
+
+#[test]
+fn raw_poll_emits_one_press_per_button_transition() {
+    let mut input = InputState::new();
+
+    assert_eq!(input.poll_raw(4095, 4095, 0), None);
+    assert_eq!(input.poll_raw(500, 4095, 150), Some(ButtonEvent::Press(Button::Right)));
+    assert_eq!(input.poll_raw(500, 4095, 300), None);
+    assert_eq!(input.poll_raw(4095, 4095, 450), None);
+    assert_eq!(input.poll_raw(4095, 500, 600), Some(ButtonEvent::Press(Button::Down)));
+}
+
+#[test]
+fn raw_poll_suppresses_transitions_inside_cooldown() {
+    let mut input = InputState::new();
+
+    assert_eq!(input.poll_raw(500, 4095, 50), None);
+    assert_eq!(input.poll_raw(500, 4095, 150), None);
+}
+
+#[test]
+fn firmware_button_adc_uses_basic_calibration() {
+    let main_rs = include_str!("../src/main.rs");
+
+    assert!(main_rs.contains("AdcCalBasic"));
+    assert!(main_rs.contains("enable_pin_with_cal"));
+}
+
+#[test]
+fn supported_embedded_gray2_page_passes_validation() {
+    use binbook::page_index::{COMPRESSION_RLE_PACKBITS, PIXEL_FORMAT_GRAY2_PACKED, PlaneDir};
+
+    const PACKBITS: u8 = COMPRESSION_RLE_PACKBITS as u8;
+
+    let info = binbook::PageInfo {
+        page_number: 0,
+        page_kind: 0,
+        pixel_format: PIXEL_FORMAT_GRAY2_PACKED,
+        compression_method: COMPRESSION_RLE_PACKBITS,
+        page_flags: 0,
+        page_crc32: 0,
+        stored_width: DISPLAY_WIDTH,
+        stored_height: DISPLAY_HEIGHT,
+        placement_x: 0,
+        placement_y: 0,
+        progress_start_ppm: 0,
+        progress_end_ppm: 0,
+        chapter_nav_index: -1,
+        plane_dir: PlaneDir {
+            bitmap: 0x01,
+            compression: [PACKBITS, 0, 0, 0],
+            offsets: [0, 0, 0, 0],
+            sizes: [100, 0, 0, 0],
+        },
+    };
+    assert!(is_supported_embedded_gray2_page(&info));
+}
+
+#[test]
+fn unsupported_plane_bitmap_rejected() {
+    use binbook::page_index::{COMPRESSION_RLE_PACKBITS, PIXEL_FORMAT_GRAY2_PACKED, PlaneDir};
+
+    const PACKBITS: u8 = COMPRESSION_RLE_PACKBITS as u8;
+
+    let info = binbook::PageInfo {
+        page_number: 0,
+        page_kind: 0,
+        pixel_format: PIXEL_FORMAT_GRAY2_PACKED,
+        compression_method: COMPRESSION_RLE_PACKBITS,
+        page_flags: 0,
+        page_crc32: 0,
+        stored_width: DISPLAY_WIDTH,
+        stored_height: DISPLAY_HEIGHT,
+        placement_x: 0,
+        placement_y: 0,
+        progress_start_ppm: 0,
+        progress_end_ppm: 0,
+        chapter_nav_index: -1,
+        plane_dir: PlaneDir {
+            bitmap: 0x03,
+            compression: [PACKBITS, 0, 0, 0],
+            offsets: [0, 100, 0, 0],
+            sizes: [100, 50, 0, 0],
+        },
+    };
+    assert!(!is_supported_embedded_gray2_page(&info));
+}
+
+#[test]
+fn embedded_page_slice_returns_compressed_plane_data() {
+    use binbook::page_index::{COMPRESSION_RLE_PACKBITS, PIXEL_FORMAT_GRAY2_PACKED, PlaneDir};
+
+    const PACKBITS: u8 = COMPRESSION_RLE_PACKBITS as u8;
+
+    let mut book_bytes = vec![0u8; 100];
+    book_bytes[15..18].copy_from_slice(&[0xAA, 0xBB, 0xCC]);
+
+    let info = binbook::PageInfo {
+        page_number: 0,
+        page_kind: 0,
+        pixel_format: PIXEL_FORMAT_GRAY2_PACKED,
+        compression_method: COMPRESSION_RLE_PACKBITS,
+        page_flags: 0,
+        page_crc32: 0,
+        stored_width: DISPLAY_WIDTH,
+        stored_height: DISPLAY_HEIGHT,
+        placement_x: 0,
+        placement_y: 0,
+        progress_start_ppm: 0,
+        progress_end_ppm: 0,
+        chapter_nav_index: -1,
+        plane_dir: PlaneDir {
+            bitmap: 0x01,
+            compression: [PACKBITS, 0, 0, 0],
+            offsets: [5, 0, 0, 0],
+            sizes: [3, 0, 0, 0],
+        },
+    };
+
+    let slice = embedded_page_slice(&book_bytes, 10, &info).unwrap();
+    assert_eq!(slice, &[0xAA, 0xBB, 0xCC]);
+}
+
+#[test]
+fn embedded_page_slice_rejects_out_of_bounds() {
+    use binbook::page_index::{COMPRESSION_RLE_PACKBITS, PIXEL_FORMAT_GRAY2_PACKED, PlaneDir};
+
+    const PACKBITS: u8 = COMPRESSION_RLE_PACKBITS as u8;
+
+    let book_bytes = vec![0u8; 20];
+
+    let info = binbook::PageInfo {
+        page_number: 0,
+        page_kind: 0,
+        pixel_format: PIXEL_FORMAT_GRAY2_PACKED,
+        compression_method: COMPRESSION_RLE_PACKBITS,
+        page_flags: 0,
+        page_crc32: 0,
+        stored_width: DISPLAY_WIDTH,
+        stored_height: DISPLAY_HEIGHT,
+        placement_x: 0,
+        placement_y: 0,
+        progress_start_ppm: 0,
+        progress_end_ppm: 0,
+        chapter_nav_index: -1,
+        plane_dir: PlaneDir {
+            bitmap: 0x01,
+            compression: [PACKBITS, 0, 0, 0],
+            offsets: [10, 0, 0, 0],
+            sizes: [20, 0, 0, 0],
+        },
+    };
+
+    assert!(embedded_page_slice(&book_bytes, 10, &info).is_none());
 }
 
 impl MockFlash {

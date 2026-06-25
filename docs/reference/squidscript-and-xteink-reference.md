@@ -173,6 +173,28 @@ BinBook stores canonical values. Firmware converts to native at display time.
 Debounce: 30 ms. Poll interval: 20 ms.
 POWER held 2 seconds → deep sleep. POWER+DOWN within 120 ms → force display refresh.
 
+#### Decode Logic (from SquidScript `xteink_x4_button_probe.c`)
+
+Each ADC channel is decoded independently. The ladder is active-low: idle reads ~4095, button presses pull the value down. The decode uses `<=` thresholds going upward from 0:
+
+```c
+// GPIO1: RIGHT/LEFT/SELECT/BACK
+if (raw <= 750)   → RIGHT
+if (raw <= 1600)  → LEFT
+if (raw <= 2200)  → SELECT
+if (raw <= 2500)  → BACK
+else              → NONE (idle)
+
+// GPIO2: DOWN/UP
+if (raw <= 750)   → DOWN
+if (raw <= 2200)  → UP
+else              → NONE (idle)
+```
+
+The two channels are combined with `ch1_button.or(ch2_button)` — ch1 takes priority when both are active (should not happen in normal use). A raw value above 2500 on ch1 or above 2200 on ch2 means no button is pressed on that channel.
+
+**Critical gotcha**: the idle state reads `ch1=4095, ch2=4095`. Using `>` thresholds (e.g. `ch1 > 2200 → Back`) instead of `<=` thresholds incorrectly decodes the idle state as a button press.
+
 ### Power
 
 - Battery: ADC voltage divider on GPIO0, 2x multiplier, 3.0–4.2V range

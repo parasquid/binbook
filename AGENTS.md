@@ -44,10 +44,20 @@ Rules:
 ## Setup and Commands
 
 - Use `uv` for dependency management and command execution (Python side).
+- Keep the repository `.python-version` pinned to Python 3.13 unless the
+  Python dependency set is verified on a newer interpreter. `pygame==2.6.1`
+  has a locked Linux wheel for CPython 3.13 but may build from source on newer
+  interpreters; if `uv` tries to compile pygame and reports a missing compiler
+  such as `gcc-13`, first verify `uv run python --version` and the
+  `.python-version` pin instead of installing random system compiler packages.
+- On this atomic Linux development host, use Homebrew for host tool installs.
+  Do not use `dnf`, `rpm-ostree`, or other base-OS package manager changes
+  unless the user explicitly asks.
 - Use `cargo` for Rust firmware work.
 - Do not trial-run commands in the sandbox when repo guidance or prior evidence shows they need host access. Run known host-bound commands with escalation up front, including `git add`, `git commit`, history rewrites, `git push`/`gh`, hardware flashing or serial access, and dependency/network fetches.
 - For hardware, USB, serial, flashing, monitor, SD-card, block-device, or mounted-media work, never treat sandboxed `/dev`, `/run/media`, mount, or port visibility as evidence. Do not run a sandboxed "quick check" first. Use a single escalated command up front, or clearly state that host/device access was not checked.
 - If a hardware or serial command is part of the requested verification, run the actual host-bound command with escalation instead of substituting a sandboxed existence check. Only report "not visible", "not connected", or "blocked" after an escalated host check fails.
+- Never skip a verification step by preemptively assuming it will fail in the sandbox. Run the command and let the escalation mechanism handle access. The only valid reason to skip a step is if the plan or user explicitly says it is out of scope.
 - Install/sync dependencies with:
 
 ```bash
@@ -58,6 +68,12 @@ uv sync --dev
 
 ```bash
 uv run pytest -q
+```
+
+- Run firmware host tests separately with:
+
+```bash
+cd firmware && cargo test --workspace
 ```
 
 - Encode an EPUB with:
@@ -79,6 +95,30 @@ uv run binbook inspect test.binbook --validate
 uv run binbook decode test.binbook --page 0 -o page0.png
 uv run binbook view test.binbook
 ```
+
+## Firmware Serial Monitor
+
+To capture serial output from the Xteink X4 device:
+
+```bash
+uv run --with pyserial --no-project python3 -c "
+import serial, time, sys
+ser = serial.Serial('/dev/ttyACM0', 115200, timeout=1)
+ser.dtr = False; ser.rts = False; time.sleep(0.05)
+ser.rts = True; time.sleep(0.05); ser.rts = False; time.sleep(0.1)
+start = time.time()
+while time.time() - start < 15:
+    data = ser.read(ser.in_waiting or 1)
+    if data:
+        sys.stdout.buffer.write(data)
+        sys.stdout.flush()
+ser.close()
+"
+```
+
+Note: `pyserial` is not a project dependency. Use `uv run --with pyserial --no-project` to get it
+ad-hoc. Do not add it to `pyproject.toml` — it's only needed for hardware serial monitoring.
+`espflash monitor` does not work headless (fails with `Failed to initialize input reader`).
 
 ## Git / Branching
 
@@ -131,6 +171,8 @@ uv run binbook view test.binbook
 ## Debug Instrumentation
 
 - Wrap debug timing, measurement, and diagnostic output behind feature flags or compile-time guards so they compile out in release builds.
+- Firmware debug logging uses the `debug-log` Cargo feature, which gates `esp-println`. Define a `dbgprintln!` macro in `main.rs` that expands to `esp_println::println!` when `debug-log` is enabled and is a no-op otherwise. Replace all `println!` calls with `dbgprintln!` so debug output compiles out entirely in non-debug builds.
+- To build with debug logging: `--features firmware-bin,debug-log`. Without: `--features firmware-bin` (no esp-println dependency).
 - Use named constants for all diagnostic thresholds, not magic numbers.
 - When emitting error/trace codes, pair the number with its name for legibility (e.g., `error=-12 (ENOMEM)` not `error=-12`).
 
@@ -149,3 +191,4 @@ uv run binbook view test.binbook
 - If an answer suggests a possible code change, explain the option and ask before editing.
 - When unsure whether the user wants action or explanation, ask before editing files.
 - Keep responses concise and factual.
+- Execute implementation plans directly without delegating to subagents. Work sequentially, marking todo items as you go.

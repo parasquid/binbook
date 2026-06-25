@@ -233,6 +233,33 @@ pub fn decompress_row(input: &[u8], output: &mut [u8]) -> usize {
     in_pos
 }
 
+pub fn is_supported_embedded_gray2_page(page: &binbook::PageInfo) -> bool {
+    page.pixel_format == binbook::page_index::PIXEL_FORMAT_GRAY2_PACKED
+        && page.compression_method == binbook::page_index::COMPRESSION_RLE_PACKBITS
+        && page.stored_width == DISPLAY_WIDTH
+        && page.stored_height == DISPLAY_HEIGHT
+        && page.plane_dir.bitmap == 0x01
+}
+
+pub fn embedded_page_slice<'a>(
+    book_bytes: &'a [u8],
+    page_data_offset: u64,
+    page: &binbook::PageInfo,
+) -> Option<&'a [u8]> {
+    if !is_supported_embedded_gray2_page(page) {
+        return None;
+    }
+    let pd = &page.plane_dir;
+    let offset = page_data_offset.checked_add(pd.offsets[0] as u64)?;
+    let start = usize::try_from(offset).ok()?;
+    let size = usize::try_from(pd.sizes[0]).ok()?;
+    let end = start.checked_add(size)?;
+    if end > book_bytes.len() {
+        return None;
+    }
+    Some(&book_bytes[start..end])
+}
+
 struct NoDelay;
 
 impl xteink_hal::Delay for NoDelay {

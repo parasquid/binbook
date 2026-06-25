@@ -6,7 +6,7 @@ This document records the working flash path for the BinBook bare-metal Rust fir
 
 - Target board: Xteink X4, ESP32-C3 over USB JTAG serial.
 - Firmware artifact: `firmware/target/riscv32imc-unknown-none-elf/release/binbook-fw`.
-- Current firmware behavior: SSD1677 GRAY2 BinBook render probe that opens an embedded `.binbook` fixture and renders page 0.
+- Current firmware behavior: four-page navigation probe with directional button page turns.
 - Flash tool: `espflash 4.4.0`.
 
 SquidScript's command:
@@ -44,10 +44,10 @@ If the device appears elsewhere, set `ESPFLASH_PORT` to the correct path.
 From the repo root:
 
 ```bash
-firmware/scripts/flash-xteink-x4-gray2-probe.sh
+firmware/scripts/flash-xteink-x4-nav-probe.sh
 ```
 
-Use the wrapper above for render-probe firmware flashing. Do not use an arbitrary `cargo build --target riscv32imc-unknown-none-elf` from `PATH`; if `cargo` and `rustc` resolve from different toolchain managers, the build can fail with a missing `core` crate or reject nightly-only flags even when the target is installed. The wrapper pins rustup's nightly `cargo` and `rustc`.
+Use the wrapper above for navigation-probe firmware flashing. Do not use an arbitrary `cargo build --target riscv32imc-unknown-none-elf` from `PATH`; if `cargo` and `rustc` resolve from different toolchain managers, the build can fail with a missing `core` crate or reject nightly-only flags even when the target is installed. The wrapper pins rustup's nightly `cargo` and `rustc`.
 
 Equivalent explicit command:
 
@@ -108,16 +108,36 @@ The previous smoke-test display behavior was a clear screen followed by four fil
 
 The smoke firmware first cleared both SSD1677 RAM planes to white and performed a full refresh. It then wrote four 128×96 black windows using SSD1677 window writes and performed another full refresh. That milestone focused on reset, init, RAM-window writes, coordinate coverage, and full refresh.
 
-## Current GRAY2 render probe
+## Current navigation probe
 
-The current `binbook-fw` binary initializes the SSD1677 grayscale path, opens `firmware/crates/binbook-fw/fixtures/gray2_probe.binbook` via `include_bytes!`, and renders page 0. The fixture is a single current-writer `GRAY2_PACKED` page stored at `800x480` with four vertical grayscale bands and asymmetric edge markers.
+The current `binbook-fw` binary initializes the SSD1677 grayscale path, opens `firmware/crates/binbook-fw/fixtures/nav_probe.binbook` via `include_bytes!`, and renders page 0. The fixture contains four `GRAY2_PACKED` pages stored at `800x480` with RLE PackBits compression.
 
-Expected display result:
+Page order:
 
-- one full-screen BinBook-rendered page,
-- four visible tones: black, dark gray, light gray, and white,
-- asymmetric corner/edge markers matching the stored physical orientation,
-- no center vertical stripe or repeated malformed bands.
+1. Gray-band page (preserved byte-for-byte from `gray2_probe.binbook`)
+2. Checkerboard pattern (160px cells)
+3. Four-tone vertical stripes (black, dark gray, light gray, white)
+4. Lorem ipsum text
+
+Button mapping:
+
+- `Right` / `Down` — next page
+- `Left` / `Up` — previous page
+- `Back` / `Select` / `Power` — ignored
+
+Navigation clamps at edges: previous on page 1 does nothing; next on page 4 does nothing.
+
+Expected display result after boot:
+
+- page 0: full-screen gray bands with asymmetric edge markers
+
+After pressing `Right` or `Down`:
+
+- page 1: checkerboard pattern
+- page 2: four vertical stripes
+- page 3: lorem ipsum text
+
+Pressing `Left` or `Up` navigates backward through the same sequence.
 
 The verified Rust GRAY2 plane mapping for the Xteink X4 grayscale LUT is:
 

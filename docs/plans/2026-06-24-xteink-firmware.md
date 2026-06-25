@@ -685,7 +685,11 @@ In `AGENTS.md`, under “Firmware Build Commands”, add:
 ```markdown
 - Build CLI with serial backend: `cd cli && cargo check --features serial-device`
   - Linux requires `libudev.pc` available through `pkg-config`.
-- Full Python tests require pygame; if pygame must build from source, the host needs SDL2/X11 development headers.
+- Full Python tests require pygame. First verify `uv run python --version`
+  uses the repository `.python-version` interpreter. On the current atomic
+  Linux host that should be Homebrew Python 3.13, which uses the locked pygame
+  wheel. If pygame must genuinely build from source, the host needs SDL2/X11
+  development headers.
 ```
 
 In the spec, add a short “Host Build Dependencies” subsection under implementation notes:
@@ -695,7 +699,11 @@ In the spec, add a short “Host Build Dependencies” subsection under implemen
 
 Default firmware and CLI checks avoid host serial backends. The `cli` crate keeps `serialport` behind the `serial-device` feature because Linux builds require `libudev.pc`.
 
-The Python viewer tests depend on pygame. On hosts without prebuilt pygame wheels, building pygame requires SDL2 and X11 development headers.
+The Python viewer tests depend on pygame. First verify `uv run python --version`
+uses the repository `.python-version` interpreter. On the current atomic Linux
+host that should be Homebrew Python 3.13, which uses the locked pygame wheel.
+On hosts without prebuilt pygame wheels, building pygame requires SDL2 and X11
+development headers.
 ```
 
 - [ ] **Step 2: Verify docs references**
@@ -777,7 +785,12 @@ Expected: pass with default features.
 uv run pytest -q
 ```
 
-Expected on a fully provisioned host: pass. On the current host, this may fail because pygame cannot build without X11 headers. If it fails, also run:
+Expected on a fully provisioned host: pass. On the current host, first verify
+that `uv run python --version` reports Python 3.13 from the repository
+`.python-version`. If uv selects a newer interpreter, pygame may try to build
+from source and fail with missing compiler or X11/SDL headers. Fix interpreter
+selection before installing host packages. If dependency sync is otherwise
+blocked, also run:
 
 ```bash
 UV_NO_SYNC=1 uv run pytest -q

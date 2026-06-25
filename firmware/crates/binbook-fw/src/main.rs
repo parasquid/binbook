@@ -1,14 +1,8 @@
-//! Xteink X4 BinBook GRAY2 render-probe firmware binary.
-//!
-//! This binary initializes the SSD1677 display using the verified Xteink X4
-//! pins, opens an embedded BinBook fixture, and renders page 0 through the
-//! GRAY2 display path. It is a rendering milestone, not the final reader
-//! application.
-
 #![no_std]
 #![no_main]
 
 use esp_hal::{
+    analog::adc::{Adc, AdcCalBasic, AdcConfig, Attenuation},
     delay::Delay as EspDelay,
     gpio::{Input, InputConfig, Level, Output, OutputConfig},
     spi::{
@@ -22,11 +16,22 @@ use ssd1677_driver::Ssd1677Driver;
 use xteink_hal::{Delay as _, HalError, HalResult};
 
 use esp_backtrace as _;
+#[cfg(feature = "debug-log")]
+use esp_println::println;
+
+#[cfg(feature = "debug-log")]
+macro_rules! dbgprintln {
+    ($($arg:tt)*) => { println!($($arg)*) };
+}
+#[cfg(not(feature = "debug-log"))]
+macro_rules! dbgprintln {
+    ($($arg:tt)*) => {};
+}
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
 const SPI_FREQUENCY: Rate = Rate::from_mhz(4);
-const PROBE_BOOK: &[u8] = include_bytes!("../fixtures/gray2_probe.binbook");
+const PROBE_BOOK: &[u8] = include_bytes!("../fixtures/nav_probe.binbook");
 const BINBOOK_SCRATCH_BYTES: usize = 8192;
 
 struct Delay(EspDelay);
@@ -112,37 +117,103 @@ fn main() -> ! {
     display
         .init_grayscale_with_delay(&delay)
         .expect("failed to initialize SSD1677 display");
-    render_embedded_probe(&mut display, &delay).expect("failed to render BinBook GRAY2 probe");
+
+    let mut adc_config = AdcConfig::new();
+    let mut ch1_pin =
+        adc_config.enable_pin_with_cal::<_, AdcCalBasic<_>>(peripherals.GPIO1, Attenuation::_11dB);
+    let mut ch2_pin =
+        adc_config.enable_pin_with_cal::<_, AdcCalBasic<_>>(peripherals.GPIO2, Attenuation::_11dB);
+    let mut adc = Adc::new(peripherals.ADC1, adc_config);
+
+    let mut scratch = [0u8; BINBOOK_SCRATCH_BYTES];
+    let mut book =
+        binbook::BinBook::open(PROBE_BOOK, &mut scratch).expect("failed to open embedded BinBook");
+    let page_count = book.page_count();
+
+    let mut current_page: u32 = 0;
+    render_current_page(&mut display, &mut book, &delay, current_page);
+
+    let mut input_state = binbook_fw::input::InputState::new();
+    let mut tick: u64 = 0;
+
+    dbgprintln!("[NAV] Firmware started. page_count={}", page_count);
 
     loop {
-        delay.ms(1000);
+        delay.ms(50);
+        tick = tick.saturating_add(50);
+
+        let ch1 = loop {
+            match adc.read_oneshot(&mut ch1_pin) {
+                Ok(v) => break v,
+                Err(nb::Error::WouldBlock) => {}
+                Err(nb::Error::Other(())) => break 0,
+            }
+        };
+        let ch2 = loop {
+            match adc.read_oneshot(&mut ch2_pin) {
+                Ok(v) => break v,
+                Err(nb::Error::WouldBlock) => {}
+                Err(nb::Error::Other(())) => break 0,
+            }
+        };
+
+        if (tick % 500) == 0 {
+            let decoded = binbook_fw::input::decode_buttons(ch1, ch2);
+            dbgprintln!("[ADC] ch1={} ch2={} decoded={:?} tick={}", ch1, ch2, decoded, tick);
+        }
+
+        if let Some(event) = input_state.poll_raw(ch1, ch2, tick) {
+            dbgprintln!("[NAV] event={:?}", event);
+            if let binbook_fw::input::ButtonEvent::Press(button) = event {
+                match button {
+                    binbook_fw::input::Button::Select | binbook_fw::input::Button::Back => {
+                        dbgprintln!("[NAV] {:?} pressed (no action yet)", button);
+                    }
+                    _ => {}
+                }
+                if let Some(turn) = binbook_fw::input::page_turn_for_button(button) {
+                    let new_page =
+                        binbook_fw::input::apply_page_turn(current_page, page_count, turn);
+                    dbgprintln!("[NAV] turn={:?} current_page={} new_page={}", turn, current_page, new_page);
+                    if new_page != current_page {
+                        current_page = new_page;
+                        dbgprintln!("[NAV] rendering page {}", current_page);
+                        render_current_page(&mut display, &mut book, &delay, current_page);
+                    }
+                }
+            }
+        }
     }
 }
 
-fn render_embedded_probe<SPI, CS, DC, RST, BUSY>(
+fn render_current_page<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; BINBOOK_SCRATCH_BYTES]>,
     delay: &dyn xteink_hal::Delay,
-) -> HalResult<()>
-where
+    page_index: u32,
+) where
     SPI: xteink_hal::Spi,
     CS: xteink_hal::OutputPin,
     DC: xteink_hal::OutputPin,
     RST: xteink_hal::OutputPin,
     BUSY: xteink_hal::InputPin,
 {
-    let scratch = [0u8; BINBOOK_SCRATCH_BYTES];
-    let mut book =
-        binbook::BinBook::open(PROBE_BOOK, scratch).map_err(|_| HalError::InvalidParam)?;
-    let page = book.page(0).map_err(|_| HalError::InvalidParam)?;
+    let page_info = book
+        .page_info(page_index)
+        .expect("failed to read page info");
 
-    if page.info.pixel_format != binbook::page_index::PIXEL_FORMAT_GRAY2_PACKED
-        || page.info.compression_method != binbook::page_index::COMPRESSION_RLE_PACKBITS
-        || page.info.stored_width != binbook_fw::display::DISPLAY_WIDTH
-        || page.info.stored_height != binbook_fw::display::DISPLAY_HEIGHT
-        || page.info.plane_dir.bitmap != 0x01
-    {
-        return Err(HalError::InvalidParam);
+    if !binbook_fw::display::is_supported_embedded_gray2_page(&page_info) {
+        panic!("unsupported page format");
     }
 
-    binbook_fw::display::display_gray2_page(display, page.compressed_data(), delay)
+    let open = book.open_info();
+    let slice = binbook_fw::display::embedded_page_slice(
+        PROBE_BOOK,
+        open.page_data_offset,
+        &page_info,
+    )
+    .expect("failed to locate compressed page slice");
+
+    binbook_fw::display::display_gray2_page(display, slice, delay)
+        .expect("failed to render page to display");
 }
