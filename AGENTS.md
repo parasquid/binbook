@@ -89,6 +89,7 @@ uv run binbook view test.binbook
 - Never amend, force-push, or rewrite history without explicit user request.
 - Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) for all commit messages. Format: `<type>[optional scope]: <description>` where type is one of `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, or `revert`.
 - When implementing a written plan, always use a todo tracker and keep it current as tasks move from pending to in progress to complete.
+- Only add `Co-authored-by` trailers when the agent can truthfully claim authorship of the changed files. Do not include misleading co-author footers on commits where the agent merely organized or staged existing work.
 
 ## Implementation Guidelines
 
