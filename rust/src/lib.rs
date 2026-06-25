@@ -58,6 +58,12 @@ pub struct PageRef<'a> {
     pub uncompressed_size: usize,
 }
 
+impl<'a> PageRef<'a> {
+    pub fn compressed_data(&self) -> &'a [u8] {
+        self.compressed_data
+    }
+}
+
 pub struct BinBook<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> {
     reader: R,
     scratch: S,
@@ -220,10 +226,12 @@ impl<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> BinBook<R, S> {
                 offset += pd.sizes[slot] as usize;
             }
         }
+        let uncompressed_size =
+            page_plane_uncompressed_size(info.pixel_format, info.stored_width, info.stored_height);
         Ok(PageRef {
             info,
             compressed_data: &buf[..total_compressed],
-            uncompressed_size: 0,
+            uncompressed_size,
         })
     }
 

@@ -100,3 +100,19 @@ fn decompress_buffer_too_small() {
         _ => panic!("expected OutputBufferTooSmall"),
     }
 }
+
+#[test]
+fn page_ref_exposes_current_packed_gray2_blob() {
+    let data: &[u8] = include_bytes!("fixtures/sample.binbook");
+    let scratch = [0u8; 4096];
+    let mut book = BinBook::open(data, scratch).unwrap();
+
+    let page = book.page(0).unwrap();
+
+    assert_eq!(page.uncompressed_size, 96_000);
+    assert_eq!(
+        page.compressed_data().len(),
+        page.info.plane_dir.sizes[0] as usize
+    );
+    assert_eq!(&page.compressed_data()[..8], &[0xFF; 8]);
+}
