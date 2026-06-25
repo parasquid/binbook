@@ -1,5 +1,5 @@
-use crate::Error;
 use crate::header::{read_le16, read_le32};
+use crate::Error;
 
 pub const PIXEL_FORMAT_GRAY1_PACKED: u16 = 1;
 pub const PIXEL_FORMAT_GRAY2_PACKED: u16 = 2;
@@ -40,9 +40,7 @@ pub fn parse_page_info_from_bytes(bytes: &[u8]) -> Result<PageInfo, Error> {
     }
     let chapter_raw = read_le32(bytes, 32);
     let plane_bitmap = bytes[44];
-    let plane_compression = [
-        bytes[45], bytes[46], bytes[47], bytes[48],
-    ];
+    let plane_compression = [bytes[45], bytes[46], bytes[47], bytes[48]];
     let mut plane_offsets = [0u32; 4];
     let mut plane_sizes = [0u32; 4];
     for i in 0..4 {
@@ -64,7 +62,11 @@ pub fn parse_page_info_from_bytes(bytes: &[u8]) -> Result<PageInfo, Error> {
         placement_y: read_le16(bytes, 26),
         progress_start_ppm: read_le32(bytes, 36),
         progress_end_ppm: read_le32(bytes, 40),
-        chapter_nav_index: if chapter_raw == u32::MAX { -1 } else { chapter_raw as i32 },
+        chapter_nav_index: if chapter_raw == u32::MAX {
+            -1
+        } else {
+            chapter_raw as i32
+        },
         plane_dir: PlaneDir {
             bitmap: plane_bitmap,
             compression: plane_compression,

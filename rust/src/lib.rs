@@ -13,12 +13,12 @@ mod rle;
 pub mod section;
 pub mod string_table;
 
+pub use chapter_index::ChapterEntry;
 pub use decompress::decompress_page;
 pub use error::Error;
 pub use nav_index::NavEntry;
 pub use page_index::PageInfo;
 pub use reader::Reader;
-pub use chapter_index::ChapterEntry;
 
 pub fn page_plane_uncompressed_size(pixel_format: u16, width: u16, height: u16) -> usize {
     let pixels = width as usize * height as usize;
@@ -104,7 +104,10 @@ impl<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> BinBook<R, S> {
         if scratch.as_ref().len() < table_bytes {
             return Err(Error::InvalidHeader);
         }
-        reader.read_at(hdr.section_table_offset, &mut scratch.as_mut()[..table_bytes])?;
+        reader.read_at(
+            hdr.section_table_offset,
+            &mut scratch.as_mut()[..table_bytes],
+        )?;
         let sections = section::parse_sections_from_table(
             scratch.as_ref(),
             hdr.section_count,
@@ -190,7 +193,8 @@ impl<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> BinBook<R, S> {
             return Err(Error::InvalidPageIndex);
         }
         let off = self.page_index_offset + index as u64 * self.page_index_entry_size as u64;
-        self.reader.read_at(off, &mut buf[..page_index::PAGE_INDEX_ENTRY_SIZE])?;
+        self.reader
+            .read_at(off, &mut buf[..page_index::PAGE_INDEX_ENTRY_SIZE])?;
         page_index::parse_page_info_from_bytes(buf)
     }
 
@@ -211,7 +215,8 @@ impl<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> BinBook<R, S> {
         for slot in 0..4 {
             if pd.bitmap & (1 << slot) != 0 {
                 let absolute = self.page_data_offset + pd.offsets[slot] as u64;
-                self.reader.read_at(absolute, &mut buf[offset..offset + pd.sizes[slot] as usize])?;
+                self.reader
+                    .read_at(absolute, &mut buf[offset..offset + pd.sizes[slot] as usize])?;
                 offset += pd.sizes[slot] as usize;
             }
         }
@@ -224,9 +229,8 @@ impl<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> BinBook<R, S> {
 
     pub fn decompress_page(&mut self, index: u32, out: &mut [u8]) -> Result<(), Error> {
         let info = self.page_info(index)?;
-        let plane_size = page_plane_uncompressed_size(
-            info.pixel_format, info.stored_width, info.stored_height,
-        );
+        let plane_size =
+            page_plane_uncompressed_size(info.pixel_format, info.stored_width, info.stored_height);
         if out.len() < plane_size {
             return Err(Error::OutputBufferTooSmall);
         }
@@ -262,10 +266,15 @@ impl<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> BinBook<R, S> {
             return Err(Error::InvalidNavIndex);
         }
         let off = self.nav_index_offset + index as u64 * self.nav_index_entry_size as u64;
-        self.reader.read_at(off, &mut buf[..section::NAV_INDEX_ENTRY_SIZE])?;
+        self.reader
+            .read_at(off, &mut buf[..section::NAV_INDEX_ENTRY_SIZE])?;
         let title_offset = header::read_le32(buf, 8);
         let title_len = header::read_le32(buf, 12);
-        Ok(nav_index::parse_nav_entry_from_bytes(buf, title_offset, title_len))
+        Ok(nav_index::parse_nav_entry_from_bytes(
+            buf,
+            title_offset,
+            title_len,
+        ))
     }
 
     pub fn chapter(&mut self, index: u32) -> Result<ChapterEntry<'_>, Error> {
@@ -277,7 +286,8 @@ impl<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> BinBook<R, S> {
             return Err(Error::InvalidChapterIndex);
         }
         let off = self.chapter_index_offset + index as u64 * self.chapter_index_entry_size as u64;
-        self.reader.read_at(off, &mut buf[..section::CHAPTER_INDEX_ENTRY_SIZE])?;
+        self.reader
+            .read_at(off, &mut buf[..section::CHAPTER_INDEX_ENTRY_SIZE])?;
         let title_offset = header::read_le32(buf, 8);
         let title_len = header::read_le32(buf, 12);
         Ok(chapter_index::parse_chapter_entry_from_bytes(
