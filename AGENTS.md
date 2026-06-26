@@ -151,12 +151,32 @@ ad-hoc. Do not add it to `pyproject.toml` — it's only needed for hardware seri
 - Test any path that reads, copies, streams, or handles a payload larger than obvious scratch buffers — fixtures that fit the buffer are no-op tests.
 - Keep `cargo clean && cargo test` as the reliable baseline check; stale builds mask real failures.
 
+### Hardware Verification Discipline (MANDATORY)
+
+**Hardware verification is NEVER optional for firmware tasks.** This is a hard gate, not a suggestion.
+
+Rules:
+- **ALWAYS attempt flash and serial capture commands** when a plan includes hardware verification as a completion gate.
+- **NEVER assume commands will fail** in the sandbox. Run them and let the escalation mechanism handle access.
+- **NEVER skip hardware verification** by claiming you "don't have access" or "can't run hardware commands" before actually trying.
+- **The ONLY valid reason to skip** hardware verification is if the plan or user explicitly states it is out of scope.
+- If flash or serial commands fail due to sandbox restrictions, **report the failure honestly** and let the user decide how to proceed.
+- **Document hardware evidence** (serial output, visual results) in `HANDOFF.md` immediately after capturing it.
+
+Required hardware verification steps for firmware tasks:
+1. Flash the firmware using the script specified in the plan
+2. Capture serial output for at least 15 seconds
+3. Verify the serial output matches expected behavior
+4. Record all evidence in `HANDOFF.md`
+
+**Do not claim firmware work is complete without hardware evidence.** Host tests and builds are necessary but not sufficient.
+
 ### Plan Writing Conventions
 
 - Write plans assuming the executing agent starts cold with no prior conversation context. Include all necessary file paths, commands, and constraints explicitly.
 - Emphasize test-driven development: each task should begin with a failing test, followed by the minimal implementation to pass it.
 - Require relevant tests to pass after each task before moving to the next. If a task leaves tests failing, the plan is incomplete.
-- Make hardware verification an explicit completion gate for firmware tasks. Include the exact flashing/serial commands needed to confirm behavior on real hardware, and do not mark firmware work complete without evidence from a live device run.
+- Make hardware verification an explicit completion gate for firmware tasks. Include the exact flashing/serial commands needed to confirm behavior on real hardware, and do not mark firmware work complete without evidence from a live device run. See "Hardware Verification Discipline" for mandatory requirements.
 
 ### Documentation Discipline
 
