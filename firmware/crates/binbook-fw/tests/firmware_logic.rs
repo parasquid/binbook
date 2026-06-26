@@ -500,8 +500,13 @@ fn refresh_policy_uses_full_screen_differential_default_after_seed() {
     let seed = state.decide(0, None);
     state.record_success(0, seed);
 
+    // After grayscale, BW seed is required before differential
+    let bw_seed = state.decide(1, Some(0b101));
+    assert_eq!(bw_seed, RefreshDecision::FullBwSeed);
+    state.record_success(1, bw_seed);
+
     assert_eq!(
-        state.decide(1, Some(0b101)),
+        state.decide(2, Some(0b101)),
         RefreshDecision::FullScreenDifferential
     );
 }
@@ -512,7 +517,12 @@ fn refresh_policy_uses_full_screen_differential_for_jump_without_transition() {
     let seed = state.decide(0, None);
     state.record_success(0, seed);
 
-    assert_eq!(state.decide(9, None), RefreshDecision::FullScreenDifferential);
+    // After grayscale, BW seed is required before differential
+    let bw_seed = state.decide(9, None);
+    assert_eq!(bw_seed, RefreshDecision::FullBwSeed);
+    state.record_success(9, bw_seed);
+
+    assert_eq!(state.decide(5, None), RefreshDecision::FullScreenDifferential);
 }
 
 #[test]
@@ -520,14 +530,20 @@ fn refresh_policy_cleanup_after_five_fast_refreshes() {
     let mut state = RefreshState::new();
     let seed = state.decide(0, None);
     state.record_success(0, seed);
-    for page in 1..=5 {
+
+    // First page after grayscale requires BW seed
+    let bw_seed = state.decide(1, Some(1));
+    assert_eq!(bw_seed, RefreshDecision::FullBwSeed);
+    state.record_success(1, bw_seed);
+
+    // Pages 2-5 are differential (fast_refresh_count goes 2,3,4,5)
+    for page in 2..=5 {
         let decision = state.decide(page, Some(1));
-        if page < 5 {
-            assert!(matches!(decision, RefreshDecision::FullScreenDifferential));
-        }
+        assert!(matches!(decision, RefreshDecision::FullScreenDifferential));
         state.record_success(page, decision);
     }
 
+    // After 5 fast refreshes, cleanup cadence triggers
     assert_eq!(state.decide(6, Some(1)), RefreshDecision::FullGrayscale);
 }
 
@@ -552,7 +568,12 @@ fn refresh_state_fast_count_resets_on_full_grayscale() {
     let seed = state.decide(0, None);
     state.record_success(0, seed);
 
-    for page in 1..=5 {
+    // First page requires BW seed
+    let bw_seed = state.decide(1, Some(1));
+    state.record_success(1, bw_seed);
+
+    // Pages 2-5 are differential
+    for page in 2..=5 {
         let decision = state.decide(page, Some(1));
         state.record_success(page, decision);
     }
@@ -562,8 +583,9 @@ fn refresh_state_fast_count_resets_on_full_grayscale() {
     state.record_success(6, cleanup);
     assert_eq!(state.previous_page(), Some(6));
 
+    // After cleanup, BW seed is required again
     let next = state.decide(7, Some(1));
-    assert!(matches!(next, RefreshDecision::FullScreenDifferential));
+    assert!(matches!(next, RefreshDecision::FullBwSeed));
 }
 
 #[test]
@@ -572,8 +594,13 @@ fn refresh_policy_defaults_to_full_screen_differential_when_transition_exists() 
     let seed = state.decide_with_policy(0, None, RefreshPolicy::FullScreenDifferentialDefault);
     state.record_success(0, seed);
 
+    // After grayscale, BW seed is required before differential
+    let bw_seed = state.decide_with_policy(1, Some(0b101), RefreshPolicy::FullScreenDifferentialDefault);
+    assert_eq!(bw_seed, RefreshDecision::FullBwSeed);
+    state.record_success(1, bw_seed);
+
     assert_eq!(
-        state.decide_with_policy(1, Some(0b101), RefreshPolicy::FullScreenDifferentialDefault),
+        state.decide_with_policy(2, Some(0b101), RefreshPolicy::FullScreenDifferentialDefault),
         RefreshDecision::FullScreenDifferential
     );
 }
@@ -584,8 +611,13 @@ fn refresh_policy_uses_dirty_chunks_only_when_explicitly_enabled() {
     let seed = state.decide_with_policy(0, None, RefreshPolicy::ChunkDirtyDifferentialDefault);
     state.record_success(0, seed);
 
+    // After grayscale, BW seed is required before differential
+    let bw_seed = state.decide_with_policy(1, Some(0b101), RefreshPolicy::ChunkDirtyDifferentialDefault);
+    assert_eq!(bw_seed, RefreshDecision::FullBwSeed);
+    state.record_success(1, bw_seed);
+
     assert_eq!(
-        state.decide_with_policy(1, Some(0b101), RefreshPolicy::ChunkDirtyDifferentialDefault),
+        state.decide_with_policy(2, Some(0b101), RefreshPolicy::ChunkDirtyDifferentialDefault),
         RefreshDecision::AdjacentDirtyPartial {
             changed_chunk_mask: 0b101
         }
@@ -631,6 +663,109 @@ fn firmware_logs_refresh_policy_and_probe_steps() {
 
     assert!(main_rs.contains("[REFRESH] policy="));
     assert!(main_rs.contains("[PROBE] chunk_dirty_window"));
+}
+
+#[test]
+fn bw_seed_required_after_full_grayscale() {
+    let mut state = RefreshState::new();
+    let first = state.decide(0, None);
+    assert_eq!(first, RefreshDecision::FullGrayscale);
+    state.record_success(0, first);
+
+    assert_eq!(state.decide(1, Some(0b101)), RefreshDecision::FullBwSeed);
+}
+
+#[test]
+fn bw_seed_allows_full_screen_differential_after_record_success() {
+    let mut state = RefreshState::new();
+    let first = state.decide(0, None);
+    state.record_success(0, first);
+    let seed = state.decide(1, Some(0b101));
+    assert_eq!(seed, RefreshDecision::FullBwSeed);
+    state.record_success(1, seed);
+
+    assert_eq!(
+        state.decide(2, Some(0b111)),
+        RefreshDecision::FullScreenDifferential
+    );
+}
+
+#[test]
+fn bw_seed_invalidated_by_cleanup_full_grayscale() {
+    let mut state = RefreshState::new();
+    let first = state.decide(0, None);
+    state.record_success(0, first);
+    let seed = state.decide(1, Some(1));
+    state.record_success(1, seed);
+
+    for page in 2..=5 {
+        let decision = state.decide(page, Some(1));
+        state.record_success(page, decision);
+    }
+
+    let cleanup = state.decide(6, Some(1));
+    assert_eq!(cleanup, RefreshDecision::FullGrayscale);
+    state.record_success(6, cleanup);
+
+    assert_eq!(state.decide(7, Some(1)), RefreshDecision::FullBwSeed);
+}
+
+#[test]
+fn bw_seed_required_before_chunk_dirty_policy() {
+    let mut state = RefreshState::new();
+    let first = state.decide_with_policy(0, None, RefreshPolicy::ChunkDirtyDifferentialDefault);
+    state.record_success(0, first);
+
+    assert_eq!(
+        state.decide_with_policy(1, Some(0b101), RefreshPolicy::ChunkDirtyDifferentialDefault),
+        RefreshDecision::FullBwSeed
+    );
+
+    state.record_success(1, RefreshDecision::FullBwSeed);
+    assert_eq!(
+        state.decide_with_policy(2, Some(0b101), RefreshPolicy::ChunkDirtyDifferentialDefault),
+        RefreshDecision::AdjacentDirtyPartial {
+            changed_chunk_mask: 0b101
+        }
+    );
+}
+
+#[test]
+fn bw_seed_display_rendering_tracks_panel_mode_and_seed_path() {
+    let display_rs = include_str!("../src/display.rs");
+
+    assert!(display_rs.contains("pub enum PanelMode"));
+    assert!(display_rs.contains("FullBwSeed"));
+    assert!(display_rs.contains("stream_bw_seed_full"));
+    assert!(display_rs.contains("init_grayscale_with_delay"));
+    assert!(display_rs.contains("init_with_delay"));
+}
+
+#[test]
+fn bw_seed_streams_target_bw_to_both_ram_planes() {
+    let display_rs = include_str!("../src/display.rs");
+
+    assert!(display_rs.contains("stream_bw_seed_full"));
+    assert!(display_rs.contains("stream_plane_chunks_to_red"));
+    assert!(display_rs.contains("stream_plane_chunks_to_black"));
+    assert!(display_rs.contains("RefreshMode::Full"));
+}
+
+#[test]
+fn bw_seed_main_owns_panel_mode_state() {
+    let main_rs = include_str!("../src/main.rs");
+
+    assert!(main_rs.contains("PanelMode::Unknown"));
+    assert!(main_rs.contains("&mut panel_mode"));
+}
+
+#[test]
+fn bw_seed_firmware_logs_refresh_decisions_and_panel_mode() {
+    let main_rs = include_str!("../src/main.rs");
+
+    assert!(main_rs.contains("[REFRESH] policy=FullScreenDifferentialDefault"));
+    assert!(main_rs.contains("decision="));
+    assert!(main_rs.contains("[PANEL] mode="));
 }
 
 impl MockFlash {

@@ -48,6 +48,13 @@ For BinBook on X4, those images are plane 2 for the previous and target pages.
 
 ## Refresh Requirements
 
+### BW Seed Readiness
+
+A grayscale render must not be treated as a valid BW differential seed. After a
+grayscale render or cleanup cadence, firmware must perform a full BW seed refresh
+before any partial BW differential refresh. The BW seed writes the same target
+page BW plane to red RAM and black RAM, then triggers a full BW refresh.
+
 ### Frame Semantics
 
 For any BW differential partial refresh, SSD1677 RAM must contain a coherent pair

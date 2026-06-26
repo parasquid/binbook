@@ -3,6 +3,51 @@ use xteink_hal::{HalResult, HalError, InputPin, OutputPin, RefreshMode, Spi};
 
 use crate::refresh::{RefreshDecision, RefreshPolicy, RefreshState, X4_CHUNK_COUNT};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelMode {
+    Unknown,
+    Grayscale,
+    Bw,
+}
+
+fn ensure_grayscale_mode<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    delay: &dyn xteink_hal::Delay,
+    panel_mode: &mut PanelMode,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    if *panel_mode != PanelMode::Grayscale {
+        display.init_grayscale_with_delay(delay)?;
+        *panel_mode = PanelMode::Grayscale;
+    }
+    Ok(())
+}
+
+fn ensure_bw_mode<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    delay: &dyn xteink_hal::Delay,
+    panel_mode: &mut PanelMode,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    if *panel_mode != PanelMode::Bw {
+        display.init_with_delay(delay)?;
+        *panel_mode = PanelMode::Bw;
+    }
+    Ok(())
+}
+
 pub const GRAY1_ROW_BYTES: usize = 60;
 pub const GRAY2_ROW_BYTES: usize = 200;
 pub const DISPLAY_ROW_BYTES: usize = 100;
@@ -311,6 +356,7 @@ pub fn display_page_with_policy<SPI, CS, DC, RST, BUSY>(
     book_bytes: &[u8],
     delay: &dyn xteink_hal::Delay,
     refresh_state: &mut RefreshState,
+    panel_mode: &mut PanelMode,
     target_page: u32,
 ) -> HalResult<()>
 where
@@ -326,6 +372,7 @@ where
         book_bytes,
         delay,
         refresh_state,
+        panel_mode,
         RefreshPolicy::FullScreenDifferentialDefault,
         target_page,
     )
@@ -337,6 +384,7 @@ pub fn display_page_with_chunk_dirty_probe_policy<SPI, CS, DC, RST, BUSY>(
     book_bytes: &[u8],
     delay: &dyn xteink_hal::Delay,
     refresh_state: &mut RefreshState,
+    panel_mode: &mut PanelMode,
     target_page: u32,
 ) -> HalResult<()>
 where
@@ -352,6 +400,7 @@ where
         book_bytes,
         delay,
         refresh_state,
+        panel_mode,
         RefreshPolicy::ChunkDirtyDifferentialDefault,
         target_page,
     )
@@ -363,6 +412,7 @@ pub fn display_page_with_refresh_policy<SPI, CS, DC, RST, BUSY>(
     book_bytes: &[u8],
     delay: &dyn xteink_hal::Delay,
     refresh_state: &mut RefreshState,
+    panel_mode: &mut PanelMode,
     refresh_policy: RefreshPolicy,
     target_page: u32,
 ) -> HalResult<()>
@@ -386,9 +436,15 @@ where
     match decision {
         RefreshDecision::Noop => return Ok(()),
         RefreshDecision::FullGrayscale => {
+            ensure_grayscale_mode(display, delay, panel_mode)?;
             stream_full_grayscale(display, book, book_bytes, target_page, delay)?;
         }
+        RefreshDecision::FullBwSeed => {
+            ensure_bw_mode(display, delay, panel_mode)?;
+            stream_bw_seed_full(display, book, book_bytes, target_page, delay)?;
+        }
         RefreshDecision::AdjacentDirtyPartial { changed_chunk_mask } => {
+            ensure_bw_mode(display, delay, panel_mode)?;
             let prev = refresh_state.previous_page().unwrap();
             stream_bw_differential_chunked(
                 display,
@@ -401,6 +457,7 @@ where
             )?;
         }
         RefreshDecision::FullScreenDifferential => {
+            ensure_bw_mode(display, delay, panel_mode)?;
             let prev = refresh_state.previous_page().unwrap();
             stream_bw_differential_full(display, book, book_bytes, prev, target_page, delay)?;
         }
@@ -432,6 +489,30 @@ where
     display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
     stream_plane_chunks_to_black(display, book_bytes, open.page_data_offset, &pd, 1, delay)?;
     display.refresh_with_delay(RefreshMode::Grayscale, delay)
+}
+
+fn stream_bw_seed_full<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    target_page: u32,
+    delay: &dyn xteink_hal::Delay,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    let open = book.open_info();
+    let pd = &book.page_info(target_page).map_err(|_| HalError::InvalidParam)?.plane_dir;
+
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_plane_chunks_to_red(display, book_bytes, open.page_data_offset, &pd, 2, delay)?;
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_plane_chunks_to_black(display, book_bytes, open.page_data_offset, &pd, 2, delay)?;
+    display.refresh_with_delay(RefreshMode::Full, delay)
 }
 
 fn stream_bw_differential_chunked<SPI, CS, DC, RST, BUSY>(

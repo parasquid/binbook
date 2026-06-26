@@ -114,9 +114,6 @@ fn main() -> ! {
     let busy = InputPin(Input::new(peripherals.GPIO6, InputConfig::default()));
 
     let mut display = Ssd1677Driver::new(Spi(spi), cs, dc, rst, busy);
-    display
-        .init_grayscale_with_delay(&delay)
-        .expect("failed to initialize SSD1677 display");
 
     let mut adc_config = AdcConfig::new();
     let mut ch1_pin =
@@ -132,7 +129,8 @@ fn main() -> ! {
 
     let mut current_page: u32 = 0;
     let mut refresh_state = binbook_fw::refresh::RefreshState::new();
-    render_current_page(&mut display, &mut book, &delay, &mut refresh_state, current_page);
+    let mut panel_mode = binbook_fw::display::PanelMode::Unknown;
+    render_current_page(&mut display, &mut book, &delay, &mut refresh_state, &mut panel_mode, current_page);
 
     let mut input_state = binbook_fw::input::InputState::new();
     let mut tick: u64 = 0;
@@ -179,7 +177,7 @@ fn main() -> ! {
                     if new_page != current_page {
                         current_page = new_page;
                         dbgprintln!("[NAV] rendering page {}", current_page);
-                        render_current_page(&mut display, &mut book, &delay, &mut refresh_state, current_page);
+                        render_current_page(&mut display, &mut book, &delay, &mut refresh_state, &mut panel_mode, current_page);
                     }
                 }
             }
@@ -192,6 +190,7 @@ fn render_current_page<SPI, CS, DC, RST, BUSY>(
     book: &mut binbook::BinBook<&[u8], &mut [u8; BINBOOK_SCRATCH_BYTES]>,
     delay: &dyn xteink_hal::Delay,
     refresh_state: &mut binbook_fw::refresh::RefreshState,
+    panel_mode: &mut binbook_fw::display::PanelMode,
     page_index: u32,
 ) where
     SPI: xteink_hal::Spi,
@@ -202,13 +201,23 @@ fn render_current_page<SPI, CS, DC, RST, BUSY>(
 {
     #[cfg(not(feature = "chunk-dirty-probe"))]
     {
-        dbgprintln!("[REFRESH] policy=FullScreenDifferentialDefault page={}", page_index);
+        let transition_mask =
+            binbook_fw::display::find_transition_mask(book, refresh_state.previous_page(), page_index);
+        let decision = refresh_state.decide(page_index, transition_mask);
+        dbgprintln!(
+            "[REFRESH] policy=FullScreenDifferentialDefault page={} decision={} panel_mode={:?}",
+            page_index,
+            decision.name(),
+            panel_mode
+        );
+        dbgprintln!("[PANEL] mode={:?}", panel_mode);
         if let Err(e) = binbook_fw::display::display_page_with_policy(
             display,
             book,
             &PROBE_BOOK,
             delay,
             refresh_state,
+            panel_mode,
             page_index,
         ) {
             dbgprintln!("[NAV] display error on page {}: {:?}", page_index, e);
@@ -216,13 +225,27 @@ fn render_current_page<SPI, CS, DC, RST, BUSY>(
     }
     #[cfg(feature = "chunk-dirty-probe")]
     {
-        dbgprintln!("[PROBE] chunk_dirty_window page={}", page_index);
+        let transition_mask =
+            binbook_fw::display::find_transition_mask(book, refresh_state.previous_page(), page_index);
+        let decision = refresh_state.decide_with_policy(
+            page_index,
+            transition_mask,
+            binbook_fw::refresh::RefreshPolicy::ChunkDirtyDifferentialDefault,
+        );
+        dbgprintln!(
+            "[PROBE] chunk_dirty_window page={} decision={} panel_mode={:?}",
+            page_index,
+            decision.name(),
+            panel_mode
+        );
+        dbgprintln!("[PANEL] mode={:?}", panel_mode);
         if let Err(e) = binbook_fw::display::display_page_with_chunk_dirty_probe_policy(
             display,
             book,
             &PROBE_BOOK,
             delay,
             refresh_state,
+            panel_mode,
             page_index,
         ) {
             dbgprintln!("[NAV] display error on page {}: {:?}", page_index, e);
