@@ -200,14 +200,32 @@ fn render_current_page<SPI, CS, DC, RST, BUSY>(
     RST: xteink_hal::OutputPin,
     BUSY: xteink_hal::InputPin,
 {
-    if let Err(e) = binbook_fw::display::display_page_with_policy(
-        display,
-        book,
-        &PROBE_BOOK,
-        delay,
-        refresh_state,
-        page_index,
-    ) {
-        dbgprintln!("[NAV] display error on page {}: {:?}", page_index, e);
+    #[cfg(not(feature = "chunk-dirty-probe"))]
+    {
+        dbgprintln!("[REFRESH] policy=FullScreenDifferentialDefault page={}", page_index);
+        if let Err(e) = binbook_fw::display::display_page_with_policy(
+            display,
+            book,
+            &PROBE_BOOK,
+            delay,
+            refresh_state,
+            page_index,
+        ) {
+            dbgprintln!("[NAV] display error on page {}: {:?}", page_index, e);
+        }
+    }
+    #[cfg(feature = "chunk-dirty-probe")]
+    {
+        dbgprintln!("[PROBE] chunk_dirty_window page={}", page_index);
+        if let Err(e) = binbook_fw::display::display_page_with_chunk_dirty_probe_policy(
+            display,
+            book,
+            &PROBE_BOOK,
+            delay,
+            refresh_state,
+            page_index,
+        ) {
+            dbgprintln!("[NAV] display error on page {}: {:?}", page_index, e);
+        }
     }
 }

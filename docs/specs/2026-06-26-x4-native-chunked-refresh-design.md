@@ -166,12 +166,16 @@ Default X4 refresh behavior is stateful:
 
 1. If there is no valid previous page, perform a full grayscale seed refresh.
 2. If the cleanup cadence is reached, perform a full grayscale cleanup refresh.
-3. If a transition record exists for the previous page and target page, perform
-   a chunk-dirty BW differential partial refresh.
-4. Otherwise, perform a full-screen BW differential partial refresh using the
-   previous and target BW planes.
+3. Clean default fast page turn: stream the full previous BW plane to red RAM
+   and the full current BW plane to black RAM for the full screen, then trigger
+   partial refresh. Firmware may stream this as 16-row chunks to keep RAM
+   bounded.
+4. Chunk-dirty adjacent page turn: firmware may stream only transition-marked
+   chunks when hardware verification has proven that the SSD1677 partial refresh
+   is clean for that windowed update mode. This mode is behind an explicit opt-in
+   and is not the default.
 
-The cleanup cadence is 5 fast refreshes. This follows SquidScript’s current
+The cleanup cadence is 5 fast refreshes. This follows SquidScript's current
 BinBook page-turn policy.
 
 Full grayscale refresh:

@@ -10,6 +10,12 @@ pub enum RefreshDecision {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshPolicy {
+    FullScreenDifferentialDefault,
+    ChunkDirtyDifferentialDefault,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RefreshState {
     previous_page: Option<u32>,
     fast_refresh_count: u32,
@@ -26,6 +32,19 @@ impl RefreshState {
     }
 
     pub fn decide(&self, target_page: u32, transition_mask: Option<u32>) -> RefreshDecision {
+        self.decide_with_policy(
+            target_page,
+            transition_mask,
+            RefreshPolicy::FullScreenDifferentialDefault,
+        )
+    }
+
+    pub fn decide_with_policy(
+        &self,
+        target_page: u32,
+        transition_mask: Option<u32>,
+        policy: RefreshPolicy,
+    ) -> RefreshDecision {
         let Some(previous_page) = self.previous_page else {
             return RefreshDecision::FullGrayscale;
         };
@@ -35,12 +54,18 @@ impl RefreshState {
         if self.fast_refresh_count >= self.full_refresh_cadence {
             return RefreshDecision::FullGrayscale;
         }
-        if let Some(mask) = transition_mask {
-            return RefreshDecision::AdjacentDirtyPartial {
-                changed_chunk_mask: mask,
-            };
+        match policy {
+            RefreshPolicy::FullScreenDifferentialDefault => RefreshDecision::FullScreenDifferential,
+            RefreshPolicy::ChunkDirtyDifferentialDefault => {
+                if let Some(mask) = transition_mask {
+                    RefreshDecision::AdjacentDirtyPartial {
+                        changed_chunk_mask: mask,
+                    }
+                } else {
+                    RefreshDecision::FullScreenDifferential
+                }
+            }
         }
-        RefreshDecision::FullScreenDifferential
     }
 
     pub fn record_success(&mut self, target_page: u32, decision: RefreshDecision) {

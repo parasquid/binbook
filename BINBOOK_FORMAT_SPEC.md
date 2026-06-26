@@ -1241,11 +1241,12 @@ pigment bits are cleared.
 
 - First render or cleanup cadence: stream plane 0 to red RAM, plane 1 to black
   RAM, then trigger grayscale refresh.
-- Adjacent page turn with a transition record: stream only changed BW chunks
-  from the previous page to red RAM and current page to black RAM, then trigger
-  partial refresh.
-- Non-adjacent jump without a transition record: stream the full previous BW
-  plane and full current BW plane, then trigger partial refresh.
+- Clean default fast page turn: stream the full previous BW plane to red RAM and
+  the full current BW plane to black RAM, then trigger partial refresh. Firmware
+  may stream this as 16-row chunks to keep RAM bounded.
+- Chunk-dirty adjacent page turn: firmware may stream only transition-marked
+  chunks when hardware verification has proven that the SSD1677 partial refresh
+  is clean for that windowed update mode.
 
 ---
 

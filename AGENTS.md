@@ -151,6 +151,13 @@ ad-hoc. Do not add it to `pyproject.toml` — it's only needed for hardware seri
 - Test any path that reads, copies, streams, or handles a payload larger than obvious scratch buffers — fixtures that fit the buffer are no-op tests.
 - Keep `cargo clean && cargo test` as the reliable baseline check; stale builds mask real failures.
 
+### Plan Writing Conventions
+
+- Write plans assuming the executing agent starts cold with no prior conversation context. Include all necessary file paths, commands, and constraints explicitly.
+- Emphasize test-driven development: each task should begin with a failing test, followed by the minimal implementation to pass it.
+- Require relevant tests to pass after each task before moving to the next. If a task leaves tests failing, the plan is incomplete.
+- Make hardware verification an explicit completion gate for firmware tasks. Include the exact flashing/serial commands needed to confirm behavior on real hardware, and do not mark firmware work complete without evidence from a live device run.
+
 ### Documentation Discipline
 
 - Include documentation work explicitly in implementation plans.

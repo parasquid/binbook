@@ -6,7 +6,7 @@ use binbook_fw::display::{
 };
 use binbook_fw::flash::{FlashStorage, FILE_ENTRY_SIZE};
 use binbook_fw::input::{apply_page_turn, decode_buttons, page_turn_for_button, Button, ButtonEvent, InputState, PageTurn};
-use binbook_fw::refresh::{RefreshDecision, RefreshState};
+use binbook_fw::refresh::{RefreshDecision, RefreshPolicy, RefreshState};
 use binbook_fw::serial::{parse_command, Command};
 use xteink_hal::{Flash, HalResult};
 
@@ -495,16 +495,14 @@ fn refresh_policy_seeds_with_full_grayscale() {
 }
 
 #[test]
-fn refresh_policy_uses_adjacent_dirty_mask_after_seed() {
+fn refresh_policy_uses_full_screen_differential_default_after_seed() {
     let mut state = RefreshState::new();
     let seed = state.decide(0, None);
     state.record_success(0, seed);
 
     assert_eq!(
         state.decide(1, Some(0b101)),
-        RefreshDecision::AdjacentDirtyPartial {
-            changed_chunk_mask: 0b101
-        }
+        RefreshDecision::FullScreenDifferential
     );
 }
 
@@ -525,7 +523,7 @@ fn refresh_policy_cleanup_after_five_fast_refreshes() {
     for page in 1..=5 {
         let decision = state.decide(page, Some(1));
         if page < 5 {
-            assert!(matches!(decision, RefreshDecision::AdjacentDirtyPartial { .. }));
+            assert!(matches!(decision, RefreshDecision::FullScreenDifferential));
         }
         state.record_success(page, decision);
     }
@@ -565,7 +563,74 @@ fn refresh_state_fast_count_resets_on_full_grayscale() {
     assert_eq!(state.previous_page(), Some(6));
 
     let next = state.decide(7, Some(1));
-    assert!(matches!(next, RefreshDecision::AdjacentDirtyPartial { .. }));
+    assert!(matches!(next, RefreshDecision::FullScreenDifferential));
+}
+
+#[test]
+fn refresh_policy_defaults_to_full_screen_differential_when_transition_exists() {
+    let mut state = RefreshState::new();
+    let seed = state.decide_with_policy(0, None, RefreshPolicy::FullScreenDifferentialDefault);
+    state.record_success(0, seed);
+
+    assert_eq!(
+        state.decide_with_policy(1, Some(0b101), RefreshPolicy::FullScreenDifferentialDefault),
+        RefreshDecision::FullScreenDifferential
+    );
+}
+
+#[test]
+fn refresh_policy_uses_dirty_chunks_only_when_explicitly_enabled() {
+    let mut state = RefreshState::new();
+    let seed = state.decide_with_policy(0, None, RefreshPolicy::ChunkDirtyDifferentialDefault);
+    state.record_success(0, seed);
+
+    assert_eq!(
+        state.decide_with_policy(1, Some(0b101), RefreshPolicy::ChunkDirtyDifferentialDefault),
+        RefreshDecision::AdjacentDirtyPartial {
+            changed_chunk_mask: 0b101
+        }
+    );
+}
+
+#[test]
+fn display_page_with_policy_uses_explicit_refresh_policy() {
+    let display_rs = include_str!("../src/display.rs");
+
+    assert!(display_rs.contains("RefreshPolicy"));
+    assert!(display_rs.contains("decide_with_policy"));
+    assert!(!display_rs.contains("refresh_state.decide(target_page, transition_mask)"));
+}
+
+#[test]
+fn chunk_dirty_normal_navigation_uses_full_screen_differential_default() {
+    let main_rs = include_str!("../src/main.rs");
+
+    // Normal path uses the clean-default wrapper, not the full policy function
+    assert!(main_rs.contains("display_page_with_policy"));
+    assert!(!main_rs.contains("display_page_with_refresh_policy"));
+}
+
+#[test]
+fn chunk_dirty_policy_is_reserved_for_probe_or_debug_paths() {
+    let display_rs = include_str!("../src/display.rs");
+
+    assert!(display_rs.contains("display_page_with_refresh_policy"));
+    assert!(display_rs.contains("RefreshPolicy::ChunkDirtyDifferentialDefault"));
+}
+
+#[test]
+fn firmware_has_chunk_dirty_probe_feature_gate() {
+    let cargo_toml = include_str!("../Cargo.toml");
+
+    assert!(cargo_toml.contains("chunk-dirty-probe"));
+}
+
+#[test]
+fn firmware_logs_refresh_policy_and_probe_steps() {
+    let main_rs = include_str!("../src/main.rs");
+
+    assert!(main_rs.contains("[REFRESH] policy="));
+    assert!(main_rs.contains("[PROBE] chunk_dirty_window"));
 }
 
 impl MockFlash {

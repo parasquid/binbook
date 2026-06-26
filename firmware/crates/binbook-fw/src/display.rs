@@ -1,7 +1,7 @@
 use ssd1677_driver::Ssd1677Driver;
 use xteink_hal::{HalResult, HalError, InputPin, OutputPin, RefreshMode, Spi};
 
-use crate::refresh::{RefreshDecision, RefreshState, X4_CHUNK_COUNT};
+use crate::refresh::{RefreshDecision, RefreshPolicy, RefreshState, X4_CHUNK_COUNT};
 
 pub const GRAY1_ROW_BYTES: usize = 60;
 pub const GRAY2_ROW_BYTES: usize = 200;
@@ -320,6 +320,59 @@ where
     RST: OutputPin,
     BUSY: InputPin,
 {
+    display_page_with_refresh_policy(
+        display,
+        book,
+        book_bytes,
+        delay,
+        refresh_state,
+        RefreshPolicy::FullScreenDifferentialDefault,
+        target_page,
+    )
+}
+
+pub fn display_page_with_chunk_dirty_probe_policy<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    delay: &dyn xteink_hal::Delay,
+    refresh_state: &mut RefreshState,
+    target_page: u32,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    display_page_with_refresh_policy(
+        display,
+        book,
+        book_bytes,
+        delay,
+        refresh_state,
+        RefreshPolicy::ChunkDirtyDifferentialDefault,
+        target_page,
+    )
+}
+
+pub fn display_page_with_refresh_policy<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    delay: &dyn xteink_hal::Delay,
+    refresh_state: &mut RefreshState,
+    refresh_policy: RefreshPolicy,
+    target_page: u32,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
     let page_info = book
         .page_info(target_page)
         .map_err(|_| HalError::InvalidParam)?;
@@ -328,7 +381,7 @@ where
     }
 
     let transition_mask = find_transition_mask(book, refresh_state.previous_page(), target_page);
-    let decision = refresh_state.decide(target_page, transition_mask);
+    let decision = refresh_state.decide_with_policy(target_page, transition_mask, refresh_policy);
 
     match decision {
         RefreshDecision::Noop => return Ok(()),
@@ -469,9 +522,10 @@ where
         return Err(HalError::InvalidParam);
     }
     let compressed = &book_bytes[start..end];
-    display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |row, row_buf| {
-        let _ = row;
-        stream_compressed_row(compressed, row as usize, row_buf);
+    let mut decoder = PackBitsStream::new(compressed);
+    display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |_, row_buf| {
+        row_buf.fill(0xFF);
+        decoder.fill(row_buf);
     })
 }
 
@@ -499,9 +553,10 @@ where
         return Err(HalError::InvalidParam);
     }
     let compressed = &book_bytes[start..end];
-    display.write_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |row, row_buf| {
-        let _ = row;
-        stream_compressed_row(compressed, row as usize, row_buf);
+    let mut decoder = PackBitsStream::new(compressed);
+    display.write_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |_, row_buf| {
+        row_buf.fill(0xFF);
+        decoder.fill(row_buf);
     })
 }
 

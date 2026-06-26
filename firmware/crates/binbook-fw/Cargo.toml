@@ -23,6 +23,7 @@ firmware-bin = [
     "dep:esp-println",
 ]
 debug-log = []
+chunk-dirty-probe = []
 
 [[bin]]
 name = "binbook-fw"
