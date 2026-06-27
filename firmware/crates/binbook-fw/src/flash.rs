@@ -5,6 +5,8 @@ pub const STORAGE_SIZE: u32 = 192 * 1024;
 pub const MAX_FILE_SIZE: u32 = 180 * 1024;
 pub const MAX_FILES: usize = 8;
 pub const FILE_ENTRY_SIZE: usize = 44;
+pub const CRASH_SECTOR_SIZE: u32 = 4096;
+pub const CRASH_SECTOR_OFFSET: u32 = STORAGE_OFFSET + STORAGE_SIZE - CRASH_SECTOR_SIZE;
 
 const FILE_TABLE_OFFSET: u32 = 0;
 const VALID_ENTRY: u8 = 0x00;
