@@ -64,9 +64,14 @@ name = "binbook-cli"
 version = "0.1.0"
 dependencies = [
  "binbook",
+ "binbook-diagnostic-protocol",
  "clap",
  "serialport",
 ]
+
+[[package]]
+name = "binbook-diagnostic-protocol"
+version = "0.1.0"
 
 [[package]]
 name = "bitflags"
