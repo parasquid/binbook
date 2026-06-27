@@ -61,6 +61,7 @@ Rules:
 - For hardware, USB, serial, flashing, monitor, SD-card, block-device, or mounted-media work, never treat sandboxed `/dev`, `/run/media`, mount, or port visibility as evidence. Do not run a sandboxed "quick check" first. Use a single escalated command up front, or clearly state that host/device access was not checked.
 - If a hardware or serial command is part of the requested verification, run the actual host-bound command with escalation instead of substituting a sandboxed existence check. Only report "not visible", "not connected", or "blocked" after an escalated host check fails.
 - Never skip a verification step by preemptively assuming it will fail in the sandbox. Run the command and let the escalation mechanism handle access. The only valid reason to skip a step is if the plan or user explicitly says it is out of scope.
+- For agent-driven Xteink X4 device verification, follow [`docs/reference/xteink-x4-agent-device-verification.md`](docs/reference/xteink-x4-agent-device-verification.md) as the authoritative sequential runbook.
 - Install/sync dependencies with:
 
 ```bash

@@ -179,6 +179,8 @@ This build logs `[PROBE] chunk_dirty_window` lines over serial and uses the chun
 
 ## Diagnostic console build
 
+For complete AI-agent hardware verification, including discriminating state checks, visual gates, stream tests, failure handling, and evidence requirements, follow [`xteink-x4-agent-device-verification.md`](xteink-x4-agent-device-verification.md).
+
 To build firmware with the diagnostic serial console enabled:
 
 ```bash
