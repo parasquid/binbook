@@ -1,5 +1,5 @@
 use ssd1677_driver::Ssd1677Driver;
-use xteink_hal::{HalResult, HalError, InputPin, OutputPin, RefreshMode, Spi};
+use xteink_hal::{HalError, HalResult, InputPin, OutputPin, RefreshMode, Spi};
 
 use crate::refresh::{RefreshDecision, RefreshPolicy, RefreshState, X4_CHUNK_COUNT};
 
@@ -482,7 +482,10 @@ where
     BUSY: InputPin,
 {
     let open = book.open_info();
-    let pd = &book.page_info(target_page).map_err(|_| HalError::InvalidParam)?.plane_dir;
+    let pd = &book
+        .page_info(target_page)
+        .map_err(|_| HalError::InvalidParam)?
+        .plane_dir;
 
     display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
     stream_plane_chunks_to_red(display, book_bytes, open.page_data_offset, &pd, 0, delay)?;
@@ -506,7 +509,10 @@ where
     BUSY: InputPin,
 {
     let open = book.open_info();
-    let pd = &book.page_info(target_page).map_err(|_| HalError::InvalidParam)?.plane_dir;
+    let pd = &book
+        .page_info(target_page)
+        .map_err(|_| HalError::InvalidParam)?
+        .plane_dir;
 
     display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
     stream_plane_chunks_to_red(display, book_bytes, open.page_data_offset, &pd, 2, delay)?;
@@ -532,8 +538,14 @@ where
     BUSY: InputPin,
 {
     let open = book.open_info();
-    let prev_pd = &book.page_info(prev_page).map_err(|_| HalError::InvalidParam)?.plane_dir;
-    let target_pd = &book.page_info(target_page).map_err(|_| HalError::InvalidParam)?.plane_dir;
+    let prev_pd = &book
+        .page_info(prev_page)
+        .map_err(|_| HalError::InvalidParam)?
+        .plane_dir;
+    let target_pd = &book
+        .page_info(target_page)
+        .map_err(|_| HalError::InvalidParam)?
+        .plane_dir;
 
     for chunk_idx in 0..X4_CHUNK_COUNT {
         if changed_mask & (1 << chunk_idx) == 0 {
@@ -542,11 +554,21 @@ where
         let y = chunk_idx as u16 * X4_CHUNK_ROWS;
         display.set_window(0, y, DISPLAY_WIDTH, X4_CHUNK_ROWS)?;
         stream_single_chunk_to_red(
-            display, book_bytes, open.page_data_offset, prev_pd, 2, chunk_idx,
+            display,
+            book_bytes,
+            open.page_data_offset,
+            prev_pd,
+            2,
+            chunk_idx,
         )?;
         display.set_window(0, y, DISPLAY_WIDTH, X4_CHUNK_ROWS)?;
         stream_single_chunk_to_black(
-            display, book_bytes, open.page_data_offset, target_pd, 2, chunk_idx,
+            display,
+            book_bytes,
+            open.page_data_offset,
+            target_pd,
+            2,
+            chunk_idx,
         )?;
     }
 
@@ -569,13 +591,33 @@ where
     BUSY: InputPin,
 {
     let open = book.open_info();
-    let prev_pd = &book.page_info(prev_page).map_err(|_| HalError::InvalidParam)?.plane_dir;
-    let target_pd = &book.page_info(target_page).map_err(|_| HalError::InvalidParam)?.plane_dir;
+    let prev_pd = &book
+        .page_info(prev_page)
+        .map_err(|_| HalError::InvalidParam)?
+        .plane_dir;
+    let target_pd = &book
+        .page_info(target_page)
+        .map_err(|_| HalError::InvalidParam)?
+        .plane_dir;
 
     display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
-    stream_plane_chunks_to_red(display, book_bytes, open.page_data_offset, prev_pd, 2, delay)?;
+    stream_plane_chunks_to_red(
+        display,
+        book_bytes,
+        open.page_data_offset,
+        prev_pd,
+        2,
+        delay,
+    )?;
     display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
-    stream_plane_chunks_to_black(display, book_bytes, open.page_data_offset, target_pd, 2, delay)?;
+    stream_plane_chunks_to_black(
+        display,
+        book_bytes,
+        open.page_data_offset,
+        target_pd,
+        2,
+        delay,
+    )?;
     display.refresh_with_delay(RefreshMode::Partial, delay)
 }
 
@@ -823,4 +865,90 @@ fn update_repeat_run(value: u8, remaining: usize, consumed: usize) -> Option<Run
         .checked_sub(consumed)
         .filter(|&remaining| remaining > 0)
         .map(|remaining| Run::Repeat { value, remaining })
+}
+
+#[cfg(feature = "diagnostic-console")]
+pub fn display_full_refresh_current<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    delay: &dyn xteink_hal::Delay,
+    panel_mode: &mut PanelMode,
+    current_page: u32,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    ensure_grayscale_mode(display, delay, panel_mode)?;
+    stream_full_grayscale(display, book, book_bytes, current_page, delay)
+}
+
+#[cfg(feature = "diagnostic-console")]
+pub fn display_clear_white_probe<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    delay: &dyn xteink_hal::Delay,
+    panel_mode: &mut PanelMode,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    ensure_bw_mode(display, delay, panel_mode)?;
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    display.write_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |_, row_buf| {
+        row_buf.fill(0xFF);
+    })?;
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |_, row_buf| {
+        row_buf.fill(0xFF);
+    })?;
+    display.refresh_with_delay(RefreshMode::Full, delay)
+}
+
+#[cfg(feature = "diagnostic-console")]
+pub fn display_window_corners_probe<SPI, CS, DC, RST, BUSY>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    delay: &dyn xteink_hal::Delay,
+    panel_mode: &mut PanelMode,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    ensure_bw_mode(display, delay, panel_mode)?;
+
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    display.write_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |_, row_buf| {
+        row_buf.fill(0xFF);
+    })?;
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |_, row_buf| {
+        row_buf.fill(0xFF);
+    })?;
+
+    let corners = smoke_probe_windows();
+    for &(x, y, w, h) in &corners {
+        display.set_window(x, y, w, h)?;
+        display.write_frame_rows::<DISPLAY_ROW_BYTES>(h, |_, row_buf| {
+            row_buf.fill(0x00);
+        })?;
+    }
+    for &(x, y, w, h) in &corners {
+        display.set_window(x, y, w, h)?;
+        display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(h, |_, row_buf| {
+            row_buf.fill(0x00);
+        })?;
+    }
+
+    display.refresh_with_delay(RefreshMode::Full, delay)
 }

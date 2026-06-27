@@ -27,6 +27,16 @@ pub fn page_turn_for_button(button: Button) -> Option<PageTurn> {
     }
 }
 
+pub fn target_page_for_button(button: Button) -> PageTurn {
+    match button {
+        Button::Right | Button::Down => PageTurn::Next,
+        Button::Left | Button::Up => PageTurn::Previous,
+        Button::Back => PageTurn::First,
+        Button::Select => PageTurn::Last,
+        Button::Power => PageTurn::Next,
+    }
+}
+
 pub fn apply_page_turn(current_page: u32, page_count: u32, turn: PageTurn) -> u32 {
     if page_count == 0 {
         return 0;

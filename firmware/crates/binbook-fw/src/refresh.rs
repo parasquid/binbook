@@ -106,4 +106,14 @@ impl RefreshState {
     pub fn previous_page(&self) -> Option<u32> {
         self.previous_page
     }
+
+    /// Reset refresh history after a diagnostic probe has overwritten the panel.
+    ///
+    /// Probes bypass the normal decide/record_success path, so the state must be
+    /// explicitly cleared to force the next real page turn through FullGrayscale.
+    pub fn invalidate(&mut self) {
+        self.previous_page = None;
+        self.fast_refresh_count = 0;
+        self.bw_differential_ready = false;
+    }
 }
