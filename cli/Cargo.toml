@@ -9,7 +9,7 @@ description = "CLI tool for BinBook device management"
 clap = { version = "4", features = ["derive"] }
 binbook = { path = "../rust" }
 binbook-diagnostic-protocol = { path = "../firmware/crates/binbook-diagnostic-protocol" }
-serialport = { version = "4", optional = true }
+serialport = { version = "4", optional = true, default-features = false }
 
 [features]
 serial-device = ["dep:serialport"]

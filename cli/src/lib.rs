@@ -374,6 +374,308 @@ pub mod serial_transport {
         }
         Err("response timeout without matching sequence".into())
     }
+
+    pub fn send_batch_and_receive_io<T: Read + Write>(
+        io: &mut T,
+        requests: &[u8],
+        expected_opcode: Opcode,
+        expected_sequences: &[u16],
+        timeout: Duration,
+    ) -> Result<Vec<Vec<u8>>, String> {
+        for (index, &sequence) in expected_sequences.iter().enumerate() {
+            if expected_sequences[..index].contains(&sequence) {
+                return Err(format!("duplicate expected sequence {sequence}"));
+            }
+        }
+
+        io.write_all(requests)
+            .map_err(|e| format!("write failed: {e}"))?;
+        io.flush().map_err(|e| format!("flush failed: {e}"))?;
+
+        let deadline = Instant::now() + timeout;
+        let mut buffered = Vec::new();
+        let mut chunk = [0u8; 256];
+        let mut responses: Vec<Option<Vec<u8>>> = vec![None; expected_sequences.len()];
+
+        while Instant::now() < deadline {
+            match io.read(&mut chunk) {
+                Ok(0) => std::thread::yield_now(),
+                Ok(count) => buffered.extend_from_slice(&chunk[..count]),
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::TimedOut
+                        || error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => return Err(format!("read failed: {error}")),
+            }
+            while let Some(end) = buffered.iter().position(|&byte| byte == FRAME_DELIMITER) {
+                let frame: Vec<u8> = buffered.drain(..=end).collect();
+                if frame.len() > MAX_FRAME_BYTES {
+                    continue;
+                }
+                let mut payload = [0u8; MAX_FRAME_BYTES];
+                let Ok((header, _)) = decode_frame(&frame, &mut payload) else {
+                    continue;
+                };
+
+                let Some(expected_index) = expected_sequences
+                    .iter()
+                    .position(|&sequence| sequence == header.sequence)
+                else {
+                    continue;
+                };
+
+                if header.kind != FrameKind::Response {
+                    return Err("matching frame is not a response".into());
+                }
+                if header.opcode != expected_opcode {
+                    return Err(format!("unexpected opcode {:?}", header.opcode));
+                }
+                if header.status != Status::Ok {
+                    return Err(format!("device returned {:?}", header.status));
+                }
+                if responses[expected_index].is_some() {
+                    return Err(format!("duplicate sequence {}", header.sequence));
+                }
+                responses[expected_index] = Some(frame);
+                if responses.iter().all(Option::is_some) {
+                    return Ok(
+                        responses
+                            .into_iter()
+                            .map(|frame| frame.expect("all expected sequences present"))
+                            .collect(),
+                    );
+                }
+            }
+            if buffered.len() > MAX_FRAME_BYTES {
+                if let Some(end) = buffered.iter().position(|&byte| byte == FRAME_DELIMITER) {
+                    buffered.drain(..=end);
+                } else {
+                    buffered.clear();
+                }
+            }
+        }
+
+        let missing: Vec<String> = expected_sequences
+            .iter()
+            .zip(responses.iter())
+            .filter(|(_, response)| response.is_none())
+            .map(|(sequence, _)| sequence.to_string())
+            .collect();
+        if missing.is_empty() {
+            Err("response timeout".into())
+        } else {
+            Err(format!("response timeout missing sequences {}", missing.join(",")))
+        }
+    }
+}
+
+#[cfg(feature = "serial-device")]
+pub mod exercise {
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+
+    use binbook_diagnostic_protocol::{KeyCode, Opcode};
+
+    use crate::{diag_protocol, serial_transport};
+
+    const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+    const LOG_BUDGET: u16 = 496;
+
+    pub fn run_deferred_gray(port: &str) -> Result<(), String> {
+        let mut session = serialport::new(port, 115_200)
+            .timeout(Duration::from_secs(2))
+            .open()
+            .map_err(|e| format!("Failed to open {port}: {e}"))?;
+        run_deferred_gray_io(&mut session, port)
+    }
+
+    pub fn run_deferred_gray_io<T: Read + Write>(
+        io: &mut T,
+        _port: &str,
+    ) -> Result<(), String> {
+        let start = Instant::now();
+        let mut cursor = 0u32;
+
+        let page_zero = diag_protocol::page_goto_request(1, 0);
+        validate_text(
+            &serial_transport::send_and_receive_io(
+                io,
+                &page_zero,
+                Opcode::Page,
+                1,
+                REQUEST_TIMEOUT,
+            )?,
+            Opcode::Page,
+            1,
+            "current_page=0",
+        )?;
+        phase("page-0 baseline", start);
+
+        let status = diag_protocol::status_request(2);
+        validate_text(
+            &serial_transport::send_and_receive_io(
+                io,
+                &status,
+                Opcode::Status,
+                2,
+                REQUEST_TIMEOUT,
+            )?,
+            Opcode::Status,
+            2,
+            "current_page=0",
+        )?;
+        phase("status baseline", start);
+
+        let clear = diag_protocol::log_clear_request(3);
+        validate_text(
+            &serial_transport::send_and_receive_io(
+                io,
+                &clear,
+                Opcode::LogClear,
+                3,
+                REQUEST_TIMEOUT,
+            )?,
+            Opcode::LogClear,
+            3,
+            "record_count=0",
+        )?;
+        phase("clear logs", start);
+
+        let key_right = diag_protocol::key_request(4, KeyCode::Right);
+        validate_text(
+            &serial_transport::send_and_receive_io(
+                io,
+                &key_right,
+                Opcode::Key,
+                4,
+                REQUEST_TIMEOUT,
+            )?,
+            Opcode::Key,
+            4,
+            "ok",
+        )?;
+        phase("prime gray", start);
+
+        let refresh_poll = diag_protocol::log_get_request(5, cursor, LOG_BUDGET);
+        let refresh_response = serial_transport::send_and_receive_io(
+            io,
+            &refresh_poll,
+            Opcode::LogGet,
+            5,
+            REQUEST_TIMEOUT,
+        )?;
+        let refresh_text = validate_text(&refresh_response, Opcode::LogGet, 5, "REFRESH_PHASE")?;
+        if !refresh_text.contains("REFRESH_PHASE") {
+            return Err("missing REFRESH_PHASE event".into());
+        }
+        cursor = next_cursor(&refresh_text)?;
+        phase("gray refreshing", start);
+
+        let mut batched = Vec::new();
+        for (sequence, key) in [(6, KeyCode::Right), (7, KeyCode::Right), (8, KeyCode::Left)] {
+            batched.extend_from_slice(&diag_protocol::key_request(sequence, key));
+        }
+        let batch_responses = serial_transport::send_batch_and_receive_io(
+            io,
+            &batched,
+            Opcode::Key,
+            &[6, 7, 8],
+            REQUEST_TIMEOUT,
+        )?;
+        for (frame, sequence) in batch_responses.into_iter().zip([6u16, 7, 8]) {
+            validate_text(&frame, Opcode::Key, sequence, "ok")?;
+        }
+        phase("batched turns", start);
+
+        let reseed_poll = diag_protocol::log_get_request(9, cursor, LOG_BUDGET);
+        let reseed_response =
+            serial_transport::send_and_receive_io(io, &reseed_poll, Opcode::LogGet, 9, REQUEST_TIMEOUT)?;
+        let reseed_text = validate_text(&reseed_response, Opcode::LogGet, 9, "RESEED_COMPLETE")?;
+        if !reseed_text.contains("RESEED_COMPLETE") {
+            return Err("missing RESEED_COMPLETE event".into());
+        }
+        cursor = next_cursor(&reseed_text)?;
+        phase("reseed complete", start);
+
+        let key_right = diag_protocol::key_request(10, KeyCode::Right);
+        validate_text(
+            &serial_transport::send_and_receive_io(
+                io,
+                &key_right,
+                Opcode::Key,
+                10,
+                REQUEST_TIMEOUT,
+            )?,
+            Opcode::Key,
+            10,
+            "ok",
+        )?;
+        phase("final turn", start);
+
+        let final_status = diag_protocol::status_request(11);
+        let status_text = validate_text(
+            &serial_transport::send_and_receive_io(
+                io,
+                &final_status,
+                Opcode::Status,
+                11,
+                REQUEST_TIMEOUT,
+            )?,
+            Opcode::Status,
+            11,
+            "current_page=3",
+        )?;
+        if !status_text.contains("last_error=0") {
+            return Err("final status should report last_error=0".into());
+        }
+        phase("final status", start);
+
+        let final_logs = diag_protocol::log_get_request(12, cursor, LOG_BUDGET);
+        let final_text =
+            validate_text(&serial_transport::send_and_receive_io(io, &final_logs, Opcode::LogGet, 12, REQUEST_TIMEOUT)?, Opcode::LogGet, 12, "TURN_QUEUED")?;
+        for marker in ["TURN_QUEUED", "TURN_DEQUEUED", "RESEED_START", "RESEED_COMPLETE"] {
+            if !final_text.contains(marker) {
+                return Err(format!("missing {marker} event"));
+            }
+        }
+        phase("final logs", start);
+
+        Ok(())
+    }
+
+    fn validate_text(
+        frame: &[u8],
+        opcode: Opcode,
+        sequence: u16,
+        expected: &str,
+    ) -> Result<String, String> {
+        let text = diag_protocol::format_response(frame, opcode, sequence)?;
+        if !text.contains(expected) {
+            return Err(format!("missing expected marker {expected}"));
+        }
+        Ok(text)
+    }
+
+    fn next_cursor(text: &str) -> Result<u32, String> {
+        let marker = "next_cursor=";
+        let start = text
+            .find(marker)
+            .ok_or_else(|| "missing next_cursor".to_string())?
+            + marker.len();
+        let end = text[start..]
+            .find(|c: char| !c.is_ascii_digit())
+            .map(|index| start + index)
+            .unwrap_or(text.len());
+        text[start..end]
+            .parse::<u32>()
+            .map_err(|e| format!("invalid next_cursor: {e}"))
+    }
+
+    fn phase(name: &str, start: Instant) {
+        println!(
+            "[exercise] phase={name} elapsed_ms={}",
+            start.elapsed().as_millis()
+        );
+    }
 }
 
 pub mod protocol {
@@ -472,6 +774,18 @@ pub enum DiagCommand {
         port: String,
         #[command(subcommand)]
         probe: ProbeCommand,
+    },
+    Exercise {
+        #[command(subcommand)]
+        exercise: ExerciseCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ExerciseCommand {
+    DeferredGray {
+        #[arg(short, long)]
+        port: String,
     },
 }
 

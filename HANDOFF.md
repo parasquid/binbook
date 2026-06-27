@@ -4,7 +4,7 @@ Date: 2026-06-28
 
 ## Current State
 
-Task 5 is complete on host verification and ready to commit. Tasks 1 through 4 are complete and verified on host tests and target builds.
+Task 6 is complete on host verification and ready to commit. Tasks 1 through 5 are complete and verified on host tests and target builds.
 
 Implemented so far:
 
@@ -39,6 +39,13 @@ Implemented so far:
   - Added stable nonzero event codes for deferred-gray diagnostics.
 - `cli/src/lib.rs`
   - Added CLI event-name formatting for the new deferred-gray diagnostic events.
+  - Added `diag exercise deferred-gray` parsing and the deferred-gray exercise runner that keeps one serial session open, validates page/status/log responses, and uses batched key transport for the queued turns.
+- `cli/src/main.rs`
+  - Routed `diag exercise deferred-gray` to the new exercise runner.
+- `cli/tests/protocol.rs`
+  - Added parser coverage for the deferred-gray exercise subcommand.
+- `cli/tests/hardware_diagnostic.rs`
+  - Added a scripted fake-serial exercise harness and an ignored live-hardware wrapper for the deferred-gray flow.
 
 Host verification:
 
@@ -56,6 +63,10 @@ Host verification:
 - `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo check --offline -p binbook-fw --features firmware-bin,diagnostic-console --target riscv32imc-unknown-none-elf`
 - `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console --target riscv32imc-unknown-none-elf --release`
 - `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console,debug-log --target riscv32imc-unknown-none-elf --release`
+- `CARGO_HOME=/tmp/binbook-cargo-home cargo test --features serial-device deferred_gray_exercise -- --nocapture`
+- `CARGO_HOME=/tmp/binbook-cargo-home cargo test --features serial-device --test hardware_diagnostic -- --list`
+- `CARGO_HOME=/tmp/binbook-cargo-home cargo test`
+- `CARGO_HOME=/tmp/binbook-cargo-home cargo test --features serial-device`
 
 The temp `CARGO_HOME` was required so Cargo could unpack cached crates into a writable registry src directory. All verification commands passed.
 
@@ -63,4 +74,4 @@ No hardware flashing, serial capture, or webcam verification has been run yet. T
 
 ## Next Work
 
-Continue with Task 6: add the autonomous deferred-gray exercise command, then proceed through the remaining host-verification and hardware-verification tasks.
+Continue with Task 7: add compile-time probe selection and complete host verification, then proceed through docs and hardware verification.

@@ -3,9 +3,9 @@
 use std::io::{self, Read, Write};
 use std::time::Duration;
 
-use binbook_cli::serial_transport::send_and_receive_io;
+use binbook_cli::serial_transport::{send_and_receive_io, send_batch_and_receive_io};
 use binbook_diagnostic_protocol::{
-    encode_frame, FrameHeader, FrameKind, Opcode, Status, MAX_FRAME_BYTES,
+    decode_frame, encode_frame, FrameHeader, FrameKind, KeyCode, Opcode, Status, MAX_FRAME_BYTES,
 };
 
 struct FakeIo {
@@ -47,6 +47,41 @@ fn response(opcode: Opcode, sequence: u16, status: Status) -> Vec<u8> {
     let mut buf = [0u8; MAX_FRAME_BYTES];
     let len = encode_frame(&header, &[], &mut buf).unwrap();
     buf[..len].to_vec()
+}
+
+fn key_batch(requests: &[(u16, KeyCode)]) -> Vec<u8> {
+    let mut batch = Vec::new();
+    for &(sequence, key) in requests {
+        batch.extend_from_slice(&binbook_cli::diag_protocol::key_request(sequence, key));
+    }
+    batch
+}
+
+fn decoded_sequences(frames: &[Vec<u8>]) -> Vec<u16> {
+    frames
+        .iter()
+        .map(|frame| {
+            let mut payload = [0u8; MAX_FRAME_BYTES];
+            let (header, _) = decode_frame(frame, &mut payload).unwrap();
+            header.sequence
+        })
+        .collect()
+}
+
+fn responses_for(sequences: &[u16]) -> Vec<Vec<u8>> {
+    let mut frames = Vec::new();
+    frames.push(response(Opcode::Status, 9, Status::Ok));
+    for &sequence in sequences {
+        frames.push(response(Opcode::Key, sequence, Status::Ok));
+    }
+
+    let mut fragments = Vec::new();
+    for frame in frames {
+        let split = (frame.len() / 2).max(1).min(frame.len().saturating_sub(1));
+        fragments.push(frame[..split].to_vec());
+        fragments.push(frame[split..].to_vec());
+    }
+    fragments
 }
 
 #[test]
@@ -126,5 +161,136 @@ fn serial_transport_times_out_without_matching_response() {
         Duration::from_millis(2),
     )
     .unwrap_err();
+    assert!(error.contains("timeout"));
+}
+
+#[test]
+fn batch_transport_collects_every_sequence_checked_response() {
+    let requests = key_batch(&[(10, KeyCode::Right), (11, KeyCode::Right), (12, KeyCode::Left)]);
+    let mut io = FakeIo {
+        reads: responses_for(&[10, 11, 12]),
+        index: 0,
+        written: vec![],
+    };
+
+    let responses = send_batch_and_receive_io(
+        &mut io,
+        &requests,
+        Opcode::Key,
+        &[10, 11, 12],
+        Duration::from_secs(5),
+    )
+    .unwrap();
+
+    assert_eq!(io.written, requests);
+    assert_eq!(decoded_sequences(&responses), [10, 11, 12]);
+}
+
+#[test]
+fn batch_transport_rejects_wrong_opcode_for_matching_sequence() {
+    let requests = key_batch(&[(10, KeyCode::Right)]);
+    let mut io = FakeIo {
+        reads: vec![response(Opcode::Page, 10, Status::Ok)],
+        index: 0,
+        written: vec![],
+    };
+
+    let error = send_batch_and_receive_io(
+        &mut io,
+        &requests,
+        Opcode::Key,
+        &[10],
+        Duration::from_secs(2),
+    )
+    .unwrap_err();
+
+    assert!(error.contains("opcode"));
+}
+
+#[test]
+fn batch_transport_rejects_duplicate_sequence() {
+    let requests = key_batch(&[(10, KeyCode::Right), (11, KeyCode::Left)]);
+    let mut io = FakeIo {
+        reads: vec![
+            response(Opcode::Key, 10, Status::Ok),
+            response(Opcode::Key, 10, Status::Ok),
+            response(Opcode::Key, 11, Status::Ok),
+        ],
+        index: 0,
+        written: vec![],
+    };
+
+    let error = send_batch_and_receive_io(
+        &mut io,
+        &requests,
+        Opcode::Key,
+        &[10, 11],
+        Duration::from_secs(2),
+    )
+    .unwrap_err();
+
+    assert!(error.contains("duplicate"));
+}
+
+#[test]
+fn batch_transport_rejects_missing_sequence() {
+    let requests = key_batch(&[(10, KeyCode::Right), (11, KeyCode::Left)]);
+    let mut io = FakeIo {
+        reads: vec![response(Opcode::Key, 10, Status::Ok)],
+        index: 0,
+        written: vec![],
+    };
+
+    let error = send_batch_and_receive_io(
+        &mut io,
+        &requests,
+        Opcode::Key,
+        &[10, 11],
+        Duration::from_millis(20),
+    )
+    .unwrap_err();
+
+    assert!(error.contains("missing"));
+}
+
+#[test]
+fn batch_transport_rejects_non_ok_status() {
+    let requests = key_batch(&[(10, KeyCode::Right)]);
+    let mut io = FakeIo {
+        reads: vec![response(Opcode::Key, 10, Status::InternalError)],
+        index: 0,
+        written: vec![],
+    };
+
+    let error = send_batch_and_receive_io(
+        &mut io,
+        &requests,
+        Opcode::Key,
+        &[10],
+        Duration::from_secs(2),
+    )
+    .unwrap_err();
+
+    assert!(error.contains("InternalError"));
+}
+
+#[test]
+fn batch_transport_times_out_without_all_sequences() {
+    let requests = key_batch(&[(10, KeyCode::Right), (11, KeyCode::Left)]);
+    let mut io = FakeIo {
+        reads: vec![response(Opcode::Key, 10, Status::Ok)],
+        index: 0,
+        written: vec![],
+    };
+
+    let error = send_batch_and_receive_io(
+        &mut io,
+        &requests,
+        Opcode::Key,
+        &[10, 11],
+        Duration::from_millis(20),
+    )
+    .unwrap_err();
+
     assert!(error.contains("timeout"));
 }

@@ -1,4 +1,4 @@
-use binbook_cli::{Cli, Commands, DiagCommand, PageAction, ProbeCommand};
+use binbook_cli::{Cli, Commands, DiagCommand, ExerciseCommand, PageAction, ProbeCommand};
 use clap::Parser;
 
 #[cfg(feature = "serial-device")]
@@ -7,6 +7,18 @@ fn run_diag(cmd: DiagCommand) {
     use binbook_cli::serial_transport::SerialSession;
     use binbook_diagnostic_protocol::{KeyCode, Opcode};
     use std::time::Duration;
+
+    if let DiagCommand::Exercise { exercise } = &cmd {
+        match exercise {
+            ExerciseCommand::DeferredGray { port } => {
+                if let Err(error) = binbook_cli::exercise::run_deferred_gray(port) {
+                    eprintln!("Communication error: {error}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+        }
+    }
 
     let (port, frame, expected_opcode, timeout) = match &cmd {
         DiagCommand::Hello { port } => (
@@ -113,6 +125,7 @@ fn run_diag(cmd: DiagCommand) {
                 Duration::from_secs(60),
             )
         }
+        DiagCommand::Exercise { .. } => unreachable!("exercise handled above"),
     };
 
     let mut session = match SerialSession::open(&port) {
@@ -140,6 +153,7 @@ fn run_diag(cmd: DiagCommand) {
 
 #[cfg(not(feature = "serial-device"))]
 fn run_diag(cmd: DiagCommand) {
+    let _ = cmd;
     eprintln!("serial-device feature is not enabled. Rebuild with --features serial-device.");
     std::process::exit(1);
 }

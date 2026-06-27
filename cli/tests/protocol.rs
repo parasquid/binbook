@@ -479,6 +479,23 @@ fn diag_status_subcommand_parses() {
 }
 
 #[test]
+fn deferred_gray_exercise_subcommand_parses() {
+    let cli = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "exercise",
+        "deferred-gray",
+        "--port",
+        "/dev/ttyACM0",
+    ]);
+    assert!(
+        cli.is_ok(),
+        "diag exercise deferred-gray should parse: {:?}",
+        cli.err()
+    );
+}
+
+#[test]
 fn diag_logs_since_subcommand_parses() {
     let cli = binbook_cli::Cli::try_parse_from([
         "binbook-cli",
