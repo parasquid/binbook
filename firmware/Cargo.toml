@@ -3,6 +3,7 @@ members = [
     "crates/xteink-hal",
     "crates/ssd1677-driver",
     "crates/binbook-fw",
+    "crates/binbook-diagnostic-protocol",
 ]
 resolver = "2"
 
