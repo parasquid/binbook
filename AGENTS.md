@@ -55,6 +55,9 @@ Rules:
   unless the user explicitly asks.
 - Use `cargo` for Rust firmware work.
 - Do not trial-run commands in the sandbox when repo guidance or prior evidence shows they need host access. Run known host-bound commands with escalation up front, including `git add`, `git commit`, history rewrites, `git push`/`gh`, hardware flashing or serial access, and dependency/network fetches.
+- Treat sandbox process or mount failures as host-access failures, not as evidence that workspace files are missing. If a sandboxed command fails to start (for example, `CreateProcess: No such file or directory`) or a sandboxed read/write/patch reports a workspace path missing while an escalated host check can see it, immediately rerun the required read, write, patch, test, or verification with escalation.
+- Do not stop work merely because the sandbox-local `apply_patch` path is broken. Use an escalated patch-capable host command, preserve the same narrow file scope, and verify the resulting diff. Report a blocker only if the escalated host operation also fails.
+- After the first confirmed sandbox process or workspace-mount failure in a session, do not retry equivalent sandboxed commands. Escalate subsequent workspace operations for that session until a sandboxed command is known to work again.
 - For hardware, USB, serial, flashing, monitor, SD-card, block-device, or mounted-media work, never treat sandboxed `/dev`, `/run/media`, mount, or port visibility as evidence. Do not run a sandboxed "quick check" first. Use a single escalated command up front, or clearly state that host/device access was not checked.
 - If a hardware or serial command is part of the requested verification, run the actual host-bound command with escalation instead of substituting a sandboxed existence check. Only report "not visible", "not connected", or "blocked" after an escalated host check fails.
 - Never skip a verification step by preemptively assuming it will fail in the sandbox. Run the command and let the escalation mechanism handle access. The only valid reason to skip a step is if the plan or user explicitly says it is out of scope.
@@ -151,6 +154,42 @@ ad-hoc. Do not add it to `pyproject.toml` — it's only needed for hardware seri
 - Test any path that reads, copies, streams, or handles a payload larger than obvious scratch buffers — fixtures that fit the buffer are no-op tests.
 - Keep `cargo clean && cargo test` as the reliable baseline check; stale builds mask real failures.
 
+### Completion Evidence Discipline (MANDATORY)
+
+- Do not infer feature completion from successful compilation, passing unit tests,
+  command parsing, or an `Ok`/acknowledgement response.
+- Verify every acceptance criterion by observing its required outcome. A successful
+  response proves only transport unless the response payload and resulting state
+  are also validated.
+- Use discriminating test preconditions. For example, test `goto 0` from a nonzero
+  page, clear a nonempty log, and retrieve logs after generating known events.
+- For every command, verify:
+  1. request payload matches the protocol specification;
+  2. response opcode, sequence, status, and payload are correct;
+  3. expected state or hardware behavior occurred;
+  4. a follow-up query independently confirms the result.
+- Treat zero-length placeholder responses, ignored flags, no-op dispatch branches,
+  hard-coded status fields, and routed-but-unexecuted actions as incomplete.
+- Before declaring a plan complete, produce an acceptance matrix mapping every
+  requirement to its implementation path, automated test, and observed evidence.
+  Any requirement without all three remains incomplete.
+- Run feature-gated tests with the feature explicitly enabled. Default workspace
+  tests do not count as coverage for code excluded by `cfg(feature = ...)`.
+- Inspect implementation coverage for every specified opcode and option. Parser
+  tests alone do not demonstrate command behavior.
+- Hardware evidence must include exact commands, full relevant output, starting
+  state, ending state, and independently verified visible or queried effects.
+- `HANDOFF.md` must distinguish:
+  - verified behavior;
+  - transport-only acknowledgements;
+  - unverified visual results;
+  - known failures and incomplete requirements.
+- Never write `complete`, `passed`, or `all commands work` when any acceptance
+  criterion is unverified, returns placeholder data, or contradicts source code.
+- After writing completion documentation, perform a final adversarial review:
+  attempt to disprove each completion claim using source inspection and a test
+  whose initial state would expose a no-op.
+
 ### Hardware Verification Discipline (MANDATORY)
 
 **Hardware verification is NEVER optional for firmware tasks.** This is a hard gate, not a suggestion.
@@ -207,6 +246,8 @@ Required hardware verification steps for firmware tasks:
 ## Lessons Learned
 
 - Prefer empirical evidence over code analysis when debugging. Add diagnostics and run the code; tracing source files generates hypotheses, running confirms them.
+- When something doesn't work, write a minimal test to confirm your theory rather than spending time analyzing source code. Empirical evidence beats theoretical analysis every time.
+- **Stop going in circles.** If you've been analyzing the same code path for more than two iterations without making a concrete change, you are in a loop. Break out by: (1) adding a diagnostic print, (2) flashing/coding, (3) running the code and observing the actual output. Never theorize about what "might" be wrong when you can test it. A 30-second flash+serial capture gives more signal than 5 minutes of reading source files.
 - When porting struct layouts between languages, verify the packed byte layout matches the encoder exactly. Off-by-N layout mismatches produce plausible-looking but wrong values.
 - Compute expected output sizes from source metadata (pixel format, dimensions) rather than relying on output buffer length.
 - Read the docs before experimenting. Check existing tests, specs, and reference docs first; only build new fixtures when documented coverage is genuinely missing.

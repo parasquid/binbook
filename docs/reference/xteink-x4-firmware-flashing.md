@@ -176,3 +176,49 @@ cd firmware && RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nigh
 ```
 
 This build logs `[PROBE] chunk_dirty_window` lines over serial and uses the chunk-dirty refresh policy instead of the clean default.
+
+## Diagnostic console build
+
+To build firmware with the diagnostic serial console enabled:
+
+```bash
+cd firmware && RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console --target riscv32imc-unknown-none-elf --release
+```
+
+Flash with diagnostic console:
+
+```bash
+FW_FEATURES="firmware-bin,diagnostic-console" firmware/scripts/flash-xteink-x4-nav-probe.sh
+```
+
+The diagnostic console uses USB Serial/JTAG (`/dev/ttyACM0`) for COBS-framed binary protocol communication. Only one process can own the serial port at a time.
+
+The `diagnostic-console` feature is separate from `debug-log`. When both are
+enabled, the binary packet console owns USB Serial/JTAG and `dbgprintln!`
+compiles to a no-op; text output is not mirrored onto the packet stream. The
+combined build remains supported:
+
+```bash
+cd firmware && RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console,debug-log --target riscv32imc-unknown-none-elf --release
+```
+
+CLI commands for diagnostic console (requires `serial-device` feature):
+
+```bash
+cd cli
+SYSTEMD_PREFIX="$(brew --prefix systemd)" \
+PKG_CONFIG_PATH="$SYSTEMD_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH" \
+LIBRARY_PATH="$SYSTEMD_PREFIX/lib:$LIBRARY_PATH" \
+LD_LIBRARY_PATH="$SYSTEMD_PREFIX/lib:$LD_LIBRARY_PATH" \
+  cargo build --features serial-device
+binbook-cli diag hello --port /dev/ttyACM0
+binbook-cli diag key --port /dev/ttyACM0 RIGHT
+binbook-cli diag page --port /dev/ttyACM0 next
+binbook-cli diag page --port /dev/ttyACM0 goto 3
+binbook-cli diag status --port /dev/ttyACM0
+binbook-cli diag logs --port /dev/ttyACM0 --since 0
+binbook-cli diag logs --port /dev/ttyACM0 --clear
+binbook-cli diag crash --port /dev/ttyACM0
+binbook-cli diag crash --port /dev/ttyACM0 --clear
+binbook-cli diag probe --port /dev/ttyACM0 window-corners
+```
