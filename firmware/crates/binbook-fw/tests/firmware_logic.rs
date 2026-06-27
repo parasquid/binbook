@@ -43,6 +43,20 @@ fn diagnostic_console_feature_gate() {
 }
 
 #[test]
+fn firmware_runtime_uses_approved_async_configuration() {
+    let cargo = include_str!("../Cargo.toml");
+    let main_rs = include_str!("../src/main.rs");
+
+    assert!(cargo.contains("esp-rtos"));
+    assert!(cargo.contains("embassy-sync"));
+    assert!(main_rs.contains("DISPLAY_SPI_FREQUENCY_MHZ"));
+    assert!(!main_rs.contains("Rate::from_mhz(4)"));
+    assert!(main_rs.contains("input_task"));
+    assert!(main_rs.contains("display_task"));
+    assert!(main_rs.contains("diagnostic_task"));
+}
+
+#[test]
 fn decodes_adc_ladder_buttons() {
     assert_eq!(decode_buttons(500, 4095), Some(Button::Right));
     assert_eq!(decode_buttons(1000, 4095), Some(Button::Left));

@@ -5,6 +5,7 @@
 //! implementations.
 
 #![no_std]
+#![allow(async_fn_in_trait)]
 
 /// Error type for HAL operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +114,12 @@ pub trait Display {
 pub trait Delay {
     /// Wait for the specified number of milliseconds.
     fn ms(&self, ms: u32);
+}
+
+/// Async delay trait for executor-driven firmware tasks.
+pub trait AsyncDelay {
+    /// Wait for the specified number of milliseconds.
+    async fn ms(&self, ms: u32);
 }
 
 /// Button state.

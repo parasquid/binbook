@@ -99,20 +99,51 @@ where
         self.send_data(data)
     }
 
-    /// Initialize display with the Xteink X4 panel sequence.
-    pub fn init_with_delay(&mut self, delay: &dyn Delay) -> HalResult<()> {
+    /// Check whether the BUSY pin is currently asserted.
+    pub fn is_busy(&self) -> HalResult<bool> {
+        self.busy.is_high()
+    }
+
+    /// Trigger a refresh without waiting for BUSY to clear.
+    pub fn trigger_refresh(&mut self, mode: RefreshMode) -> HalResult<()> {
+        if matches!(mode, RefreshMode::Partial | RefreshMode::Grayscale) {
+            self.send_cmd_data(Ssd1677::DISPLAY_UPDATE_CTRL1, &[0x00, 0x00])?;
+        }
+
+        let ctrl = match mode {
+            RefreshMode::Full => Ssd1677::UPDATE_CTRL_NORMAL,
+            RefreshMode::Partial => Ssd1677::UPDATE_CTRL_FAST,
+            RefreshMode::Grayscale => Ssd1677::UPDATE_CTRL_GRAYSCALE,
+        };
+
+        self.send_cmd_data(Ssd1677::DISPLAY_UPDATE_CTRL2, &[ctrl])?;
+        self.send_cmd(Ssd1677::MASTER_ACTIVATION)
+    }
+
+    fn reset_display_with_delay(&mut self, delay: &dyn Delay) -> HalResult<()> {
         self.rst.set_high()?;
         delay.ms(20);
         self.rst.set_low()?;
         delay.ms(20);
         self.rst.set_high()?;
         delay.ms(200);
+        Ok(())
+    }
 
-        self.wait_ready_with_delay(delay)?;
+    async fn reset_display_async<D: xteink_hal::AsyncDelay + ?Sized>(
+        &mut self,
+        delay: &D,
+    ) -> HalResult<()> {
+        self.rst.set_high()?;
+        delay.ms(20).await;
+        self.rst.set_low()?;
+        delay.ms(20).await;
+        self.rst.set_high()?;
+        delay.ms(200).await;
+        Ok(())
+    }
 
-        self.send_cmd(Ssd1677::SW_RESET)?;
-        self.wait_ready_with_delay(delay)?;
-
+    fn init_bw_commands(&mut self) -> HalResult<()> {
         self.send_cmd_data(Ssd1677::TEMP_SENSOR_CTRL, &[0x80])?;
         self.send_cmd_data(Ssd1677::BOOSTER_SOFT_START, &[0xAE, 0xC7, 0xC3, 0xC0, 0x80])?;
         self.send_cmd_data(Ssd1677::DRIVER_OUTPUT_CTRL, &[0xDF, 0x01, 0x02])?;
@@ -129,20 +160,7 @@ where
         Ok(())
     }
 
-    /// Initialize display with the Xteink X4 four-level grayscale sequence.
-    pub fn init_grayscale_with_delay(&mut self, delay: &dyn Delay) -> HalResult<()> {
-        self.rst.set_high()?;
-        delay.ms(20);
-        self.rst.set_low()?;
-        delay.ms(20);
-        self.rst.set_high()?;
-        delay.ms(200);
-
-        self.wait_ready_with_delay(delay)?;
-
-        self.send_cmd(Ssd1677::SW_RESET)?;
-        self.wait_ready_with_delay(delay)?;
-
+    fn init_grayscale_commands(&mut self) -> HalResult<()> {
         self.send_cmd_data(Ssd1677::BOOSTER_SOFT_START, &[0xAE, 0xC7, 0xC3, 0xC0, 0x80])?;
         self.send_cmd_data(Ssd1677::DRIVER_OUTPUT_CTRL, &[0xDF, 0x01, 0x02])?;
         self.send_cmd_data(
@@ -163,6 +181,30 @@ where
         Ok(())
     }
 
+    /// Initialize display with the Xteink X4 panel sequence.
+    pub fn init_with_delay(&mut self, delay: &dyn Delay) -> HalResult<()> {
+        self.reset_display_with_delay(delay)?;
+
+        self.wait_ready_with_delay(delay)?;
+
+        self.send_cmd(Ssd1677::SW_RESET)?;
+        self.wait_ready_with_delay(delay)?;
+
+        self.init_bw_commands()
+    }
+
+    /// Initialize display with the Xteink X4 four-level grayscale sequence.
+    pub fn init_grayscale_with_delay(&mut self, delay: &dyn Delay) -> HalResult<()> {
+        self.reset_display_with_delay(delay)?;
+
+        self.wait_ready_with_delay(delay)?;
+
+        self.send_cmd(Ssd1677::SW_RESET)?;
+        self.wait_ready_with_delay(delay)?;
+
+        self.init_grayscale_commands()
+    }
+
     /// Wait for display ready with a bounded polling loop.
     pub fn wait_ready_with_delay(&mut self, delay: &dyn Delay) -> HalResult<()> {
         let mut timeout_ms = BUSY_TIMEOUT_MS;
@@ -174,6 +216,50 @@ where
             }
         }
         Ok(())
+    }
+
+    /// Wait for display ready using an async delay provider.
+    pub async fn wait_ready_async<D: xteink_hal::AsyncDelay + ?Sized>(
+        &mut self,
+        delay: &D,
+    ) -> HalResult<()> {
+        let mut timeout_ms = BUSY_TIMEOUT_MS;
+        while self.busy.is_high()? {
+            delay.ms(1).await;
+            timeout_ms -= 1;
+            if timeout_ms == 0 {
+                return Err(HalError::Timeout);
+            }
+        }
+        Ok(())
+    }
+
+    /// Initialize display with the Xteink X4 panel sequence using async delay.
+    pub async fn init_async<D: xteink_hal::AsyncDelay + ?Sized>(
+        &mut self,
+        delay: &D,
+    ) -> HalResult<()> {
+        self.reset_display_async(delay).await?;
+        self.wait_ready_async(delay).await?;
+
+        self.send_cmd(Ssd1677::SW_RESET)?;
+        self.wait_ready_async(delay).await?;
+
+        self.init_bw_commands()
+    }
+
+    /// Initialize display with the Xteink X4 four-level grayscale sequence using async delay.
+    pub async fn init_grayscale_async<D: xteink_hal::AsyncDelay + ?Sized>(
+        &mut self,
+        delay: &D,
+    ) -> HalResult<()> {
+        self.reset_display_async(delay).await?;
+        self.wait_ready_async(delay).await?;
+
+        self.send_cmd(Ssd1677::SW_RESET)?;
+        self.wait_ready_async(delay).await?;
+
+        self.init_grayscale_commands()
     }
 
     /// Set the RAM address window in SSD1677 physical pixel coordinates.
@@ -325,17 +411,18 @@ where
 
     /// Trigger a display refresh.
     pub fn refresh_with_delay(&mut self, mode: RefreshMode, delay: &dyn Delay) -> HalResult<()> {
-        let ctrl = match mode {
-            RefreshMode::Full => Ssd1677::UPDATE_CTRL_NORMAL,
-            RefreshMode::Partial => Ssd1677::UPDATE_CTRL_FAST,
-            RefreshMode::Grayscale => Ssd1677::UPDATE_CTRL_GRAYSCALE,
-        };
-        if matches!(mode, RefreshMode::Partial | RefreshMode::Grayscale) {
-            self.send_cmd_data(Ssd1677::DISPLAY_UPDATE_CTRL1, &[0x00, 0x00])?;
-        }
-        self.send_cmd_data(Ssd1677::DISPLAY_UPDATE_CTRL2, &[ctrl])?;
-        self.send_cmd(Ssd1677::MASTER_ACTIVATION)?;
+        self.trigger_refresh(mode)?;
         self.wait_ready_with_delay(delay)
+    }
+
+    /// Trigger a display refresh and wait asynchronously for the controller to become ready.
+    pub async fn refresh_async<D: xteink_hal::AsyncDelay + ?Sized>(
+        &mut self,
+        mode: RefreshMode,
+        delay: &D,
+    ) -> HalResult<()> {
+        self.trigger_refresh(mode)?;
+        self.wait_ready_async(delay).await
     }
 
     /// Clear display RAM to white, then perform a full refresh.
@@ -354,11 +441,16 @@ extern crate std;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::future::Future;
     use std::cell::RefCell;
+    use std::cell::Cell;
     use std::format;
+    use std::boxed::Box;
+    use std::pin::Pin;
     use std::rc::Rc;
     use std::string::String;
     use std::vec::Vec;
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
     #[derive(Debug, Default)]
     struct MockSpi {
@@ -404,11 +496,75 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct TracedBusyPin {
+        is_high: bool,
+        reads: Rc<Cell<usize>>,
+    }
+
+    impl InputPin for TracedBusyPin {
+        fn is_high(&self) -> HalResult<bool> {
+            self.reads.set(self.reads.get() + 1);
+            Ok(self.is_high)
+        }
+    }
+
     #[derive(Debug, Default)]
     struct MockDelay;
 
     impl Delay for MockDelay {
         fn ms(&self, _ms: u32) {}
+    }
+
+    fn noop_raw_waker() -> RawWaker {
+        unsafe fn clone(_: *const ()) -> RawWaker {
+            noop_raw_waker()
+        }
+
+        unsafe fn wake(_: *const ()) {}
+        unsafe fn wake_by_ref(_: *const ()) {}
+        unsafe fn drop(_: *const ()) {}
+
+        RawWaker::new(
+            core::ptr::null(),
+            &RawWakerVTable::new(clone, wake, wake_by_ref, drop),
+        )
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = unsafe { Waker::from_raw(noop_raw_waker()) };
+        let mut context = Context::from_waker(&waker);
+        let mut future = Box::pin(future);
+
+        loop {
+            match Future::poll(Pin::as_mut(&mut future), &mut context) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => {}
+            }
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct TracedSpi {
+        trace: Rc<RefCell<Vec<u8>>>,
+    }
+
+    impl Spi for TracedSpi {
+        fn write_command(&mut self, cmd: u8, data: &[u8]) -> HalResult<()> {
+            self.trace.borrow_mut().push(cmd);
+            self.trace.borrow_mut().extend_from_slice(data);
+            Ok(())
+        }
+
+        fn write(&mut self, data: &[u8]) -> HalResult<()> {
+            self.trace.borrow_mut().extend_from_slice(data);
+            Ok(())
+        }
+
+        fn read(&mut self, buf: &mut [u8]) -> HalResult<()> {
+            buf.fill(0);
+            Ok(())
+        }
     }
 
     fn driver() -> Ssd1677Driver<MockSpi, MockOutputPin, MockOutputPin, MockOutputPin, MockBusyPin>
@@ -420,6 +576,90 @@ mod tests {
             MockOutputPin,
             MockBusyPin,
         )
+    }
+
+    fn traced_driver_with_busy_high(
+    ) -> (
+        Ssd1677Driver<TracedSpi, MockOutputPin, MockOutputPin, MockOutputPin, TracedBusyPin>,
+        Rc<RefCell<Vec<u8>>>,
+        Rc<Cell<usize>>,
+    ) {
+        let trace = Rc::new(RefCell::new(Vec::new()));
+        let reads = Rc::new(Cell::new(0));
+        (
+            Ssd1677Driver::new(
+                TracedSpi {
+                    trace: Rc::clone(&trace),
+                },
+                MockOutputPin,
+                MockOutputPin,
+                MockOutputPin,
+                TracedBusyPin {
+                    is_high: true,
+                    reads: Rc::clone(&reads),
+                },
+            ),
+            trace,
+            reads,
+        )
+    }
+
+    #[derive(Debug)]
+    struct AsyncBusyPin {
+        elapsed_ms: Rc<Cell<u32>>,
+        clear_after_ms: u32,
+    }
+
+    impl InputPin for AsyncBusyPin {
+        fn is_high(&self) -> HalResult<bool> {
+            Ok(self.elapsed_ms.get() < self.clear_after_ms)
+        }
+    }
+
+    #[derive(Debug)]
+    struct RecordingAsyncDelay {
+        elapsed_ms: Rc<Cell<u32>>,
+    }
+
+    impl RecordingAsyncDelay {
+        fn awaited_milliseconds(&self) -> u32 {
+            self.elapsed_ms.get()
+        }
+    }
+
+    impl xteink_hal::AsyncDelay for RecordingAsyncDelay {
+        async fn ms(&self, ms: u32) {
+            self.elapsed_ms.set(self.elapsed_ms.get().saturating_add(ms));
+        }
+    }
+
+    fn async_busy_driver(
+        clear_after_ms: u32,
+    ) -> (
+        Ssd1677Driver<MockSpi, MockOutputPin, MockOutputPin, MockOutputPin, AsyncBusyPin>,
+        RecordingAsyncDelay,
+    ) {
+        let elapsed_ms = Rc::new(Cell::new(0));
+        (
+            Ssd1677Driver::new(
+                MockSpi::default(),
+                MockOutputPin,
+                MockOutputPin,
+                MockOutputPin,
+                AsyncBusyPin {
+                    elapsed_ms: Rc::clone(&elapsed_ms),
+                    clear_after_ms,
+                },
+            ),
+            RecordingAsyncDelay { elapsed_ms },
+        )
+    }
+
+    fn permanently_busy_async_driver() -> (
+        Ssd1677Driver<MockSpi, MockOutputPin, MockOutputPin, MockOutputPin, AsyncBusyPin>,
+        RecordingAsyncDelay,
+    ) {
+        async_busy_driver(u32::MAX)
     }
 
     fn data_after_nth(writes: &[Vec<u8>], command: u8, nth: usize) -> &[u8] {
@@ -716,6 +956,49 @@ mod tests {
                 Vec::from([Ssd1677::MASTER_ACTIVATION]),
             ],
         );
+    }
+
+    #[test]
+    fn trigger_refresh_sends_activation_without_waiting_for_busy() {
+        let (mut driver, trace, busy_reads) = traced_driver_with_busy_high();
+
+        driver
+            .trigger_refresh(RefreshMode::Grayscale)
+            .unwrap();
+
+        assert_eq!(busy_reads.get(), 0);
+        assert!(trace
+            .borrow()
+            .windows(2)
+            .any(|w| w == [Ssd1677::DISPLAY_UPDATE_CTRL2, Ssd1677::UPDATE_CTRL_GRAYSCALE]));
+        assert!(trace.borrow().contains(&Ssd1677::MASTER_ACTIVATION));
+    }
+
+    #[test]
+    fn is_busy_reports_the_input_pin_without_spi_traffic() {
+        let (driver, trace, _) = traced_driver_with_busy_high();
+
+        assert_eq!(driver.is_busy().unwrap(), true);
+        assert!(trace.borrow().is_empty());
+    }
+
+    #[test]
+    fn async_wait_yields_until_busy_clears() {
+        let (mut driver, delay) = async_busy_driver(3);
+
+        block_on(driver.wait_ready_async(&delay)).unwrap();
+
+        assert_eq!(delay.awaited_milliseconds(), 3);
+    }
+
+    #[test]
+    fn async_wait_times_out_at_the_named_limit() {
+        let (mut driver, delay) = permanently_busy_async_driver();
+
+        let result = block_on(driver.wait_ready_async(&delay));
+
+        assert_eq!(result, Err(HalError::Timeout));
+        assert_eq!(delay.awaited_milliseconds(), BUSY_TIMEOUT_MS);
     }
 
     #[test]

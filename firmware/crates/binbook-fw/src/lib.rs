@@ -2,6 +2,7 @@
 
 pub mod book;
 pub mod display;
+pub mod async_refresh;
 pub mod flash;
 pub mod input;
 pub mod refresh;

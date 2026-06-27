@@ -1,5 +1,5 @@
 use ssd1677_driver::Ssd1677Driver;
-use xteink_hal::{HalError, HalResult, InputPin, OutputPin, RefreshMode, Spi};
+use xteink_hal::{AsyncDelay, HalError, HalResult, InputPin, OutputPin, RefreshMode, Spi};
 
 use crate::refresh::{RefreshDecision, RefreshPolicy, RefreshState, X4_CHUNK_COUNT};
 
@@ -136,6 +136,195 @@ where
     display.refresh_with_delay(RefreshMode::Grayscale, delay)
 }
 
+pub async fn display_gray2_page_async<SPI, CS, DC, RST, BUSY, D>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    compressed_data: &[u8],
+    delay: &D,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: AsyncDelay + ?Sized,
+{
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_gray2_plane_strips_async(display, compressed_data, true, true, delay).await?;
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_gray2_plane_strips_async(display, compressed_data, false, false, delay).await?;
+    display.refresh_async(RefreshMode::Grayscale, delay).await
+}
+
+pub async fn display_full_grayscale_async<SPI, CS, DC, RST, BUSY, D>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    target_page: u32,
+    delay: &D,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: AsyncDelay + ?Sized,
+{
+    let open = book.open_info();
+    let pd = &book
+        .page_info(target_page)
+        .map_err(|_| HalError::InvalidParam)?
+        .plane_dir;
+
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_plane_chunks_strips_async(display, book_bytes, open.page_data_offset, pd, 0, true, true, delay)
+        .await?;
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_plane_chunks_strips_async(display, book_bytes, open.page_data_offset, pd, 1, false, false, delay)
+        .await?;
+    display.refresh_async(RefreshMode::Grayscale, delay).await
+}
+
+pub async fn reseed_bw_silent_async<SPI, CS, DC, RST, BUSY, D>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    target_page: u32,
+    delay: &D,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: AsyncDelay + ?Sized,
+{
+    display.init_async(delay).await?;
+    reseed_bw_async(display, book, book_bytes, target_page, false, delay).await
+}
+
+pub async fn reseed_bw_visible_async<SPI, CS, DC, RST, BUSY, D>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    target_page: u32,
+    delay: &D,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: AsyncDelay + ?Sized,
+{
+    display.init_async(delay).await?;
+    reseed_bw_async(display, book, book_bytes, target_page, true, delay).await
+}
+
+pub async fn bw_differential_async<SPI, CS, DC, RST, BUSY, D>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    prev_page: u32,
+    target_page: u32,
+    delay: &D,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: AsyncDelay + ?Sized,
+{
+    let open = book.open_info();
+    let prev_pd = &book
+        .page_info(prev_page)
+        .map_err(|_| HalError::InvalidParam)?
+        .plane_dir;
+    let target_pd = &book
+        .page_info(target_page)
+        .map_err(|_| HalError::InvalidParam)?
+        .plane_dir;
+
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_plane_chunks_strips_async(
+        display,
+        book_bytes,
+        open.page_data_offset,
+        prev_pd,
+        2,
+        true,
+        true,
+        delay,
+    )
+    .await?;
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_plane_chunks_strips_async(
+        display,
+        book_bytes,
+        open.page_data_offset,
+        target_pd,
+        2,
+        false,
+        false,
+        delay,
+    )
+    .await?;
+    display.refresh_async(RefreshMode::Partial, delay).await
+}
+
+pub async fn recovery_seed_async<SPI, CS, DC, RST, BUSY, D>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    target_page: u32,
+    delay: &D,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: AsyncDelay + ?Sized,
+{
+    let open = book.open_info();
+    let pd = &book
+        .page_info(target_page)
+        .map_err(|_| HalError::InvalidParam)?
+        .plane_dir;
+
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_plane_chunks_strips_async(
+        display,
+        book_bytes,
+        open.page_data_offset,
+        pd,
+        2,
+        true,
+        true,
+        delay,
+    )
+    .await?;
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_plane_chunks_strips_async(
+        display,
+        book_bytes,
+        open.page_data_offset,
+        pd,
+        2,
+        false,
+        false,
+        delay,
+    )
+    .await?;
+    display.refresh_async(RefreshMode::Full, delay).await
+}
+
 fn stream_gray2_plane<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
     compressed_data: &[u8],
@@ -170,6 +359,123 @@ where
             row_buf.copy_from_slice(&black);
         })
     }
+}
+
+async fn stream_gray2_plane_strips_async<SPI, CS, DC, RST, BUSY, D>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    compressed_data: &[u8],
+    red_plane: bool,
+    yield_after_last_strip: bool,
+    delay: &D,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: AsyncDelay + ?Sized,
+{
+    let mut decoder = PackBitsStream::new(compressed_data);
+    let mut gray2_row = [0u8; GRAY2_ROW_BYTES];
+    let mut red = [0u8; DISPLAY_ROW_BYTES];
+    let mut black = [0u8; DISPLAY_ROW_BYTES];
+    let strip_count = DISPLAY_HEIGHT / X4_CHUNK_ROWS;
+
+    for strip in 0..strip_count {
+        let y = strip * X4_CHUNK_ROWS;
+        display.set_window(0, y, DISPLAY_WIDTH, X4_CHUNK_ROWS)?;
+
+        if red_plane {
+            display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(X4_CHUNK_ROWS, |row, row_buf| {
+                let _ = row;
+                gray2_row.fill(0);
+                decoder.fill(&mut gray2_row);
+                gray2_row_to_ssd1677_planes(&gray2_row, &mut red, &mut black);
+                row_buf.copy_from_slice(&red);
+            })?;
+        } else {
+            display.write_frame_rows::<DISPLAY_ROW_BYTES>(X4_CHUNK_ROWS, |row, row_buf| {
+                let _ = row;
+                gray2_row.fill(0);
+                decoder.fill(&mut gray2_row);
+                gray2_row_to_ssd1677_planes(&gray2_row, &mut red, &mut black);
+                row_buf.copy_from_slice(&black);
+            })?;
+        }
+
+        if strip + 1 < strip_count || yield_after_last_strip {
+            delay.ms(0).await;
+        }
+    }
+
+    Ok(())
+}
+
+async fn stream_plane_chunks_strips_async<SPI, CS, DC, RST, BUSY, D>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book_bytes: &[u8],
+    page_data_offset: u64,
+    pd: &binbook::page_index::PlaneDir,
+    plane_slot: usize,
+    red_plane: bool,
+    yield_after_last_strip: bool,
+    delay: &D,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: AsyncDelay + ?Sized,
+{
+    let slot_offset = pd.offsets[plane_slot];
+    let slot_size = pd.sizes[plane_slot];
+    let abs = page_data_offset + slot_offset as u64;
+    let start = abs as usize;
+    let end = start + slot_size as usize;
+    if end > book_bytes.len() {
+        return Err(HalError::InvalidParam);
+    }
+    let compressed = &book_bytes[start..end];
+    stream_gray2_plane_strips_async(display, compressed, red_plane, yield_after_last_strip, delay).await
+}
+
+async fn reseed_bw_async<SPI, CS, DC, RST, BUSY, D>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    target_page: u32,
+    visible: bool,
+    delay: &D,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: AsyncDelay + ?Sized,
+{
+    let open = book.open_info();
+    let pd = &book
+        .page_info(target_page)
+        .map_err(|_| HalError::InvalidParam)?
+        .plane_dir;
+
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_plane_chunks_strips_async(display, book_bytes, open.page_data_offset, pd, 2, true, true, delay)
+        .await?;
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    stream_plane_chunks_strips_async(display, book_bytes, open.page_data_offset, pd, 2, false, false, delay)
+        .await?;
+
+    if visible {
+        display.refresh_async(RefreshMode::Full, delay).await?;
+    }
+
+    Ok(())
 }
 
 pub fn stream_gray1_rows<E>(

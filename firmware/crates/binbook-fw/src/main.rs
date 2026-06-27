@@ -19,6 +19,8 @@ use xteink_hal::{Delay as _, HalError, HalResult};
 use core::cell::RefCell;
 #[cfg(feature = "diagnostic-console")]
 use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
+#[cfg(feature = "firmware-bin")]
+use embassy_executor::Spawner;
 
 use esp_backtrace as _;
 #[cfg(all(feature = "debug-log", not(feature = "diagnostic-console")))]
@@ -35,7 +37,10 @@ macro_rules! dbgprintln {
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-const SPI_FREQUENCY: Rate = Rate::from_mhz(4);
+#[cfg(feature = "firmware-bin")]
+mod runtime;
+
+const DISPLAY_SPI_FREQUENCY_MHZ: u32 = 20;
 const PROBE_BOOK: &[u8] = include_bytes!("../fixtures/nav_probe.binbook");
 const BINBOOK_SCRATCH_BYTES: usize = 8192;
 
@@ -44,6 +49,13 @@ struct Delay(EspDelay);
 impl xteink_hal::Delay for Delay {
     fn ms(&self, ms: u32) {
         self.0.delay_millis(ms);
+    }
+}
+
+#[cfg(feature = "firmware-bin")]
+impl xteink_hal::AsyncDelay for Delay {
+    async fn ms(&self, ms: u32) {
+        embassy_time::Timer::after_millis(ms as u64).await;
     }
 }
 
@@ -134,6 +146,22 @@ fn hal_error_code(error: HalError) -> i32 {
     }
 }
 
+#[allow(dead_code)]
+async fn input_task() {}
+
+#[allow(dead_code)]
+async fn display_task() {}
+
+#[allow(dead_code)]
+async fn diagnostic_task() {}
+
+#[cfg(feature = "firmware-bin")]
+#[esp_rtos::main]
+async fn main(spawner: Spawner) {
+    runtime::run(spawner).await;
+}
+
+#[cfg(not(feature = "firmware-bin"))]
 #[esp_hal::main]
 fn main() -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default());
@@ -142,7 +170,7 @@ fn main() -> ! {
     let spi = EspSpi::new(
         peripherals.SPI2,
         SpiConfig::default()
-            .with_frequency(SPI_FREQUENCY)
+            .with_frequency(Rate::from_mhz(DISPLAY_SPI_FREQUENCY_MHZ))
             .with_mode(Mode::_0),
     )
     .expect("failed to configure SPI2")
