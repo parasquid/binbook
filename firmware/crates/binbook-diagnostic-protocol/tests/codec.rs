@@ -6,7 +6,8 @@ use binbook_diagnostic_protocol::{
     encode_status_payload, FrameHeader, FrameKind, HelloResponse, KeyAction, KeyCode, KeyPayload,
     LogGetPayload, LogRecordPayload, Opcode, PageAction, PagePayload, PanelModeCode, ProbeCode,
     Status, StatusPayload, FRAME_DELIMITER, LOG_RECORD_BYTES, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES,
-    PROTOCOL_VERSION,
+    PROTOCOL_VERSION, EVT_DISPLAY_RECOVERY, EVT_REFRESH_PHASE, EVT_RESEED_COMPLETE,
+    EVT_RESEED_START, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED, EVT_TURN_QUEUED,
 };
 
 #[test]
@@ -48,6 +49,22 @@ fn crash_response_requires_exact_present_layout() {
 #[test]
 fn protocol_version_is_one() {
     assert_eq!(PROTOCOL_VERSION, 1);
+}
+
+#[test]
+fn deferred_gray_event_codes_are_stable_and_nonzero() {
+    let codes = [
+        EVT_REFRESH_PHASE,
+        EVT_TURN_QUEUED,
+        EVT_TURN_DEQUEUED,
+        EVT_TURN_DROPPED,
+        EVT_RESEED_START,
+        EVT_RESEED_COMPLETE,
+        EVT_DISPLAY_RECOVERY,
+    ];
+
+    assert!(codes.iter().all(|code| *code != 0));
+    assert!(codes.windows(2).all(|pair| pair[0] != pair[1]));
 }
 
 #[test]

@@ -252,6 +252,40 @@ fn cli_logs_formats_event_names_and_sequences() {
     assert!(text.contains("seq=11"));
     assert!(text.contains("RENDER_SUCCESS"));
     assert!(text.contains("next_cursor=12"));
+
+    let mut queued_payload = [0u8; 64];
+    let queued_header_len = binbook_diagnostic_protocol::encode_log_response_header(
+        binbook_diagnostic_protocol::LogResponseHeader {
+            next_cursor: 13,
+            dropped_log_count: 4,
+            record_count: 1,
+        },
+        &mut queued_payload,
+    )
+    .unwrap();
+    let queued_record_len = binbook_diagnostic_protocol::encode_log_record(
+        binbook_diagnostic_protocol::LogRecordPayload {
+            sequence: 12,
+            tick_ms: 2345,
+            level: 2,
+            subsystem: 2,
+            event: binbook_diagnostic_protocol::EVT_TURN_QUEUED,
+            arg0: 1,
+            arg1: 0,
+            arg2: 0,
+        },
+        &mut queued_payload[queued_header_len..],
+    )
+    .unwrap();
+    let queued_frame = response_frame(
+        Opcode::LogGet,
+        12,
+        Status::Ok,
+        &queued_payload[..queued_header_len + queued_record_len],
+    );
+    let queued_text =
+        binbook_cli::diag_protocol::format_response(&queued_frame, Opcode::LogGet, 12).unwrap();
+    assert!(queued_text.contains("TURN_QUEUED"));
 }
 
 #[test]

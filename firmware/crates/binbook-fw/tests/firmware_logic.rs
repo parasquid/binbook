@@ -1078,10 +1078,10 @@ fn diag_dispatch_key_right_press_matches_button_right() {
     let mut resp_buf = [0u8; 496];
     let result = dispatch_command(header, &[0x02, 0x01], &mut ctx, &mut resp_buf);
     match result {
-        DispatchResult::RenderPage { target_page } => {
-            assert_eq!(target_page, 6);
+        DispatchResult::RenderTurn { turn } => {
+            assert_eq!(turn, PageTurn::Next);
         }
-        other => panic!("expected RenderPage, got {:?}", other),
+        other => panic!("expected RenderTurn, got {:?}", other),
     }
 }
 
@@ -1100,10 +1100,10 @@ fn diag_dispatch_key_left_press_matches_button_left() {
     let mut resp_buf = [0u8; 496];
     let result = dispatch_command(header, &[0x01, 0x01], &mut ctx, &mut resp_buf);
     match result {
-        DispatchResult::RenderPage { target_page } => {
-            assert_eq!(target_page, 4);
+        DispatchResult::RenderTurn { turn } => {
+            assert_eq!(turn, PageTurn::Previous);
         }
-        other => panic!("expected RenderPage, got {:?}", other),
+        other => panic!("expected RenderTurn, got {:?}", other),
     }
 }
 
@@ -1786,12 +1786,6 @@ fn diag_key_right_matches_physical_button_target() {
     let current_page = 3u32;
     let page_count = 8u32;
 
-    let physical_target = apply_page_turn(
-        current_page,
-        page_count,
-        target_page_for_button(Button::Right),
-    );
-
     let header = binbook_diagnostic_protocol::FrameHeader {
         kind: binbook_diagnostic_protocol::FrameKind::Request,
         opcode: binbook_diagnostic_protocol::Opcode::Key,
@@ -1807,10 +1801,10 @@ fn diag_key_right_matches_physical_button_target() {
     let mut resp_buf = [0u8; 496];
     let result = binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf);
     match result {
-        binbook_fw::diag::DispatchResult::RenderPage { target_page } => {
-            assert_eq!(target_page, physical_target);
+        binbook_fw::diag::DispatchResult::RenderTurn { turn } => {
+            assert_eq!(turn, binbook_fw::input::PageTurn::Next);
         }
-        other => panic!("expected RenderPage, got {:?}", other),
+        other => panic!("expected RenderTurn, got {:?}", other),
     }
 }
 
@@ -1821,12 +1815,6 @@ fn diag_key_left_matches_physical_button_target() {
 
     let current_page = 3u32;
     let page_count = 8u32;
-
-    let physical_target = apply_page_turn(
-        current_page,
-        page_count,
-        target_page_for_button(Button::Left),
-    );
 
     let header = binbook_diagnostic_protocol::FrameHeader {
         kind: binbook_diagnostic_protocol::FrameKind::Request,
@@ -1843,10 +1831,10 @@ fn diag_key_left_matches_physical_button_target() {
     let mut resp_buf = [0u8; 496];
     let result = binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf);
     match result {
-        binbook_fw::diag::DispatchResult::RenderPage { target_page } => {
-            assert_eq!(target_page, physical_target);
+        binbook_fw::diag::DispatchResult::RenderTurn { turn } => {
+            assert_eq!(turn, binbook_fw::input::PageTurn::Previous);
         }
-        other => panic!("expected RenderPage, got {:?}", other),
+        other => panic!("expected RenderTurn, got {:?}", other),
     }
 }
 
@@ -1878,18 +1866,17 @@ fn diag_all_key_codes_match_physical_mapping() {
         let mut resp_buf = [0u8; 496];
         let result = binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf);
 
-        let physical_turn = target_page_for_button(*button);
-        let physical_target = apply_page_turn(5, 10, physical_turn);
-
         match result {
-            binbook_fw::diag::DispatchResult::RenderPage { target_page } => {
+            binbook_fw::diag::DispatchResult::RenderTurn { turn } => {
                 assert_eq!(
-                    target_page, physical_target,
+                    turn,
+                    target_page_for_button(*button),
                     "key {:?} should match button {:?}",
-                    code, button
+                    code,
+                    button
                 );
             }
-            other => panic!("key {:?}: expected RenderPage, got {:?}", code, other),
+            other => panic!("key {:?}: expected RenderTurn, got {:?}", code, other),
         }
     }
 }
@@ -3318,10 +3305,10 @@ fn diagnostic_command_acceptance_fixture_rejects_noops() {
     let (dh, pl) = decode_frame(&frame_buf[..flen], &mut payload_out).unwrap();
     let result = dispatch_command(dh, &payload_out[..pl], &mut ctx, &mut resp_buf);
     match result {
-        DispatchResult::RenderPage { target_page } => {
-            assert_eq!(target_page, 1, "RIGHT from page 0 must advance to page 1");
+        DispatchResult::RenderTurn { turn } => {
+            assert_eq!(turn, PageTurn::Next, "RIGHT from page 0 must queue Next");
         }
-        other => panic!("KEY RIGHT from page 0 expected RenderPage, got {:?}", other),
+        other => panic!("KEY RIGHT from page 0 expected RenderTurn, got {:?}", other),
     }
 
     ctx.current_page = 0;
@@ -3773,6 +3760,302 @@ fn diagnostic_page_response_is_queued_only_after_action_completion() {
     assert_eq!(response_len, 4);
     assert_eq!(
         u32::from_le_bytes(decoded_payload[..4].try_into().unwrap()),
+        0
+    );
+}
+
+#[cfg(feature = "diagnostic-console")]
+struct AsyncDiagHarness {
+    current_page: u32,
+    page_count: u32,
+    serial: binbook_fw::diag::SerialState,
+    log: binbook_fw::diag_log::DiagLog<8>,
+    pending: Vec<binbook_fw::diag::PendingCommand>,
+    received_turns: Vec<PageTurn>,
+    response_sequences: Vec<u16>,
+}
+
+#[cfg(feature = "diagnostic-console")]
+impl AsyncDiagHarness {
+    fn on_page(current_page: u32, page_count: u32) -> Self {
+        Self {
+            current_page,
+            page_count,
+            serial: binbook_fw::diag::SerialState::new(),
+            log: binbook_fw::diag_log::DiagLog::<8>::new(),
+            pending: Vec::new(),
+            received_turns: Vec::new(),
+            response_sequences: Vec::new(),
+        }
+    }
+
+    fn receive_key(&mut self, sequence: u16, key: binbook_diagnostic_protocol::KeyCode) {
+        let turn = match key {
+            binbook_diagnostic_protocol::KeyCode::Right
+            | binbook_diagnostic_protocol::KeyCode::Down => PageTurn::Next,
+            binbook_diagnostic_protocol::KeyCode::Left
+            | binbook_diagnostic_protocol::KeyCode::Up => PageTurn::Previous,
+            other => panic!("unexpected key for page turn test: {:?}", other),
+        };
+        self.received_turns.push(turn);
+
+        let mut payload = [0u8; 2];
+        let payload_len = binbook_diagnostic_protocol::encode_key_payload(
+            key,
+            binbook_diagnostic_protocol::KeyAction::Press,
+            &mut payload,
+        )
+        .unwrap();
+        let header = binbook_diagnostic_protocol::FrameHeader {
+            kind: binbook_diagnostic_protocol::FrameKind::Request,
+            opcode: binbook_diagnostic_protocol::Opcode::Key,
+            status: binbook_diagnostic_protocol::Status::Ok,
+            sequence,
+            payload_len: payload_len as u16,
+        };
+        let mut encoded = [0u8; binbook_diagnostic_protocol::MAX_FRAME_BYTES];
+        let encoded_len = binbook_diagnostic_protocol::encode_frame(
+            &header,
+            &payload[..payload_len],
+            &mut encoded,
+        )
+        .unwrap();
+        self.serial.feed_rx(&encoded[..encoded_len]);
+        let pending = binbook_fw::diag::poll_pending_command(
+            &mut self.serial,
+            self.current_page,
+            self.page_count,
+            0,
+            0,
+            &mut self.log,
+            sequence as u32,
+        )
+        .expect("directional key should queue a render");
+        self.response_sequences.push(pending.header.sequence);
+        self.pending.push(pending);
+    }
+
+    fn pending_turns(&self) -> [PageTurn; 3] {
+        self.received_turns
+            .as_slice()
+            .try_into()
+            .expect("test harness expected exactly three queued turns")
+    }
+
+    fn rendered_pages_after_completion(&mut self) -> [u32; 3] {
+        let mut rendered_pages = [0u32; 3];
+
+        for (index, pending) in self.pending.drain(..).enumerate() {
+            let target_page = match pending.action {
+                binbook_fw::diag::PendingAction::RenderPage { target_page } => target_page,
+                binbook_fw::diag::PendingAction::RenderTurn { turn } => {
+                    binbook_fw::input::apply_page_turn(self.current_page, self.page_count, turn)
+                }
+                other => panic!("expected render action, got {:?}", other),
+            };
+
+            binbook_fw::diag::complete_pending_command(
+                &mut self.serial,
+                pending,
+                binbook_diagnostic_protocol::Status::Ok,
+                target_page,
+                &[],
+            )
+            .unwrap();
+            rendered_pages[index] = target_page;
+            self.current_page = target_page;
+        }
+
+        rendered_pages
+    }
+
+    fn response_sequences(&self) -> [u16; 3] {
+        self.response_sequences
+            .as_slice()
+            .try_into()
+            .expect("test harness expected exactly three pending responses")
+    }
+}
+
+#[cfg(feature = "diagnostic-console")]
+#[test]
+fn batched_key_presses_are_resolved_when_dequeued() {
+    let mut harness = AsyncDiagHarness::on_page(1, 4);
+    harness.receive_key(10, binbook_diagnostic_protocol::KeyCode::Right);
+    harness.receive_key(11, binbook_diagnostic_protocol::KeyCode::Right);
+    harness.receive_key(12, binbook_diagnostic_protocol::KeyCode::Left);
+
+    assert_eq!(
+        harness.pending_turns(),
+        [PageTurn::Next, PageTurn::Next, PageTurn::Previous]
+    );
+    assert_eq!(harness.rendered_pages_after_completion(), [2, 3, 2]);
+    assert_eq!(harness.response_sequences(), [10, 11, 12]);
+}
+
+#[cfg(feature = "diagnostic-console")]
+#[test]
+fn diagnostic_pending_queue_rejects_the_seventeenth_command_without_evicting_old_requests() {
+    use binbook_fw::diag::{DiagnosticPendingQueue, PendingAction, PendingCommand};
+
+    let mut queue = DiagnosticPendingQueue::<16>::new();
+
+    for sequence in 0..16u16 {
+        let pending = PendingCommand {
+            header: binbook_diagnostic_protocol::FrameHeader {
+                kind: binbook_diagnostic_protocol::FrameKind::Request,
+                opcode: binbook_diagnostic_protocol::Opcode::Key,
+                status: binbook_diagnostic_protocol::Status::Ok,
+                sequence,
+                payload_len: 0,
+            },
+            action: PendingAction::RenderPage {
+                target_page: sequence as u32,
+            },
+        };
+        queue.try_push(pending).unwrap();
+    }
+
+    let overflow = PendingCommand {
+        header: binbook_diagnostic_protocol::FrameHeader {
+            kind: binbook_diagnostic_protocol::FrameKind::Request,
+            opcode: binbook_diagnostic_protocol::Opcode::Key,
+            status: binbook_diagnostic_protocol::Status::Ok,
+            sequence: 16,
+            payload_len: 0,
+        },
+        action: PendingAction::RenderPage { target_page: 16 },
+    };
+
+    assert_eq!(queue.try_push(overflow), Err(overflow));
+    assert_eq!(queue.len(), 16);
+    assert_eq!(queue.front().unwrap().header.sequence, 0);
+}
+
+#[cfg(feature = "diagnostic-console")]
+#[test]
+fn diagnostic_snapshot_builds_status_payload_from_committed_state() {
+    use binbook_fw::diag::DiagnosticSnapshot;
+
+    let snapshot = DiagnosticSnapshot {
+        current_page: 7,
+        page_count: 30,
+        panel_mode: binbook_diagnostic_protocol::PanelModeCode::Bw,
+        dropped_log_count: 4,
+        protocol_error_count: 2,
+        last_error: -12,
+    };
+
+    let status = snapshot.status_payload();
+
+    assert_eq!(status.current_page, 7);
+    assert_eq!(status.page_count, 30);
+    assert_eq!(status.panel_mode, binbook_diagnostic_protocol::PanelModeCode::Bw);
+    assert_eq!(status.dropped_log_count, 4);
+    assert_eq!(status.protocol_error_count, 2);
+    assert_eq!(status.last_error, -12);
+}
+
+#[cfg(feature = "diagnostic-console")]
+#[test]
+fn diagnostic_loop_services_status_and_log_while_render_is_pending() {
+    use binbook_fw::diag::{DiagnosticLoopState, DiagnosticSnapshot, PendingAction, PendingCommand};
+    use binbook_fw::diag_log::{DiagEvent, DiagLog};
+
+    let snapshot = DiagnosticSnapshot {
+        current_page: 7,
+        page_count: 30,
+        panel_mode: binbook_diagnostic_protocol::PanelModeCode::Bw,
+        dropped_log_count: 4,
+        protocol_error_count: 2,
+        last_error: -12,
+    };
+    let mut log = DiagLog::<8>::new();
+    log.push(
+        1000,
+        DiagEvent {
+            level: binbook_fw::diag_log::LEVEL_INFO,
+            subsystem: binbook_fw::diag_log::SUB_SERIAL,
+            event: binbook_fw::diag_log::EVT_CMD_RECEIPT,
+            arg0: 1,
+            arg1: 2,
+            arg2: 3,
+        },
+    );
+    let mut loop_state = DiagnosticLoopState::<16, 8>::new(snapshot, log);
+
+    let pending = PendingCommand {
+        header: binbook_diagnostic_protocol::FrameHeader {
+            kind: binbook_diagnostic_protocol::FrameKind::Request,
+            opcode: binbook_diagnostic_protocol::Opcode::Page,
+            status: binbook_diagnostic_protocol::Status::Ok,
+            sequence: 99,
+            payload_len: 1,
+        },
+        action: PendingAction::RenderPage { target_page: 8 },
+    };
+    loop_state.enqueue_pending(pending).unwrap();
+
+    let status = loop_state.status_payload();
+    let mut log_buf = [0u8; 128];
+    let log_len = loop_state.resolve_log_get(0, 128, &mut log_buf);
+
+    assert_eq!(status.current_page, 7);
+    assert_eq!(status.page_count, 30);
+    assert_eq!(status.dropped_log_count, 4);
+    assert_eq!(status.protocol_error_count, 2);
+    assert_eq!(loop_state.pending_len(), 1);
+    assert!(log_len > 0);
+}
+
+#[cfg(feature = "diagnostic-console")]
+#[test]
+fn diagnostic_loop_reports_error_when_key_queue_is_full_without_evicting_old_requests() {
+    use binbook_fw::diag::{DiagnosticLoopState, DiagnosticSnapshot, PendingAction, PendingCommand};
+
+    let snapshot = DiagnosticSnapshot {
+        current_page: 7,
+        page_count: 30,
+        panel_mode: binbook_diagnostic_protocol::PanelModeCode::Bw,
+        dropped_log_count: 4,
+        protocol_error_count: 2,
+        last_error: -12,
+    };
+    let log = binbook_fw::diag_log::DiagLog::<8>::new();
+    let mut loop_state = DiagnosticLoopState::<16, 8>::new(snapshot, log);
+
+    for sequence in 0..16u16 {
+        loop_state
+            .enqueue_pending(PendingCommand {
+                header: binbook_diagnostic_protocol::FrameHeader {
+                    kind: binbook_diagnostic_protocol::FrameKind::Request,
+                    opcode: binbook_diagnostic_protocol::Opcode::Key,
+                    status: binbook_diagnostic_protocol::Status::Ok,
+                    sequence,
+                    payload_len: 0,
+                },
+                action: PendingAction::RenderPage {
+                    target_page: sequence as u32,
+                },
+            })
+            .unwrap();
+    }
+
+    let result = loop_state.enqueue_pending_with_status(PendingCommand {
+        header: binbook_diagnostic_protocol::FrameHeader {
+            kind: binbook_diagnostic_protocol::FrameKind::Request,
+            opcode: binbook_diagnostic_protocol::Opcode::Key,
+            status: binbook_diagnostic_protocol::Status::Ok,
+            sequence: 16,
+            payload_len: 0,
+        },
+        action: PendingAction::RenderPage { target_page: 16 },
+    });
+
+    assert_eq!(result, binbook_diagnostic_protocol::Status::Error);
+    assert_eq!(loop_state.pending_len(), 16);
+    assert_eq!(
+        loop_state.complete_pending().unwrap().header.sequence,
         0
     );
 }

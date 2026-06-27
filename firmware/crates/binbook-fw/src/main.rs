@@ -438,6 +438,61 @@ fn main() -> ! {
                 let mut action_payload = [0u8; 1 + CRASH_SUMMARY_BYTES];
                 let mut action_payload_len = 0usize;
                 let status = match pending.action {
+                    PendingAction::RenderTurn { turn } => {
+                        let target_page = binbook_fw::input::apply_page_turn(
+                            current_page,
+                            page_count,
+                            turn,
+                        );
+                        diag_log.push(
+                            tick as u32,
+                            binbook_fw::diag_log::DiagEvent {
+                                level: binbook_fw::diag_log::LEVEL_INFO,
+                                subsystem: binbook_fw::diag_log::SUB_DISPLAY,
+                                event: binbook_fw::diag_log::EVT_RENDER_START,
+                                arg0: target_page as i32,
+                                arg1: match turn {
+                                    binbook_fw::input::PageTurn::Previous => 0,
+                                    binbook_fw::input::PageTurn::Next => 1,
+                                    binbook_fw::input::PageTurn::First => 2,
+                                    binbook_fw::input::PageTurn::Last => 3,
+                                },
+                                arg2: 0,
+                            },
+                        );
+                        match render_current_page(
+                            &mut display,
+                            &mut book,
+                            &delay,
+                            &mut refresh_state,
+                            &mut panel_mode,
+                            target_page,
+                        ) {
+                            Ok(report) => {
+                                current_page = target_page;
+                                diag_last_error = 0;
+                                record_render_success(
+                                    &mut diag_log,
+                                    tick as u32,
+                                    current_page,
+                                    report,
+                                );
+                                Status::Ok
+                            }
+                            Err(error) => {
+                                diag_last_error = hal_error_code(error);
+                                record_display_failure(
+                                    &mut diag_log,
+                                    &mut crash_store,
+                                    tick as u32,
+                                    current_page,
+                                    panel_mode,
+                                    diag_last_error,
+                                );
+                                Status::InternalError
+                            }
+                        }
+                    }
                     PendingAction::RenderPage { target_page } => {
                         diag_log.push(
                             tick as u32,

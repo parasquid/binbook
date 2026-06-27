@@ -748,12 +748,19 @@ pub const EVT_RENDER_START: u16 = 0x0300;
 pub const EVT_RENDER_SUCCESS: u16 = 0x0301;
 pub const EVT_RENDER_FAILURE: u16 = 0x0302;
 pub const EVT_REFRESH_DECISION: u16 = 0x0400;
+pub const EVT_REFRESH_PHASE: u16 = 0x0401;
 pub const EVT_PANEL_MODE: u16 = 0x0500;
 pub const EVT_ADC_SAMPLE: u16 = 0x0600;
 pub const EVT_IDLE_ENTERED: u16 = 0x0700;
 pub const EVT_IDLE_SUMMARY: u16 = 0x0701;
 pub const EVT_IDLE_LEFT: u16 = 0x0702;
 pub const EVT_DISPLAY_ERROR: u16 = 0x0800;
+pub const EVT_TURN_QUEUED: u16 = 0x0202;
+pub const EVT_TURN_DEQUEUED: u16 = 0x0203;
+pub const EVT_TURN_DROPPED: u16 = 0x0204;
+pub const EVT_RESEED_START: u16 = 0x0303;
+pub const EVT_RESEED_COMPLETE: u16 = 0x0304;
+pub const EVT_DISPLAY_RECOVERY: u16 = 0x0801;
 
 pub fn crc16_ccitt_false(data: &[u8]) -> u16 {
     let mut crc: u16 = 0xFFFF;
