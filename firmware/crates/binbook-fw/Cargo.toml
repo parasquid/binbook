@@ -38,6 +38,7 @@ firmware-bin = [
 ]
 debug-log = []
 chunk-dirty-probe = []
+deferred-gray-probe = []
 diagnostic-console = [
     "dep:binbook-diagnostic-protocol",
     "dep:esp-storage",

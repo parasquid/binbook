@@ -4,7 +4,7 @@ Date: 2026-06-28
 
 ## Current State
 
-Task 6 is complete on host verification and ready to commit. Tasks 1 through 5 are complete and verified on host tests and target builds.
+Task 7 is complete on host verification and ready to commit. Tasks 1 through 6 are complete and verified on host tests and target builds.
 
 Implemented so far:
 
@@ -20,6 +20,11 @@ Implemented so far:
   - Re-exported the new `async_refresh` module.
 - `firmware/crates/binbook-fw/src/async_refresh.rs`
   - Added the coordinator constants, enums, request/completion types, and the minimal state machine needed for startup, BW refresh completion, gray delay, reseed, and recovery transitions.
+  - Added `configured_post_gray_strategy()` so the default build uses visible reseed and the temporary `deferred-gray-probe` feature switches to silent reseed.
+- `firmware/crates/binbook-fw/Cargo.toml`
+  - Added the temporary `deferred-gray-probe` feature gate.
+- `firmware/crates/binbook-fw/src/runtime.rs`
+  - Routed the runtime coordinator through the compile-time selector while keeping the non-diagnostic firmware build working.
 - `firmware/crates/binbook-fw/src/display.rs`
   - Added async strip-streaming helpers for grayscale rendering, BW reseeding, BW differential, and recovery.
   - The async helpers keep the PackBits decoder alive across 16-row strips and yield between strips as required.
@@ -63,6 +68,14 @@ Host verification:
 - `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo check --offline -p binbook-fw --features firmware-bin,diagnostic-console --target riscv32imc-unknown-none-elf`
 - `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console --target riscv32imc-unknown-none-elf --release`
 - `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console,debug-log --target riscv32imc-unknown-none-elf --release`
+- `CARGO_HOME=/tmp/binbook-cargo-home cargo test -p binbook-fw --test async_refresh normal_build_uses_visible_reseed_until_hardware_approval -- --exact`
+- `CARGO_HOME=/tmp/binbook-cargo-home cargo test -p binbook-fw --features deferred-gray-probe --test async_refresh probe_build_uses_silent_reseed -- --exact`
+- `CARGO_HOME=/tmp/binbook-cargo-home cargo test --workspace --features diagnostic-console`
+- `CARGO_HOME=/tmp/binbook-cargo-home cargo test --workspace`
+- `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin --target riscv32imc-unknown-none-elf --release`
+- `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console --target riscv32imc-unknown-none-elf --release`
+- `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,debug-log --target riscv32imc-unknown-none-elf --release`
+- `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console,deferred-gray-probe --target riscv32imc-unknown-none-elf --release`
 - `CARGO_HOME=/tmp/binbook-cargo-home cargo test --features serial-device deferred_gray_exercise -- --nocapture`
 - `CARGO_HOME=/tmp/binbook-cargo-home cargo test --features serial-device --test hardware_diagnostic -- --list`
 - `CARGO_HOME=/tmp/binbook-cargo-home cargo test`

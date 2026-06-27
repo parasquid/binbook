@@ -391,6 +391,23 @@ fn coordinator_uses_the_approved_fixed_configuration() {
 }
 
 #[test]
+fn normal_build_uses_visible_reseed_until_hardware_approval() {
+    assert_eq!(
+        binbook_fw::async_refresh::configured_post_gray_strategy(),
+        PostGrayStrategy::VisibleReseed
+    );
+}
+
+#[cfg(feature = "deferred-gray-probe")]
+#[test]
+fn probe_build_uses_silent_reseed() {
+    assert_eq!(
+        binbook_fw::async_refresh::configured_post_gray_strategy(),
+        PostGrayStrategy::SilentReseed
+    );
+}
+
+#[test]
 fn startup_requests_grayscale_for_page_zero() {
     let coordinator = RefreshCoordinator::new(4, PostGrayStrategy::SilentReseed);
 

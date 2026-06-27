@@ -51,6 +51,17 @@ pub enum PostGrayStrategy {
     VisibleReseed,
 }
 
+pub const fn configured_post_gray_strategy() -> PostGrayStrategy {
+    #[cfg(feature = "deferred-gray-probe")]
+    {
+        PostGrayStrategy::SilentReseed
+    }
+    #[cfg(not(feature = "deferred-gray-probe"))]
+    {
+        PostGrayStrategy::VisibleReseed
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshPhase {
     BwReady,

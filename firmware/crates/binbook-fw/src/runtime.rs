@@ -24,9 +24,14 @@ use crate::{
 use binbook_fw::{
     async_refresh::{
         DisplayCompletion, DisplayCompletionStatus, DisplayRequest, PostGrayStrategy,
-        RefreshAction, RefreshCoordinator, RefreshPhase, DISPLAY_COMPLETION_CAPACITY,
-        GRAY_SETTLE_DELAY_MS, INPUT_POLL_INTERVAL_MS, PAGE_TURN_QUEUE_CAPACITY,
+        RefreshAction, RefreshCoordinator, DISPLAY_COMPLETION_CAPACITY, INPUT_POLL_INTERVAL_MS,
+        PAGE_TURN_QUEUE_CAPACITY,
     },
+    display::PanelMode,
+    input::{self, InputState},
+};
+#[cfg(feature = "diagnostic-console")]
+use binbook_fw::{
     diag::{
         complete_pending_command, dispatch_command, DiagnosticLoopState, DiagnosticSnapshot,
         PendingAction, PendingCommand, SerialState, TransportError,
@@ -36,8 +41,6 @@ use binbook_fw::{
         DiagDeduper, DiagEvent, DiagLog, LEVEL_ERROR, LEVEL_INFO, SUB_DISPLAY, SUB_INPUT,
         SUB_SERIAL, SUB_SYSTEM,
     },
-    display::PanelMode,
-    input::{self, InputState},
 };
 #[cfg(feature = "diagnostic-console")]
 use binbook_fw::async_refresh::DisplayProbeKind;
@@ -59,7 +62,8 @@ static REQUEST_CHANNEL: Channel<CriticalSectionRawMutex, DisplayRequest, { PAGE_
 static COMPLETION_CHANNEL: Channel<CriticalSectionRawMutex, DisplayCompletion, { DISPLAY_COMPLETION_CAPACITY }> =
     Channel::new();
 
-const POST_GRAY_STRATEGY: PostGrayStrategy = PostGrayStrategy::SilentReseed;
+const POST_GRAY_STRATEGY: PostGrayStrategy =
+    binbook_fw::async_refresh::configured_post_gray_strategy();
 const GRAY_POLL_INTERVAL_MS: u64 = 10;
 
 #[cfg(feature = "diagnostic-console")]
