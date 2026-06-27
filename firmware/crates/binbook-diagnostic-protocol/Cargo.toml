@@ -1,0 +1,6 @@
+[package]
+name = "binbook-diagnostic-protocol"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "BinBook diagnostic serial protocol for Xteink X4 firmware"
