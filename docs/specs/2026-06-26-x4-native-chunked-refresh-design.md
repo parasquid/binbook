@@ -2,6 +2,10 @@
 
 ## Summary
 
+Status: the native plane/chunk metadata in this document remains relevant, but
+the runtime refresh policy has moved to the async deferred-gray design in
+`docs/specs/2026-06-27-x4-async-deferred-grayscale-design.md`.
+
 Move the `xteink-x4-portrait` BinBook pipeline from firmware-converted packed
 GRAY2 pages to compiler-generated SSD1677-native planes. The compiler runs on a
 host machine and does the expensive work: logical-to-physical rotation, GRAY2
@@ -256,4 +260,3 @@ Hardware acceptance:
 - Every fifth fast refresh performs grayscale cleanup.
 - Verification evidence comes from debug logs or serial output behind a
   compile-time feature.
-

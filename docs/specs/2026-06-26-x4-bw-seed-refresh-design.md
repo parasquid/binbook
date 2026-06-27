@@ -2,6 +2,9 @@
 
 ## Summary
 
+Status: precursor hypothesis record. The current async deferred-gray firmware
+design lives in `docs/specs/2026-06-27-x4-async-deferred-grayscale-design.md`.
+
 The Xteink X4 still shows dirty pages after page turns even after normal
 navigation was changed to full-screen BW differential refresh. The observed
 pattern is:

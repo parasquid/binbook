@@ -232,6 +232,79 @@ cargo run --features serial-device -- diag hello --port "$PORT"
 
 Leave the device running the normal diagnostic image.
 
+### 12. Verify Deferred Grayscale Exercise
+
+This section applies to the async deferred-gray experiment. Keep one process on
+`/dev/ttyACM0` at a time and do not start the serial exercise until the boot
+capture has finished.
+
+Flash the temporary probe image:
+
+```bash
+FW_FEATURES="firmware-bin,diagnostic-console,deferred-gray-probe" \
+  firmware/scripts/flash-xteink-x4-nav-probe.sh
+```
+
+Capture the 15-second boot record with the pyserial command from `AGENTS.md`.
+Record the bootloader, partition, segment-load, and application-load lines.
+
+Re-establish the diagnostic baseline:
+
+```bash
+cd cli
+cargo run --features serial-device -- diag hello --port "$PORT"
+cargo run --features serial-device -- diag status --port "$PORT"
+cd ..
+```
+
+Run the autonomous exercise and tell the user the webcam observation is
+beginning:
+
+```bash
+cd cli
+cargo run --features serial-device -- diag exercise deferred-gray --port "$PORT"
+cd ..
+```
+
+While the exercise runs, verify all of these visible criteria:
+
+1. Page 1 appears in black and white before grayscale begins.
+2. Grayscale starts only after the 350 ms idle delay.
+3. Silent reseed causes no visible flash, BW reversion, or corruption.
+4. Queued intermediate pages appear in FIFO order as `2`, `3`, `2`.
+5. The final `RIGHT` transition lands on page `3` and remains artifact-free.
+
+After the exercise, query `STATUS` and `LOG` independently:
+
+```bash
+cd cli
+cargo run --features serial-device -- diag status --port "$PORT"
+cargo run --features serial-device -- diag logs --port "$PORT" --since 0
+cd ..
+```
+
+Confirm `page=3`, `last_error=0`, `dropped_turns=0`, and ordered refresh / reseed
+events. The exact event names depend on the build, but the log must show the
+queued turn, gray-delay, gray-refresh, and reseed sequence for the exercise.
+
+Select the permanent strategy only after the webcam verdict:
+
+- if the silent reseed result is accepted, keep the silent strategy and remove
+  the probe selector;
+- if the silent reseed result is rejected, keep visible reseed as the permanent
+  default and remove the probe selector.
+
+After the strategy decision, rebuild the permanent diagnostic image with the
+selected default and flash it with:
+
+```bash
+FW_FEATURES="firmware-bin,diagnostic-console" \
+  firmware/scripts/flash-xteink-x4-nav-probe.sh
+```
+
+Then reconfirm `HELLO` and `STATUS` before leaving the device running that
+image.
+
 ## Failure Handling
 
 - Port missing or inaccessible: perform an escalated host check; do not infer

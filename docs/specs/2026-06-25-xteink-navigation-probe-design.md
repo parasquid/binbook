@@ -20,7 +20,8 @@ flash-backed book upload or SD-card storage.
   - previous on page 1 does nothing;
   - next on page 4 does nothing.
 - `Back`, `Select`, and `Power` are ignored for this milestone.
-- Page turns may block while the e-ink grayscale refresh runs.
+- Page turns are queued while the deferred-gray refresh coordinator works;
+  input handling remains responsive while grayscale and reseed work runs.
 
 ## Fixture
 
@@ -74,4 +75,3 @@ slice through the existing GRAY2 row renderer.
   - `Right`/`Down` advances through checkerboard, stripes, and lorem ipsum;
   - `Left`/`Up` navigates back;
   - edge button presses clamp.
-

@@ -272,6 +272,9 @@ The two channels are combined with `ch1_button.or(ch2_button)` — ch1 takes pri
 - **No VM/runtime** — pure BinBook reader, no scripting layer
 - **No service abstraction** — direct hardware access
 - **Modular crates** — so components can be reimported by SquidScript later
+- **Async refresh orchestration** — current BinBook firmware queues page turns
+  and defers grayscale work without blocking input; see
+  `docs/specs/2026-06-27-x4-async-deferred-grayscale-design.md`.
 
 ### Modularity Constraint
 

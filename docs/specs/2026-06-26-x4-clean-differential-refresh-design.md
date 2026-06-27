@@ -2,6 +2,9 @@
 
 ## Summary
 
+Status: precursor policy record. The current async deferred-gray firmware
+design lives in `docs/specs/2026-06-27-x4-async-deferred-grayscale-design.md`.
+
 Xteink X4 page turns currently use compiler-generated BW chunk metadata to write
 only changed 16-row chunks before triggering an SSD1677 partial refresh. That is
 fast, but hardware testing has shown visible corruption from the previous page
@@ -30,16 +33,16 @@ The existing X4 native chunked refresh implementation has these relevant pieces:
 
 - `binbook/pixels.py` emits SSD1677-native GRAY2 MSB, LSB, and BW planes.
 - `binbook/writer.py` emits `PAGE_CHUNK_INDEX` and `PAGE_TRANSITION_INDEX`.
-- `firmware/crates/binbook-fw/src/refresh.rs` tracks previous page and fast
+- `firmware/crates/binbook-fw/src/async_refresh.rs` tracks previous page and fast
   refresh cadence.
 - `firmware/crates/binbook-fw/src/display.rs` chooses one of:
   - full grayscale seed/cleanup;
   - adjacent dirty partial refresh;
   - full-screen BW differential refresh.
 
-The current policy selects `AdjacentDirtyPartial` whenever a transition mask
-exists. That makes chunk-dirty refresh the normal adjacent page-turn path before
-the hardware behavior has been proven clean.
+The precursor policy selects `AdjacentDirtyPartial` whenever a transition mask
+exists. That makes chunk-dirty refresh the normal adjacent page-turn path
+before the hardware behavior has been proven clean.
 
 SquidScript solved the same class of problem by rendering or streaming both
 frames for a differential update: the old BW image is supplied to the controller

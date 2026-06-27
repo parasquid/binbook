@@ -167,15 +167,16 @@ The Rust SSD1677 driver must match SquidScript's working SSD1677 path:
 
 Do not convert X coordinates to byte addresses for these commands. A prior Rust version sent `0x44 = [0x00, 0x63]` and `0x4E = [0x00]`, which produced malformed multi-stripe output even though the panel refreshed.
 
-## Chunk-dirty probe build
+## Deferred-gray probe build
 
-To build a probe firmware that exercises chunk-dirty page turns for hardware verification:
+To build the temporary deferred-gray probe firmware for hardware verification:
 
 ```bash
-cd firmware && RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,debug-log,chunk-dirty-probe --target riscv32imc-unknown-none-elf --release
+cd firmware && RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,debug-log,deferred-gray-probe --target riscv32imc-unknown-none-elf --release
 ```
 
-This build logs `[PROBE] chunk_dirty_window` lines over serial and uses the chunk-dirty refresh policy instead of the clean default.
+This build logs the deferred-gray exercise phases and uses silent reseed for the
+hardware probe instead of the conservative visible reseed default.
 
 ## Diagnostic console build
 

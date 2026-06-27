@@ -4,7 +4,11 @@ Date: 2026-06-28
 
 ## Current State
 
-Task 7 is complete on host verification and ready to commit. Tasks 1 through 6 are complete and verified on host tests and target builds.
+Task 8 is complete on the host and ready to commit. Tasks 1 through 7 are complete and verified on host tests and target builds.
+
+The current doc set now describes the queued-turn deferred-gray model and the
+temporary `deferred-gray-probe` build. Silent reseed remains an unverified
+hardware hypothesis until Task 9 records the webcam verdict.
 
 Implemented so far:
 
@@ -51,6 +55,24 @@ Implemented so far:
   - Added parser coverage for the deferred-gray exercise subcommand.
 - `cli/tests/hardware_diagnostic.rs`
   - Added a scripted fake-serial exercise harness and an ignored live-hardware wrapper for the deferred-gray flow.
+- `docs/specs/2026-06-27-x4-async-deferred-grayscale-design.md`
+  - Records the current async deferred-gray architecture, fixed constants, task ownership, phase model, probe build, and hardware-verdict gate.
+- `docs/reference/squidscript-and-xteink-reference.md`
+  - Notes that the current BinBook firmware queues page turns and defers grayscale work without blocking input.
+- `docs/reference/xteink-x4-agent-device-verification.md`
+  - Adds the deferred-gray hardware runbook section with flash, boot capture, exercise, webcam criteria, strategy branch, and reflash requirements.
+- `docs/reference/xteink-x4-firmware-flashing.md`
+  - Renames the probe build to `deferred-gray-probe`.
+- `docs/specs/2026-06-25-xteink-navigation-probe-design.md`
+  - Rewords page-turn behavior so it no longer claims the grayscale work blocks input handling.
+- `docs/specs/2026-06-26-x4-bw-seed-refresh-design.md`
+  - Marks the BW-seed hypothesis as a precursor record.
+- `docs/specs/2026-06-26-x4-clean-differential-refresh-design.md`
+  - Marks the clean-differential policy as a precursor record.
+- `docs/specs/2026-06-26-x4-native-chunked-refresh-design.md`
+  - Marks the runtime refresh policy portion as superseded by the new async design.
+- `BINBOOK_FORMAT_SPEC.md`
+  - Clarifies that grayscale refresh does not by itself establish BW differential readiness and that the post-gray reseed strategy is a firmware policy.
 
 Host verification:
 
@@ -87,4 +109,4 @@ No hardware flashing, serial capture, or webcam verification has been run yet. T
 
 ## Next Work
 
-Continue with Task 7: add compile-time probe selection and complete host verification, then proceed through docs and hardware verification.
+Proceed with Task 9: flash the deferred-gray probe image, capture boot and serial evidence, run the autonomous exercise, collect the webcam verdict, select the permanent reseed strategy, and reflash the final diagnostic image.

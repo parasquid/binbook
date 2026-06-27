@@ -1240,18 +1240,21 @@ pigment bits are cleared.
 **Default refresh behavior**:
 
 - First render or cleanup cadence: stream plane 0 to red RAM, plane 1 to black
-  RAM, then trigger grayscale refresh. This makes the visible page clean but
-  does not make BW differential RAM valid.
-- BW seed after grayscale: before the next partial differential page turn,
-  stream the current page BW plane to both red RAM and black RAM, then trigger a
-  full BW refresh.
+  RAM, then trigger grayscale refresh. This makes the visible page clean; BW
+  differential readiness is a separate firmware-policy concern.
+- Deferred grayscale post-processing: when the firmware's gray delay expires and
+  no queued turn has arrived, it may render grayscale and then either reseed BW
+  silently or reseed BW visibly, depending on the selected build strategy.
+- BW seed after grayscale: before the next partial differential page turn, the
+  firmware must ensure both red RAM and black RAM contain the current page's BW
+  plane.
 - Clean default fast page turn: after BW seed is valid, stream the full previous
   BW plane to red RAM and the full current BW plane to black RAM, then trigger
   partial refresh. Firmware may stream this as 16-row chunks to keep RAM
   bounded.
 - Chunk-dirty adjacent page turn: firmware may stream only transition-marked
-  chunks when hardware verification has proven that the SSD1677 partial refresh
-  is clean for that windowed update mode and BW seed state is valid.
+  chunks only when hardware verification has proven that the SSD1677 partial
+  refresh is clean for that windowed update mode and BW seed state is valid.
 
 ---
 
