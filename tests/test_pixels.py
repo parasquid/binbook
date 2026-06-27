@@ -1,6 +1,13 @@
 import pytest
 
-from binbook.pixels import gray1_to_luma, pack_gray1, pack_gray2, unpack_gray1, unpack_gray2, xteink_xth_value
+from binbook.pixels import (
+    gray1_to_luma,
+    pack_gray1,
+    pack_gray2,
+    unpack_gray1,
+    unpack_gray2,
+    xteink_xth_value,
+)
 
 
 def test_gray1_packs_leftmost_pixel_in_highest_bits():

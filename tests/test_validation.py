@@ -101,7 +101,9 @@ def test_rejects_section_crc_mismatch_when_nonzero(tmp_path: Path):
 def test_rejects_bad_chapter_index_entry_size(tmp_path: Path):
     book = bytearray(_book_bytes())
     chapter_index = _section(book, SectionId.CHAPTER_INDEX)
-    _patch_section_entry_size(book, SectionId.CHAPTER_INDEX, chapter_index.entry_size - 1)
+    _patch_section_entry_size(
+        book, SectionId.CHAPTER_INDEX, chapter_index.entry_size - 1
+    )
 
     path = _write(tmp_path, book)
 
@@ -112,7 +114,9 @@ def test_rejects_bad_chapter_index_entry_size(tmp_path: Path):
 def _book_bytes() -> bytes:
     packed_white_page = bytes([0xFF]) * 96_000
     compressed = encode_packbits(packed_white_page)
-    page = EncodedPage(compressed=compressed, uncompressed_size=len(packed_white_page), page_crc32=0)
+    page = EncodedPage(
+        compressed=compressed, uncompressed_size=len(packed_white_page), page_crc32=0
+    )
     return build_binbook([page], XTEINK_X4_PORTRAIT, source_name="validation")
 
 
@@ -125,7 +129,9 @@ def _write(tmp_path: Path, book: bytes | bytearray) -> Path:
 def _section(book: bytes | bytearray, section_id: SectionId) -> SectionEntry:
     header = BinBookHeader.unpack(bytes(book[:HEADER_SIZE]))
     for index in range(header.section_count):
-        entry = SectionEntry.unpack(bytes(book), header.section_table_offset + index * SECTION_ENTRY_SIZE)
+        entry = SectionEntry.unpack(
+            bytes(book), header.section_table_offset + index * SECTION_ENTRY_SIZE
+        )
         if entry.section_id == section_id:
             return entry
     raise AssertionError(f"missing section {section_id.name}")
@@ -142,7 +148,9 @@ def _patch_section_offset(book: bytearray, section_id: SectionId, offset: int) -
     raise AssertionError(f"missing section {section_id.name}")
 
 
-def _patch_section_entry_size(book: bytearray, section_id: SectionId, entry_size: int) -> None:
+def _patch_section_entry_size(
+    book: bytearray, section_id: SectionId, entry_size: int
+) -> None:
     header = BinBookHeader.unpack(bytes(book[:HEADER_SIZE]))
     for index in range(header.section_count):
         entry_offset = header.section_table_offset + index * SECTION_ENTRY_SIZE

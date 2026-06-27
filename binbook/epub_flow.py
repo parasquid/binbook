@@ -21,7 +21,9 @@ def flow_items(html: str, spine_index: int, source_full_path: str) -> list[FlowI
 
 
 def resolve_image_path(source_full_path: str, src: str) -> str:
-    return posixpath.normpath(posixpath.join(posixpath.dirname(source_full_path), src.split("#", 1)[0]))
+    return posixpath.normpath(
+        posixpath.join(posixpath.dirname(source_full_path), src.split("#", 1)[0])
+    )
 
 
 class _FlowParser(HTMLParser):
@@ -45,7 +47,9 @@ class _FlowParser(HTMLParser):
             attrs_dict = dict(attrs)
             src = attrs_dict.get("src")
             if src:
-                self.items.append(FlowItem("image", src, self.spine_index, self.source_full_path))
+                self.items.append(
+                    FlowItem("image", src, self.spine_index, self.source_full_path)
+                )
 
     def handle_data(self, data: str) -> None:
         if self._ignored_depth:
@@ -65,5 +69,7 @@ class _FlowParser(HTMLParser):
     def _flush_text(self) -> None:
         if self._text_parts:
             text = " ".join(" ".join(self._text_parts).split())
-            self.items.append(FlowItem("text", text, self.spine_index, self.source_full_path))
+            self.items.append(
+                FlowItem("text", text, self.spine_index, self.source_full_path)
+            )
             self._text_parts = []

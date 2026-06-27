@@ -12,7 +12,9 @@ from binbook.writer import EncodedPage, build_binbook
 def test_x4_profile_metadata_is_gray2_portrait_with_explicit_rotation(tmp_path):
     packed_white_page = bytes([0xFF]) * 96_000
     compressed = encode_packbits(packed_white_page)
-    page = EncodedPage(compressed=compressed, uncompressed_size=len(packed_white_page), page_crc32=0)
+    page = EncodedPage(
+        compressed=compressed, uncompressed_size=len(packed_white_page), page_crc32=0
+    )
     path = tmp_path / "x4.binbook"
     path.write_bytes(build_binbook([page], XTEINK_X4_PORTRAIT, source_name="x4"))
 

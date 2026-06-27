@@ -8,6 +8,7 @@ Page 3: lorem ipsum text rendered through Pillow
 
 All pages use X4 native 3-plane (bitmap=0x07) storage.
 """
+
 from __future__ import annotations
 
 import sys
@@ -167,7 +168,9 @@ def main() -> None:
     # Page 0: gray-band page (decode compressed source, then re-encode as X4 native)
     compressed_source = _page_data_slice(original, 0)
     page0_packed = decode_packbits(compressed_source)
-    page0 = encoded_page(page0_packed, original.pages[0].page_kind, original.pages[0].source_spine_index)
+    page0 = encoded_page(
+        page0_packed, original.pages[0].page_kind, original.pages[0].source_spine_index
+    )
 
     # Page 1: checkerboard
     checker_img = _make_checkerboard(profile)
@@ -193,18 +196,27 @@ def main() -> None:
     reader = BinBookReader.open(OUTPUT_FIXTURE, validate=True)
     assert len(reader.pages) == 4, f"expected 4 pages, got {len(reader.pages)}"
     for i, page in enumerate(reader.pages):
-        assert page.pixel_format == PixelFormat.GRAY2_PACKED, f"page {i} wrong pixel format: {page.pixel_format}"
-        assert (page.stored_width, page.stored_height) == (800, 480), \
+        assert page.pixel_format == PixelFormat.GRAY2_PACKED, (
+            f"page {i} wrong pixel format: {page.pixel_format}"
+        )
+        assert (page.stored_width, page.stored_height) == (800, 480), (
             f"page {i} wrong stored dimensions: {page.stored_width}x{page.stored_height}"
-        assert page.plane_dir.bitmap == 0x07, f"page {i} wrong plane bitmap: {page.plane_dir.bitmap:#x}"
-    assert len(reader.page_chunks) == len(reader.pages) * 3 * 30, \
+        )
+        assert page.plane_dir.bitmap == 0x07, (
+            f"page {i} wrong plane bitmap: {page.plane_dir.bitmap:#x}"
+        )
+    assert len(reader.page_chunks) == len(reader.pages) * 3 * 30, (
         f"expected {len(reader.pages) * 3 * 30} chunk records, got {len(reader.page_chunks)}"
+    )
     expected_transitions = max(0, len(reader.pages) - 1) * 2
-    assert len(reader.page_transitions) == expected_transitions, \
+    assert len(reader.page_transitions) == expected_transitions, (
         f"expected {expected_transitions} transition records, got {len(reader.page_transitions)}"
+    )
 
     sizes = [[page.plane_dir.sizes[s] for s in range(4)] for page in reader.pages]
-    print(f"nav_probe.binbook: {len(reader.pages)} pages, {len(reader.page_chunks)} chunks, {len(reader.page_transitions)} transitions")
+    print(
+        f"nav_probe.binbook: {len(reader.pages)} pages, {len(reader.page_chunks)} chunks, {len(reader.page_transitions)} transitions"
+    )
     for i, s in enumerate(sizes):
         print(f"  page {i} plane sizes: {s}")
 

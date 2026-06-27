@@ -1,6 +1,11 @@
 from PIL import Image
 
-from binbook.images import _luma_to_gray1, _luma_to_gray2, _luma_to_gray2_pixels, storage_image_to_logical
+from binbook.images import (
+    _luma_to_gray1,
+    _luma_to_gray2,
+    _luma_to_gray2_pixels,
+    storage_image_to_logical,
+)
 from binbook.profiles import XTEINK_X4_PORTRAIT
 
 

@@ -29,14 +29,28 @@ def test_adjacent_transition_index_marks_changed_chunks(tmp_path):
     black = pack_gray2([0] * (480 * 800), 480, 800)
     path = tmp_path / "transitions.binbook"
 
-    path.write_bytes(build_binbook([
-        encoded_page(white, PageKind.TEXT, UINT32_MAX),
-        encoded_page(black, PageKind.TEXT, UINT32_MAX),
-    ], profile, source_name="transition-test"))
+    path.write_bytes(
+        build_binbook(
+            [
+                encoded_page(white, PageKind.TEXT, UINT32_MAX),
+                encoded_page(black, PageKind.TEXT, UINT32_MAX),
+            ],
+            profile,
+            source_name="transition-test",
+        )
+    )
     reader = BinBookReader.open(path, validate=True)
 
-    forward = next(t for t in reader.page_transitions if t.from_page_number == 0 and t.to_page_number == 1)
-    backward = next(t for t in reader.page_transitions if t.from_page_number == 1 and t.to_page_number == 0)
+    forward = next(
+        t
+        for t in reader.page_transitions
+        if t.from_page_number == 0 and t.to_page_number == 1
+    )
+    backward = next(
+        t
+        for t in reader.page_transitions
+        if t.from_page_number == 1 and t.to_page_number == 0
+    )
     assert forward.changed_chunk_mask == (1 << 30) - 1
     assert backward.changed_chunk_mask == (1 << 30) - 1
     assert forward.first_changed_chunk == 0

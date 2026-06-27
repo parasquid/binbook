@@ -15,42 +15,46 @@ from urllib.parse import unquote, urlparse
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 from .fonts import FONT_KERNING_DIR, FontInfo, get_font, load_pair_kerning_table
-from .text_rendering import TEXT_FEATURES, character_spacing_px, draw_text, load_font, wrap_text_to_width
+from .text_rendering import (
+    TEXT_FEATURES,
+    character_spacing_px,
+    draw_text,
+    load_font,
+    wrap_text_to_width,
+)
 
 DEFAULT_CANDIDATE_VALUES = (0, -40, -60, -80, -100, -120, -140, -160)
-UPPER_TO_LOWER_PAIRS = ("To", "Th", "Ta", "Te", "Ty", "Yo", "Ye", "Ya", "Yu", "Wo", "Wa", "We", "Vo", "Va", "Ve")
+UPPER_TO_LOWER_PAIRS = (
+    "To",
+    "Th",
+    "Ta",
+    "Te",
+    "Ty",
+    "Yo",
+    "Ye",
+    "Ya",
+    "Yu",
+    "Wo",
+    "Wa",
+    "We",
+    "Vo",
+    "Va",
+    "Ve",
+)
 UPPER_PAIRS = ("AV", "VA", "WA", "AW", "LT", "LA", "LY", "TA", "TY")
 LOWER_PAIRS = ("yo", "oj", "ry", "ly", "vy", "wy", "fe", "rf", "ct")
 PROOF_WORDS = ("You", "you", "Toast", "HAWAII", "Yale", "Yukon", "Water", "Av", "LT")
 PAIR_CONTEXTS = {
-    "Yo": (
-        "Your young friend found a yellow book.",
-    ),
-    "yo": (
-        "A young reader may enjoy your story.",
-    ),
-    "To": (
-        "Today the town opened the tower to visitors.",
-    ),
-    "Th": (
-        "The thick thread held the theorem together.",
-    ),
-    "AV": (
-        "AV letters need to sit beside HAWAII and WATER.",
-    ),
-    "WA": (
-        "Water washed away the warm sand.",
-    ),
-    "AW": (
-        "A warm dawn awoke the whole town.",
-    ),
-    "LT": (
-        "LT appears beside HALT, SALT, and WALT.",
-    ),
+    "Yo": ("Your young friend found a yellow book.",),
+    "yo": ("A young reader may enjoy your story.",),
+    "To": ("Today the town opened the tower to visitors.",),
+    "Th": ("The thick thread held the theorem together.",),
+    "AV": ("AV letters need to sit beside HAWAII and WATER.",),
+    "WA": ("Water washed away the warm sand.",),
+    "AW": ("A warm dawn awoke the whole town.",),
+    "LT": ("LT appears beside HALT, SALT, and WALT.",),
 }
-FALLBACK_CONTEXTS = (
-    "The quick reader studies every letter pair in context.",
-)
+FALLBACK_CONTEXTS = ("The quick reader studies every letter pair in context.",)
 HOLISTIC_CONTEXT = (
     "Today your young reader saw Yale, Yukon, water, Toast, HAWAII, "
     "a V-shaped valley, warm waves, clever type, and useful letters."
@@ -122,7 +126,9 @@ def generate_kerning_proof(
         "font_path": str(font_info.path),
         "font_size_px": font_size,
         "character_spacing_milli_em": font_info.default_character_spacing_milli_em,
-        "existing_pair_kerning_milli_em": _serialize_pair_table(font_info.pair_kerning_milli_em),
+        "existing_pair_kerning_milli_em": _serialize_pair_table(
+            font_info.pair_kerning_milli_em
+        ),
         "proof_words": list(PROOF_WORDS),
         "source_notes": [
             "Typefacts / Bringhurst kerning-test text for broad Latin kerning coverage.",
@@ -135,7 +141,9 @@ def generate_kerning_proof(
         "pairs": pairs,
     }
 
-    report_json, suggested_table, index_html = _write_report_outputs(output_dir, font_info.family, report, static=static)
+    report_json, suggested_table, index_html = _write_report_outputs(
+        output_dir, font_info.family, report, static=static
+    )
     _log(f"Generated kerning proof with {len(pairs)} pairs at {index_html}")
     return KerningProofResult(
         index_html=index_html,
@@ -161,7 +169,9 @@ def save_canonical_kerning(
 ) -> dict[str, int]:
     get_font(font_family)
     canonical_pairs = _validate_canonical_pairs(pairs)
-    path = output_path if output_path is not None else canonical_kerning_path(font_family)
+    path = (
+        output_path if output_path is not None else canonical_kerning_path(font_family)
+    )
     _log(f"Saving canonical kerning JSON for {font_family}: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(canonical_pairs, indent=2, sort_keys=True) + "\n")
@@ -178,11 +188,15 @@ def serve_kerning_proof(
     port: int = 8765,
 ) -> None:
     proof = generate_kerning_proof(font_family, output_dir, font_size=font_size)
-    handler_class = KerningProofRequestHandler.make_handler(font_family, output_dir, proof.report)
+    handler_class = KerningProofRequestHandler.make_handler(
+        font_family, output_dir, proof.report
+    )
     try:
         server = ThreadingHTTPServer((host, port), handler_class)
     except OSError as exc:
-        raise RuntimeError(f"could not start kerning proof server on {host}:{port}: {exc}") from exc
+        raise RuntimeError(
+            f"could not start kerning proof server on {host}:{port}: {exc}"
+        ) from exc
     print(f"Kerning proof server: http://{host}:{port}/")
     try:
         server.serve_forever()
@@ -205,8 +219,7 @@ def _build_pair_report(
     current_value = font_info.pair_kerning_milli_em.get(pair)
     values = candidate_values(current_value)
     candidates = [
-        _build_candidate(pair, value, font, font_info, assets_dir)
-        for value in values
+        _build_candidate(pair, value, font, font_info, assets_dir) for value in values
     ]
     suggested = min(candidates, key=lambda item: abs(item["gap_px"] - target_gap))
     return {
@@ -244,13 +257,17 @@ def _build_candidate(
     }
 
 
-def _measure_controls(font: ImageFont.FreeTypeFont, font_info: FontInfo) -> dict[str, Any]:
+def _measure_controls(
+    font: ImageFont.FreeTypeFont, font_info: FontInfo
+) -> dict[str, Any]:
     controls: dict[str, Any] = {}
     for category, pairs in CONTROL_PAIRS.items():
         measurements = [
             {
                 "pair": pair_text,
-                "gap_px": _measure_pair_gap((pair_text[0], pair_text[1]), font, font_info, 0),
+                "gap_px": _measure_pair_gap(
+                    (pair_text[0], pair_text[1]), font, font_info, 0
+                ),
             }
             for pair_text in pairs
         ]
@@ -271,7 +288,9 @@ def _measure_pair_gap(
     draw = ImageDraw.Draw(Image.new("L", (360, 180), 255))
     left_x = 80
     baseline_y = 44
-    spacing_px = character_spacing_px(font, font_info.default_character_spacing_milli_em)
+    spacing_px = character_spacing_px(
+        font, font_info.default_character_spacing_milli_em
+    )
     right_x = left_x + draw.textlength(pair[0], font=font, features=TEXT_FEATURES)
     right_x += spacing_px + _pair_value_px(font, pair_value_milli_em)
 
@@ -338,7 +357,9 @@ def _build_holistic_proof(
     stale: bool = False,
     stale_pairs: list[str] | None = None,
 ) -> dict[str, Any]:
-    image = _render_paragraph_image(HOLISTIC_CONTEXT, font, font_info, dict(font_info.pair_kerning_milli_em))
+    image = _render_paragraph_image(
+        HOLISTIC_CONTEXT, font, font_info, dict(font_info.pair_kerning_milli_em)
+    )
     filename = "holistic.png"
     image.save(assets_dir / filename)
     return {
@@ -355,9 +376,7 @@ def _context_texts(pair_text: str) -> tuple[str, ...]:
     proof_matches = tuple(word for word in PROOF_WORDS if pair_text in word)
     if proof_matches:
         proof_text = " ".join(proof_matches)
-        return (
-            f"{proof_text} appears alongside ordinary English words.",
-        )
+        return (f"{proof_text} appears alongside ordinary English words.",)
     return FALLBACK_CONTEXTS
 
 
@@ -437,7 +456,9 @@ def _json_bytes(payload: object) -> bytes:
     return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
-def _response(status: HTTPStatus, body: object, content_type: str) -> KerningProofResponse:
+def _response(
+    status: HTTPStatus, body: object, content_type: str
+) -> KerningProofResponse:
     if isinstance(body, bytes):
         response_body = body
     elif isinstance(body, str):
@@ -461,14 +482,20 @@ def _write_report_outputs(
     report_json = output_dir / "report.json"
     report_json.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     suggested_table = output_dir / "approved_table.py.txt"
-    suggested_table.write_text(_table_text(font_family, report["pairs"], use_suggestions=True))
+    suggested_table.write_text(
+        _table_text(font_family, report["pairs"], use_suggestions=True)
+    )
     index_html = output_dir / "index.html"
     index_html.write_text(_index_html(report, static=static))
     return report_json, suggested_table, index_html
 
 
 def _changed_pair_keys(previous: dict[str, int], saved: dict[str, int]) -> list[str]:
-    return sorted(pair for pair in set(previous) | set(saved) if previous.get(pair) != saved.get(pair))
+    return sorted(
+        pair
+        for pair in set(previous) | set(saved)
+        if previous.get(pair) != saved.get(pair)
+    )
 
 
 def _pair_table_from_serialized(pair_table: object) -> dict[tuple[str, str], int]:
@@ -527,30 +554,42 @@ class KerningProofRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         content_length = int(self.headers.get("Content-Length", "0"))
-        self._send_response(self.handle_post(self.path, self.rfile.read(content_length)))
+        self._send_response(
+            self.handle_post(self.path, self.rfile.read(content_length))
+        )
 
     @classmethod
     def handle_get(cls, raw_path: str) -> KerningProofResponse:
         path = urlparse(raw_path).path
         if path == "/":
-            return _response(HTTPStatus.OK, _index_html(cls.report), "text/html; charset=utf-8")
+            return _response(
+                HTTPStatus.OK, _index_html(cls.report), "text/html; charset=utf-8"
+            )
         if path == "/report.json":
             return _response(HTTPStatus.OK, _json_bytes(cls.report), "application/json")
         if path == "/api/kerning":
-            kerning_path = cls.canonical_path if cls.canonical_path is not None else canonical_kerning_path(cls.font_family)
+            kerning_path = (
+                cls.canonical_path
+                if cls.canonical_path is not None
+                else canonical_kerning_path(cls.font_family)
+            )
             return _response(
                 HTTPStatus.OK,
                 _json_bytes(
                     {
                         "font_family": cls.font_family,
-                        "pairs": _serialize_pair_table(load_pair_kerning_table(kerning_path)),
+                        "pairs": _serialize_pair_table(
+                            load_pair_kerning_table(kerning_path)
+                        ),
                     }
                 ),
                 "application/json",
             )
         if path.startswith("/assets/"):
             return cls._asset_response(path)
-        return _response(HTTPStatus.NOT_FOUND, {"error": "not found"}, "application/json")
+        return _response(
+            HTTPStatus.NOT_FOUND, {"error": "not found"}, "application/json"
+        )
 
     @classmethod
     def handle_post(cls, raw_path: str, body: bytes) -> KerningProofResponse:
@@ -558,7 +597,9 @@ class KerningProofRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/holistic":
             return cls._handle_holistic_post(body)
         if path != "/api/kerning":
-            return _response(HTTPStatus.NOT_FOUND, {"error": "not found"}, "application/json")
+            return _response(
+                HTTPStatus.NOT_FOUND, {"error": "not found"}, "application/json"
+            )
         try:
             payload = json.loads(body.decode("utf-8"))
             if not isinstance(payload, dict):
@@ -572,19 +613,25 @@ class KerningProofRequestHandler(BaseHTTPRequestHandler):
             saved = save_canonical_kerning(cls.font_family, pairs, cls.canonical_path)
             changed_pairs = _changed_pair_keys(previous, saved)
             if changed_pairs:
-                _log(f"Regenerating {len(changed_pairs)} changed pair proofs: {', '.join(changed_pairs)}")
+                _log(
+                    f"Regenerating {len(changed_pairs)} changed pair proofs: {', '.join(changed_pairs)}"
+                )
                 cls._regenerate_pair_reports(saved, changed_pairs)
                 cls.report["holistic"] = {
                     **cls.report["holistic"],
                     "stale": True,
                     "stale_pairs": changed_pairs,
                 }
-                _log(f"Holistic proof marked stale for {len(changed_pairs)} changed pairs")
+                _log(
+                    f"Holistic proof marked stale for {len(changed_pairs)} changed pairs"
+                )
             else:
                 _log("No changed pair proofs to regenerate")
             _write_report_outputs(cls.output_dir, cls.font_family, cls.report)
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            return _response(HTTPStatus.BAD_REQUEST, {"error": str(exc)}, "application/json")
+            return _response(
+                HTTPStatus.BAD_REQUEST, {"error": str(exc)}, "application/json"
+            )
         return _response(
             HTTPStatus.OK,
             {
@@ -605,8 +652,12 @@ class KerningProofRequestHandler(BaseHTTPRequestHandler):
                 raise ValueError("request body must be a JSON object")
             if payload.get("font_family") != cls.font_family:
                 raise ValueError("font_family does not match this proof server")
-            pair_table = _pair_table_from_serialized(cls.report.get("existing_pair_kerning_milli_em", {}))
-            font_info = replace(get_font(cls.font_family), pair_kerning_milli_em=pair_table)
+            pair_table = _pair_table_from_serialized(
+                cls.report.get("existing_pair_kerning_milli_em", {})
+            )
+            font_info = replace(
+                get_font(cls.font_family), pair_kerning_milli_em=pair_table
+            )
             font = load_font(int(cls.report.get("font_size_px", 72)), font_info)
             assets_dir = cls.output_dir / "assets"
             _log(f"Regenerating holistic proof for {cls.font_family}")
@@ -614,15 +665,23 @@ class KerningProofRequestHandler(BaseHTTPRequestHandler):
             _write_report_outputs(cls.output_dir, cls.font_family, cls.report)
             _log(f"Regenerated holistic proof for {cls.font_family}")
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            return _response(HTTPStatus.BAD_REQUEST, {"error": str(exc)}, "application/json")
+            return _response(
+                HTTPStatus.BAD_REQUEST, {"error": str(exc)}, "application/json"
+            )
         return _response(
             HTTPStatus.OK,
-            {"font_family": cls.font_family, "regenerated": "holistic", "report": cls.report},
+            {
+                "font_family": cls.font_family,
+                "regenerated": "holistic",
+                "report": cls.report,
+            },
             "application/json",
         )
 
     @classmethod
-    def _regenerate_pair_reports(cls, saved: dict[str, int], changed_pairs: list[str]) -> None:
+    def _regenerate_pair_reports(
+        cls, saved: dict[str, int], changed_pairs: list[str]
+    ) -> None:
         pair_table = _pair_table_from_serialized(saved)
         font_info = replace(get_font(cls.font_family), pair_kerning_milli_em=pair_table)
         font = load_font(int(cls.report.get("font_size_px", 72)), font_info)
@@ -630,24 +689,35 @@ class KerningProofRequestHandler(BaseHTTPRequestHandler):
         existing_pairs = {entry["pair"]: entry for entry in cls.report["pairs"]}
         controls = cls.report["controls"]
         for pair_text in changed_pairs:
-            existing_pairs[pair_text] = _build_pair_report((pair_text[0], pair_text[1]), font, font_info, controls, assets_dir)
+            existing_pairs[pair_text] = _build_pair_report(
+                (pair_text[0], pair_text[1]), font, font_info, controls, assets_dir
+            )
         cls.report["pairs"] = [
-            existing_pairs.get(entry["pair"], entry)
-            for entry in cls.report["pairs"]
+            existing_pairs.get(entry["pair"], entry) for entry in cls.report["pairs"]
         ]
         existing_order = {entry["pair"] for entry in cls.report["pairs"]}
-        cls.report["pairs"].extend(existing_pairs[pair_text] for pair_text in changed_pairs if pair_text not in existing_order)
+        cls.report["pairs"].extend(
+            existing_pairs[pair_text]
+            for pair_text in changed_pairs
+            if pair_text not in existing_order
+        )
         cls.report["existing_pair_kerning_milli_em"] = _serialize_pair_table(pair_table)
 
     @classmethod
     def _asset_response(cls, path: str) -> KerningProofResponse:
         asset_name = unquote(path.removeprefix("/assets/"))
         if "/" in asset_name or "\\" in asset_name or asset_name in {"", ".", ".."}:
-            return _response(HTTPStatus.BAD_REQUEST, {"error": "invalid asset path"}, "application/json")
+            return _response(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "invalid asset path"},
+                "application/json",
+            )
         asset_path = (cls.output_dir / "assets" / asset_name).resolve()
         asset_root = (cls.output_dir / "assets").resolve()
         if asset_path.parent != asset_root or not asset_path.exists():
-            return _response(HTTPStatus.NOT_FOUND, {"error": "asset not found"}, "application/json")
+            return _response(
+                HTTPStatus.NOT_FOUND, {"error": "asset not found"}, "application/json"
+            )
         return KerningProofResponse(
             status=HTTPStatus.OK,
             headers={"Content-Type": "image/png"},
@@ -669,7 +739,11 @@ class KerningProofRequestHandler(BaseHTTPRequestHandler):
 def _index_html(report: dict[str, Any], *, static: bool = False) -> str:
     data = json.dumps(report, sort_keys=True).replace("</", "<\\/")
     save_button = "" if static else '<button id="save">Save Canonical JSON</button>'
-    holistic_button = "" if static else '<button id="regenerate-holistic" hidden>Regenerate Holistic</button>'
+    holistic_button = (
+        ""
+        if static
+        else '<button id="regenerate-holistic" hidden>Regenerate Holistic</button>'
+    )
     static_note = (
         '<span id="save-status">Static export: run without --static to save canonical JSON from the browser.</span>'
         if static
@@ -924,9 +998,14 @@ def _index_html(report: dict[str, Any], *, static: bool = False) -> str:
 """
 
 
-def _table_text(font_family: str, pairs: list[dict[str, Any]], *, use_suggestions: bool) -> str:
+def _table_text(
+    font_family: str, pairs: list[dict[str, Any]], *, use_suggestions: bool
+) -> str:
     name = re.sub(r"[^A-Z0-9]+", "_", font_family.upper())
-    lines = [f"# Generated by binbook kerning-proof for {font_family}", f"{name}_PAIR_KERNING_MILLI_EM = {{"]
+    lines = [
+        f"# Generated by binbook kerning-proof for {font_family}",
+        f"{name}_PAIR_KERNING_MILLI_EM = {{",
+    ]
     key = "suggested_value" if use_suggestions else "current_value"
     for pair in pairs:
         value = pair[key]
@@ -970,7 +1049,4 @@ def _pair_file_stem(pair_text: str) -> str:
 
 
 def _serialize_pair_table(pair_table: object) -> dict[str, int]:
-    return {
-        "".join(pair): value
-        for pair, value in dict(pair_table).items()
-    }
+    return {"".join(pair): value for pair, value in dict(pair_table).items()}

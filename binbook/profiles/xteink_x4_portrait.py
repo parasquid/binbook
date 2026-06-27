@@ -15,7 +15,9 @@ PROFILE = DisplayProfile(
     default_storage_pixel_format=PixelFormat.GRAY2_PACKED,
     storage_pixel_format=PixelFormat.GRAY2_PACKED,
     storage_pixel_format_flag=PixelFormatFlag.GRAY2_PACKED,
-    supported_storage_pixel_format_flags=int(PixelFormatFlag.GRAY1_PACKED | PixelFormatFlag.GRAY2_PACKED),
+    supported_storage_pixel_format_flags=int(
+        PixelFormatFlag.GRAY1_PACKED | PixelFormatFlag.GRAY2_PACKED
+    ),
     logical_orientation=1,
     logical_to_physical_rotation=270,
     scan_order_hint=1,

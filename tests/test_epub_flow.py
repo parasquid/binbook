@@ -38,4 +38,7 @@ def test_flow_items_ignore_head_style_and_script_text():
 
 
 def test_resolve_image_path_handles_relative_paths_and_fragments():
-    assert resolve_image_path("OEBPS/Text/chapter.xhtml", "../Images/pic.png#cover") == "OEBPS/Images/pic.png"
+    assert (
+        resolve_image_path("OEBPS/Text/chapter.xhtml", "../Images/pic.png#cover")
+        == "OEBPS/Images/pic.png"
+    )

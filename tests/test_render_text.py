@@ -9,7 +9,13 @@ from binbook.fonts import get_font
 from binbook.constants import PixelFormat
 from binbook.images import packed_to_image, storage_image_to_logical
 from binbook.profiles import XTEINK_X4_PORTRAIT
-from binbook.text_rendering import DEFAULT_FONT_PATH, draw_text, load_font, measure_text, render_text_to_packed
+from binbook.text_rendering import (
+    DEFAULT_FONT_PATH,
+    draw_text,
+    load_font,
+    measure_text,
+    render_text_to_packed,
+)
 
 
 def test_rendered_text_respects_right_margin_for_wide_glyphs():
@@ -53,7 +59,9 @@ def test_opendyslexic_default_character_spacing_tightens_measurement():
     text = "serviceable"
 
     normal_width = measure_text(draw, text, font)
-    spaced_width = measure_text(draw, text, font, font_info.default_character_spacing_milli_em)
+    spaced_width = measure_text(
+        draw, text, font, font_info.default_character_spacing_milli_em
+    )
 
     assert spaced_width < normal_width
 
@@ -83,7 +91,9 @@ def test_draw_text_keeps_ligature_prone_characters():
 
     expected = Image.new("L", (360, 160), 255)
     expected_draw = ImageDraw.Draw(expected)
-    expected_draw.text((20, 40), "office", font=font, fill=0, features=["kern", "-liga"])
+    expected_draw.text(
+        (20, 40), "office", font=font, fill=0, features=["kern", "-liga"]
+    )
 
     actual_bbox = ImageChops.invert(actual).getbbox()
     expected_bbox = ImageChops.invert(expected).getbbox()
@@ -101,7 +111,9 @@ def test_opendyslexic_pair_kerning_tightens_you_without_global_spacing_change():
     spacing = font_info.default_character_spacing_milli_em
 
     without_pair_adjustment = measure_text(draw, "You", font, spacing)
-    with_pair_adjustment = measure_text(draw, "You", font, spacing, font_info.pair_kerning_milli_em)
+    with_pair_adjustment = measure_text(
+        draw, "You", font, spacing, font_info.pair_kerning_milli_em
+    )
 
     assert without_pair_adjustment - with_pair_adjustment >= 8
 
@@ -114,7 +126,9 @@ def test_opendyslexic_pair_kerning_supports_lowercase_yo():
     spacing = font_info.default_character_spacing_milli_em
 
     without_pair_adjustment = measure_text(draw, "you", font, spacing)
-    with_pair_adjustment = measure_text(draw, "you", font, spacing, font_info.pair_kerning_milli_em)
+    with_pair_adjustment = measure_text(
+        draw, "you", font, spacing, font_info.pair_kerning_milli_em
+    )
 
     assert without_pair_adjustment - with_pair_adjustment >= 4
 
@@ -148,7 +162,15 @@ def test_draw_text_applies_same_pair_kerning_as_measurement():
 
     with_pairs = Image.new("L", (400, 160), 255)
     draw_with_pairs = ImageDraw.Draw(with_pairs)
-    draw_text(draw_with_pairs, (20, 40), "You", font, spacing, fill=0, pair_kerning_milli_em=font_info.pair_kerning_milli_em)
+    draw_text(
+        draw_with_pairs,
+        (20, 40),
+        "You",
+        font,
+        spacing,
+        fill=0,
+        pair_kerning_milli_em=font_info.pair_kerning_milli_em,
+    )
 
     without_bbox = ImageChops.invert(without_pairs).getbbox()
     with_bbox = ImageChops.invert(with_pairs).getbbox()

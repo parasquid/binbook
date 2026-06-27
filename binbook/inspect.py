@@ -14,7 +14,13 @@ class InspectionResult:
     ok: bool
 
 
-def inspect_book(reader: BinBookReader, validate: bool = False, *, json_output: bool = False, strict: bool = False) -> InspectionResult:
+def inspect_book(
+    reader: BinBookReader,
+    validate: bool = False,
+    *,
+    json_output: bool = False,
+    strict: bool = False,
+) -> InspectionResult:
     validation_errors = collect_validation_errors(reader) if validate else []
     payload = _payload(reader, validation_errors if validate else None)
     text = _text(payload, strict=strict)
@@ -38,13 +44,19 @@ def collect_validation_errors(reader: BinBookReader) -> list[str]:
     return errors
 
 
-def _payload(reader: BinBookReader, validation_errors: list[str] | None) -> dict[str, object]:
+def _payload(
+    reader: BinBookReader, validation_errors: list[str] | None
+) -> dict[str, object]:
     total_compressed = 0
     for page in reader.pages:
         for slot in range(4):
             if page.plane_dir.bitmap & (1 << slot):
                 total_compressed += page.plane_dir.sizes[slot]
-    ratio = total_compressed / reader.header.page_data_length if reader.header.page_data_length else 0
+    ratio = (
+        total_compressed / reader.header.page_data_length
+        if reader.header.page_data_length
+        else 0
+    )
     payload: dict[str, object] = {
         "format": "BinBook",
         "file_size": reader.header.file_size,
@@ -53,7 +65,10 @@ def _payload(reader: BinBookReader, validation_errors: list[str] | None) -> dict
         "chapter_count": len(reader.chapters),
         "chunk_count": len(reader.page_chunks),
         "transition_count": len(reader.page_transitions),
-        "page_data": {"offset": reader.header.page_data_offset, "length": reader.header.page_data_length},
+        "page_data": {
+            "offset": reader.header.page_data_offset,
+            "length": reader.header.page_data_length,
+        },
         "compression": {
             "compressed_bytes": total_compressed,
             "ratio": ratio,
@@ -61,7 +76,9 @@ def _payload(reader: BinBookReader, validation_errors: list[str] | None) -> dict
         "sections": [
             {
                 "id": int(section_id),
-                "name": section_id.name if isinstance(section_id, SectionId) else str(section_id),
+                "name": section_id.name
+                if isinstance(section_id, SectionId)
+                else str(section_id),
                 "offset": section.offset,
                 "length": section.length,
                 "entry_size": section.entry_size,
@@ -86,7 +103,10 @@ def _payload(reader: BinBookReader, validation_errors: list[str] | None) -> dict
         ],
     }
     if validation_errors is not None:
-        payload["validation"] = {"ok": not validation_errors, "errors": validation_errors}
+        payload["validation"] = {
+            "ok": not validation_errors,
+            "errors": validation_errors,
+        }
     return payload
 
 

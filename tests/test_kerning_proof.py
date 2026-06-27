@@ -189,14 +189,18 @@ def test_load_pair_kerning_table_rejects_malformed_json(tmp_path):
 def test_save_canonical_kerning_writes_sorted_json_and_removes_zero_values(tmp_path):
     output = tmp_path / "opendyslexic.json"
 
-    save_canonical_kerning("opendyslexic", {"yo": -60, "Yo": -120, "AV": 0, "LT": None}, output)
+    save_canonical_kerning(
+        "opendyslexic", {"yo": -60, "Yo": -120, "AV": 0, "LT": None}, output
+    )
 
     assert output.read_text() == '{\n  "Yo": -120,\n  "yo": -60\n}\n'
 
 
 def test_save_canonical_kerning_rejects_invalid_payload(tmp_path):
     try:
-        save_canonical_kerning("opendyslexic", {"Y": -120}, tmp_path / "opendyslexic.json")
+        save_canonical_kerning(
+            "opendyslexic", {"Y": -120}, tmp_path / "opendyslexic.json"
+        )
     except ValueError as exc:
         assert "two-character" in str(exc)
     else:
@@ -205,7 +209,9 @@ def test_save_canonical_kerning_rejects_invalid_payload(tmp_path):
 
 def test_server_routes_report_assets_and_kerning_api(tmp_path):
     proof = generate_kerning_proof("opendyslexic", tmp_path)
-    handler = KerningProofRequestHandler.create_test_handler("opendyslexic", tmp_path, proof.report)
+    handler = KerningProofRequestHandler.create_test_handler(
+        "opendyslexic", tmp_path, proof.report
+    )
 
     index = handler.handle_get("/")
     report = handler.handle_get("/report.json")
@@ -241,7 +247,9 @@ def test_server_save_api_writes_canonical_table(tmp_path):
 
     response = handler.handle_post(
         "/api/kerning",
-        json.dumps({"font_family": "opendyslexic", "pairs": {"Yo": -140, "yo": 0}}).encode(),
+        json.dumps(
+            {"font_family": "opendyslexic", "pairs": {"Yo": -140, "yo": 0}}
+        ).encode(),
     )
 
     assert response.status == HTTPStatus.OK
@@ -260,7 +268,9 @@ def test_server_save_api_regenerates_changed_pairs_and_marks_holistic_stale(tmp_
 
     response = handler.handle_post(
         "/api/kerning",
-        json.dumps({"font_family": "opendyslexic", "pairs": {"Yo": -140, "AV": -100}}).encode(),
+        json.dumps(
+            {"font_family": "opendyslexic", "pairs": {"Yo": -140, "AV": -100}}
+        ).encode(),
     )
     payload = json.loads(response.body)
     regenerated_pairs = {pair["pair"]: pair for pair in payload["report"]["pairs"]}
@@ -268,10 +278,19 @@ def test_server_save_api_regenerates_changed_pairs_and_marks_holistic_stale(tmp_
     assert response.status == HTTPStatus.OK
     assert payload["regenerated_pairs"] == ["AV", "Th", "To", "Yo", "yo"]
     assert payload["pairs"] == {"AV": -100, "Yo": -140}
-    assert payload["report"]["existing_pair_kerning_milli_em"] == {"AV": -100, "Yo": -140}
+    assert payload["report"]["existing_pair_kerning_milli_em"] == {
+        "AV": -100,
+        "Yo": -140,
+    }
     assert regenerated_pairs["Yo"]["current_value"] == -140
     assert payload["report"]["holistic"]["stale"] is True
-    assert payload["report"]["holistic"]["stale_pairs"] == ["AV", "Th", "To", "Yo", "yo"]
+    assert payload["report"]["holistic"]["stale_pairs"] == [
+        "AV",
+        "Th",
+        "To",
+        "Yo",
+        "yo",
+    ]
     assert handler.report["existing_pair_kerning_milli_em"] == {"AV": -100, "Yo": -140}
 
 
@@ -300,7 +319,9 @@ def test_server_save_api_logs_save_and_regeneration_progress(tmp_path, capsys):
 
 def test_server_html_describes_save_regeneration_ux(tmp_path):
     proof = generate_kerning_proof("opendyslexic", tmp_path)
-    handler = KerningProofRequestHandler.create_test_handler("opendyslexic", tmp_path, proof.report)
+    handler = KerningProofRequestHandler.create_test_handler(
+        "opendyslexic", tmp_path, proof.report
+    )
 
     html = handler.handle_get("/").body.decode("utf-8")
 
@@ -340,7 +361,9 @@ def test_server_holistic_api_regenerates_stale_holistic_proof(tmp_path):
 
 def test_server_save_api_rejects_path_traversal_font(tmp_path):
     proof = generate_kerning_proof("opendyslexic", tmp_path)
-    handler = KerningProofRequestHandler.create_test_handler("opendyslexic", tmp_path, proof.report)
+    handler = KerningProofRequestHandler.create_test_handler(
+        "opendyslexic", tmp_path, proof.report
+    )
 
     response = handler.handle_post(
         "/api/kerning",
@@ -351,13 +374,30 @@ def test_server_save_api_rejects_path_traversal_font(tmp_path):
 
 
 def test_cli_kerning_proof_rejects_unknown_font_family(tmp_path):
-    exit_code = main(["kerning-proof", "--font-family", "missing-font", "--output-dir", str(tmp_path)])
+    exit_code = main(
+        [
+            "kerning-proof",
+            "--font-family",
+            "missing-font",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
 
     assert exit_code == 1
 
 
 def test_cli_kerning_proof_static_creates_report(tmp_path):
-    exit_code = main(["kerning-proof", "--static", "--font-family", "opendyslexic", "--output-dir", str(tmp_path)])
+    exit_code = main(
+        [
+            "kerning-proof",
+            "--static",
+            "--font-family",
+            "opendyslexic",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
 
     assert exit_code == 0
     assert (tmp_path / "index.html").exists()
@@ -368,7 +408,15 @@ def test_cli_kerning_proof_starts_server_by_default(tmp_path):
     with mock.patch("binbook.cli.serve_kerning_proof") as serve:
         serve.return_value = None
 
-        exit_code = main(["kerning-proof", "--font-family", "opendyslexic", "--output-dir", str(tmp_path)])
+        exit_code = main(
+            [
+                "kerning-proof",
+                "--font-family",
+                "opendyslexic",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
 
     assert exit_code == 0
     serve.assert_called_once()

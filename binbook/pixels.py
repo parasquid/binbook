@@ -136,7 +136,9 @@ def _clear_native_bit(row: bytearray, physical_x: int) -> None:
     row[ram_x // 8] &= ~(0x80 >> (ram_x % 8)) & 0xFF
 
 
-def gray2_packed_to_x4_native_planes(data: bytes, storage_width: int, storage_height: int) -> tuple[bytes, bytes, bytes]:
+def gray2_packed_to_x4_native_planes(
+    data: bytes, storage_width: int, storage_height: int
+) -> tuple[bytes, bytes, bytes]:
     if storage_width != X4_PHYSICAL_WIDTH or storage_height != X4_PHYSICAL_HEIGHT:
         raise ValueError(
             f"xteink-x4-portrait native planes require {X4_PHYSICAL_WIDTH}x{X4_PHYSICAL_HEIGHT} "

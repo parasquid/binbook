@@ -63,17 +63,25 @@ class DisplayProfile:
     def storage_height(self) -> int:
         return self.physical_height
 
-    def resolve(self, storage_pixel_format: str | PixelFormat | None = None) -> "DisplayProfile":
+    def resolve(
+        self, storage_pixel_format: str | PixelFormat | None = None
+    ) -> "DisplayProfile":
         if storage_pixel_format is None:
             return self._resolve_pixel_format(self.default_storage_pixel_format)
-        return self._resolve_pixel_format(_parse_storage_pixel_format(storage_pixel_format))
+        return self._resolve_pixel_format(
+            _parse_storage_pixel_format(storage_pixel_format)
+        )
 
     def _resolve_pixel_format(self, pixel_format: PixelFormat) -> "DisplayProfile":
         descriptor = PIXEL_FORMATS.get(pixel_format)
         if descriptor is None:
-            raise ValueError(f"unsupported storage pixel format for {self.name}: {pixel_format.name}")
+            raise ValueError(
+                f"unsupported storage pixel format for {self.name}: {pixel_format.name}"
+            )
         if not self.supported_storage_pixel_format_flags & int(descriptor.flag):
-            raise ValueError(f"unsupported storage pixel format for {self.name}: {pixel_format.name}")
+            raise ValueError(
+                f"unsupported storage pixel format for {self.name}: {pixel_format.name}"
+            )
         return replace(
             self,
             storage_pixel_format=pixel_format,

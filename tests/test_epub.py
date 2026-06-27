@@ -21,7 +21,10 @@ def test_read_epub_extracts_metadata_hashes_and_spine(tmp_path: Path):
     assert len(book.md5) == 16
     assert len(book.sha256) == 32
     assert [item.idref for item in book.spine] == ["chap1", "chap2"]
-    assert [item.href for item in book.spine] == ["Text/chapter1.xhtml", "Text/chapter2.xhtml"]
+    assert [item.href for item in book.spine] == [
+        "Text/chapter1.xhtml",
+        "Text/chapter2.xhtml",
+    ]
     assert book.spine[0].html.startswith("<html")
     assert book.manifest["cover"].media_type == "image/png"
 
@@ -34,7 +37,10 @@ def test_rough_page_sequence_follows_spine_order(tmp_path: Path):
     pages = book.rough_page_sequence()
 
     assert [page.source_spine_index for page in pages] == [0, 1]
-    assert [page.href for page in pages] == ["Text/chapter1.xhtml", "Text/chapter2.xhtml"]
+    assert [page.href for page in pages] == [
+        "Text/chapter1.xhtml",
+        "Text/chapter2.xhtml",
+    ]
     assert pages[0].text == "Chapter One First paragraph."
     assert pages[1].text == "Chapter Two Second paragraph."
 
@@ -120,7 +126,10 @@ def _write_minimal_epub(
             ),
         )
         zf.writestr("OEBPS/Text/chapter1.xhtml", chapter1_html)
-        zf.writestr("OEBPS/Text/chapter2.xhtml", "<html><body><h1>Chapter Two</h1><p>Second paragraph.</p></body></html>")
+        zf.writestr(
+            "OEBPS/Text/chapter2.xhtml",
+            "<html><body><h1>Chapter Two</h1><p>Second paragraph.</p></body></html>",
+        )
         zf.writestr("OEBPS/Images/cover.png", b"not-a-real-png-for-parser")
         if nav_kind == "ncx":
             zf.writestr(

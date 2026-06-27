@@ -142,10 +142,7 @@ impl<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> BinBook<R, S> {
             nav_index_entry_size: sections.nav_index.entry_size as u16,
             chapter_index_offset: sections.chapter_index.offset,
             chapter_index_entry_size: sections.chapter_index.entry_size as u16,
-            page_chunk_index_offset: sections
-                .page_chunk_index
-                .as_ref()
-                .map_or(0, |s| s.offset),
+            page_chunk_index_offset: sections.page_chunk_index.as_ref().map_or(0, |s| s.offset),
             page_chunk_index_entry_size: sections
                 .page_chunk_index
                 .as_ref()
@@ -358,7 +355,8 @@ impl<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> BinBook<R, S> {
         if buf.len() < size {
             return Err(Error::OutputBufferTooSmall);
         }
-        let off = self.page_chunk_index_offset + index as u64 * self.page_chunk_index_entry_size as u64;
+        let off =
+            self.page_chunk_index_offset + index as u64 * self.page_chunk_index_entry_size as u64;
         self.reader.read_at(off, &mut buf[..size])?;
         chunk_index::parse_page_chunk_entry(&buf[..size])
     }

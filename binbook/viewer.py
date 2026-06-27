@@ -45,8 +45,12 @@ def render_page_image(
     debug_content_box: bool = False,
 ) -> Image.Image:
     packed, page = reader.decode_page_bytes(page_number)
-    display = DisplayProfileSection.unpack(reader._section_data(SectionId.DISPLAY_PROFILE))
-    storage = packed_to_image(packed, PixelFormat(page.pixel_format), page.stored_width, page.stored_height)
+    display = DisplayProfileSection.unpack(
+        reader._section_data(SectionId.DISPLAY_PROFILE)
+    )
+    storage = packed_to_image(
+        packed, PixelFormat(page.pixel_format), page.stored_width, page.stored_height
+    )
     image = storage_image_to_logical(
         storage,
         logical_width=display.logical_width,
@@ -55,13 +59,20 @@ def render_page_image(
     ).convert("RGB")
     draw = ImageDraw.Draw(image)
     if debug_content_box:
-        draw.rectangle((page.placement_x, page.placement_y, image.width - 1, image.height - 1), outline=(255, 0, 0), width=2)
+        draw.rectangle(
+            (page.placement_x, page.placement_y, image.width - 1, image.height - 1),
+            outline=(255, 0, 0),
+            width=2,
+        )
     if show_chrome:
         label = f"{page_number + 1} / {len(reader.pages)}"
         bbox = draw.textbbox((0, 0), label)
         x = max(4, (image.width - (bbox[2] - bbox[0])) // 2)
         y = image.height - (bbox[3] - bbox[1]) - 10
-        draw.rectangle((x - 6, y - 4, x + (bbox[2] - bbox[0]) + 6, y + (bbox[3] - bbox[1]) + 4), fill=(255, 255, 255))
+        draw.rectangle(
+            (x - 6, y - 4, x + (bbox[2] - bbox[0]) + 6, y + (bbox[3] - bbox[1]) + 4),
+            fill=(255, 255, 255),
+        )
         draw.text((x, y), label, fill=(0, 0, 0))
     return image
 
@@ -90,7 +101,12 @@ def launch_viewer(
 
     pygame.init()
     pygame.display.set_caption(f"BinBook Viewer - {Path(path).name}")
-    first_page = render_page_image(reader, state.current_page, show_chrome=show_chrome, debug_content_box=debug_content_box)
+    first_page = render_page_image(
+        reader,
+        state.current_page,
+        show_chrome=show_chrome,
+        debug_content_box=debug_content_box,
+    )
     screen = pygame.display.set_mode(first_page.size)
     clock = pygame.time.Clock()
 
@@ -111,10 +127,20 @@ def launch_viewer(
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
-                if event.key in {pygame.K_RIGHT, pygame.K_DOWN, pygame.K_SPACE, pygame.K_PAGEDOWN}:
+                if event.key in {
+                    pygame.K_RIGHT,
+                    pygame.K_DOWN,
+                    pygame.K_SPACE,
+                    pygame.K_PAGEDOWN,
+                }:
                     state.next_page()
                     refresh()
-                elif event.key in {pygame.K_LEFT, pygame.K_UP, pygame.K_BACKSPACE, pygame.K_PAGEUP}:
+                elif event.key in {
+                    pygame.K_LEFT,
+                    pygame.K_UP,
+                    pygame.K_BACKSPACE,
+                    pygame.K_PAGEUP,
+                }:
                     state.previous_page()
                     refresh()
                 elif event.key == pygame.K_HOME:

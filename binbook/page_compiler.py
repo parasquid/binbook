@@ -32,14 +32,24 @@ def compile_pages(
                     pages.extend(text_pages(flow.value, profile, item.index, font))
                 elif flow.kind == "image":
                     image_path = resolve_image_path(flow.source_full_path, flow.value)
-                    packed = image_bytes_to_packed(archive.read(image_path), profile, dither=dither)
+                    packed = image_bytes_to_packed(
+                        archive.read(image_path), profile, dither=dither
+                    )
                     pages.append(encoded_page(packed, PageKind.IMAGE, item.index))
     if not pages:
-        pages.append(encoded_page(render_text_to_packed("(empty book)", profile, font), PageKind.TEXT, UINT32_MAX))
+        pages.append(
+            encoded_page(
+                render_text_to_packed("(empty book)", profile, font),
+                PageKind.TEXT,
+                UINT32_MAX,
+            )
+        )
     return pages, spine_first_page
 
 
-def compile_nav_entries(book: EpubBook, spine_first_page: dict[int, int]) -> list[NavEntry]:
+def compile_nav_entries(
+    book: EpubBook, spine_first_page: dict[int, int]
+) -> list[NavEntry]:
     by_full_path = {item.full_path: item for item in book.spine}
     entries: list[NavEntry] = []
     for point in book.nav_points:
@@ -56,9 +66,16 @@ def compile_nav_entries(book: EpubBook, spine_first_page: dict[int, int]) -> lis
     return entries
 
 
-def text_pages(text: str, profile: DisplayProfile, spine_index: int, font: FontInfo) -> list[EncodedPage]:
+def text_pages(
+    text: str, profile: DisplayProfile, spine_index: int, font: FontInfo
+) -> list[EncodedPage]:
     chunks = [text[i : i + 1800] for i in range(0, len(text), 1800)] or [text]
-    return [encoded_page(render_text_to_packed(chunk, profile, font), PageKind.TEXT, spine_index) for chunk in chunks]
+    return [
+        encoded_page(
+            render_text_to_packed(chunk, profile, font), PageKind.TEXT, spine_index
+        )
+        for chunk in chunks
+    ]
 
 
 def encoded_page(packed: bytes, kind: int, spine_index: int) -> EncodedPage:

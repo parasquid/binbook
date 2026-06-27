@@ -138,8 +138,12 @@ class SectionEntry:
 
     @classmethod
     def unpack(cls, data: bytes, offset: int = 0) -> "SectionEntry":
-        section_id, flags, section_offset, length, entry_size, record_count, crc, _ = _SECTION.unpack_from(data, offset)
-        return cls(section_id, section_offset, length, entry_size, record_count, crc, flags)
+        section_id, flags, section_offset, length, entry_size, record_count, crc, _ = (
+            _SECTION.unpack_from(data, offset)
+        )
+        return cls(
+            section_id, section_offset, length, entry_size, record_count, crc, flags
+        )
 
     @property
     def id(self) -> SectionId:
@@ -165,7 +169,7 @@ class PlaneDir:
     @classmethod
     def unpack(cls, data: bytes, offset: int = 0) -> "PlaneDir":
         bitmap = data[offset]
-        compression = list(data[offset + 1:offset + 5])
+        compression = list(data[offset + 1 : offset + 5])
         offsets = list(struct.unpack_from("<4I", data, offset + 8))
         sizes = list(struct.unpack_from("<4I", data, offset + 24))
         return cls(bitmap=bitmap, compression=compression, offsets=offsets, sizes=sizes)

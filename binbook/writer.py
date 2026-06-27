@@ -19,7 +19,11 @@ from .fonts import FontInfo, get_font
 from .images import png_to_packed
 from .profiles import DisplayProfile, get_profile
 from .rle import encode_packbits
-from .sections import DisplayProfileSection, LayoutProfileSection, ReaderRequirementsSection
+from .sections import (
+    DisplayProfileSection,
+    LayoutProfileSection,
+    ReaderRequirementsSection,
+)
 from .strings import StringTableBuilder
 from .structs import (
     CHAPTER_INDEX_ENTRY_SIZE,
@@ -109,7 +113,11 @@ def encode_png_folder(
         pages.append(EncodedPage(compressed, len(packed), crc32(compressed)))
 
     dither_method = DitherMethod.FLOYD_STEINBERG if dither else DitherMethod.NONE
-    output.write_bytes(build_binbook(pages, profile, source_name=input_dir.name, dither_method=dither_method))
+    output.write_bytes(
+        build_binbook(
+            pages, profile, source_name=input_dir.name, dither_method=dither_method
+        )
+    )
 
 
 def build_binbook(
@@ -136,7 +144,9 @@ def build_binbook(
         "title": strings.add(book_info.title or source_name),
         "author": strings.add(book_info.author),
         "language": strings.add(book_info.language),
-        "package_identifier": strings.add(book_info.package_identifier or source_info.package_identifier),
+        "package_identifier": strings.add(
+            book_info.package_identifier or source_info.package_identifier
+        ),
         "filename": strings.add(source_info.filename or source_name),
         "compiler": strings.add("binbook-poc"),
         "renderer": strings.add("Pillow"),
@@ -150,11 +160,33 @@ def build_binbook(
         (SectionId.DISPLAY_PROFILE, _display_profile(profile, refs), 0, 0),
         (SectionId.LAYOUT_PROFILE, _layout_profile(profile), 0, 0),
         (SectionId.READER_REQUIREMENTS, _reader_requirements(profile), 0, 0),
-        (SectionId.SOURCE_IDENTITY, _source_identity(source_info, refs["filename"], refs["package_identifier"]), 0, 0),
-        (SectionId.BOOK_METADATA, _book_metadata(refs["title"], refs["author"], refs["language"]), 0, 0),
+        (
+            SectionId.SOURCE_IDENTITY,
+            _source_identity(source_info, refs["filename"], refs["package_identifier"]),
+            0,
+            0,
+        ),
+        (
+            SectionId.BOOK_METADATA,
+            _book_metadata(refs["title"], refs["author"], refs["language"]),
+            0,
+            0,
+        ),
         (SectionId.RENDITION_IDENTITY, _rendition_identity(refs["compiler"]), 0, 0),
-        (SectionId.FONT_POLICY, _font_policy(font_info, refs["font_name"], refs["font_path"], refs["renderer"]), 0, 0),
-        (SectionId.TYPOGRAPHY_POLICY, _typography_policy(character_spacing_milli_em), 0, 0),
+        (
+            SectionId.FONT_POLICY,
+            _font_policy(
+                font_info, refs["font_name"], refs["font_path"], refs["renderer"]
+            ),
+            0,
+            0,
+        ),
+        (
+            SectionId.TYPOGRAPHY_POLICY,
+            _typography_policy(character_spacing_milli_em),
+            0,
+            0,
+        ),
         (SectionId.IMAGE_POLICY, _image_policy(profile, dither_method), 0, 0),
         (SectionId.COMPRESSION_POLICY, _compression_policy(), 0, 0),
         (SectionId.CHROME_POLICY, _chrome_policy(), 0, 0),
@@ -175,8 +207,20 @@ def build_binbook(
                 CHAPTER_INDEX_ENTRY_SIZE,
                 len(_chapter_entries(nav_entries)),
             ),
-            (SectionId.PAGE_CHUNK_INDEX, chunk_index, PAGE_CHUNK_INDEX_ENTRY_SIZE, len(chunk_index) // PAGE_CHUNK_INDEX_ENTRY_SIZE),
-            (SectionId.PAGE_TRANSITION_INDEX, transition_index, PAGE_TRANSITION_INDEX_ENTRY_SIZE, len(transition_index) // PAGE_TRANSITION_INDEX_ENTRY_SIZE if transition_index else 0),
+            (
+                SectionId.PAGE_CHUNK_INDEX,
+                chunk_index,
+                PAGE_CHUNK_INDEX_ENTRY_SIZE,
+                len(chunk_index) // PAGE_CHUNK_INDEX_ENTRY_SIZE,
+            ),
+            (
+                SectionId.PAGE_TRANSITION_INDEX,
+                transition_index,
+                PAGE_TRANSITION_INDEX_ENTRY_SIZE,
+                len(transition_index) // PAGE_TRANSITION_INDEX_ENTRY_SIZE
+                if transition_index
+                else 0,
+            ),
         ]
     )
 
@@ -189,13 +233,31 @@ def build_binbook(
     section_entries: list[SectionEntry] = []
     data_parts: list[bytes] = []
     for section_id, data, entry_size, record_count in sections:
-        section_entries.append(SectionEntry(section_id, cursor, len(data), entry_size, record_count, crc32(data) if data else 0))
+        section_entries.append(
+            SectionEntry(
+                section_id,
+                cursor,
+                len(data),
+                entry_size,
+                record_count,
+                crc32(data) if data else 0,
+            )
+        )
         data_parts.append(data)
         cursor += len(data)
 
     page_data_offset = _align_up(cursor, profile.page_data_alignment)
     page_data = b"".join(page.compressed for page in pages)
-    section_entries.append(SectionEntry(SectionId.PAGE_DATA, page_data_offset, len(page_data), 0, 0, crc32(page_data)))
+    section_entries.append(
+        SectionEntry(
+            SectionId.PAGE_DATA,
+            page_data_offset,
+            len(page_data),
+            0,
+            0,
+            crc32(page_data),
+        )
+    )
 
     header = BinBookHeader(
         file_size=page_data_offset + len(page_data),
@@ -207,7 +269,9 @@ def build_binbook(
     )
     section_table = b"".join(entry.pack() for entry in section_entries)
     metadata = b"".join(data_parts)
-    padding = bytes(page_data_offset - (HEADER_SIZE + len(section_table) + len(metadata)))
+    padding = bytes(
+        page_data_offset - (HEADER_SIZE + len(section_table) + len(metadata))
+    )
     return header.pack() + section_table + metadata + padding + page_data
 
 
@@ -307,6 +371,7 @@ def _chapter_index(entries: list[NavEntry], title_refs: list[StringRef]) -> byte
 
 def _chunk_index(pages: list[EncodedPage]) -> bytes:
     from .pixels import X4_CHUNK_ROWS
+
     out = bytearray()
     global_offset = 0
     for page_index, page in enumerate(pages):
@@ -353,9 +418,12 @@ def _transition_index(pages: list[EncodedPage]) -> bytes:
     return bytes(out)
 
 
-def _compare_bw_chunks(from_page: EncodedPage, to_page: EncodedPage) -> tuple[int, int, int]:
+def _compare_bw_chunks(
+    from_page: EncodedPage, to_page: EncodedPage
+) -> tuple[int, int, int]:
     from .rle import decode_packbits
     from .pixels import X4_CHUNK_ROWS, X4_ROW_BYTES
+
     from_plane = next((p for p in from_page.planes if p.slot == 2), None)
     to_plane = next((p for p in to_page.planes if p.slot == 2), None)
     if from_plane is None or to_plane is None:
@@ -392,7 +460,9 @@ def _reader_requirements(profile: DisplayProfile) -> bytes:
     return ReaderRequirementsSection.from_profile(profile).pack()
 
 
-def _source_identity(source: SourceInfo, filename: StringRef, package_identifier: StringRef) -> bytes:
+def _source_identity(
+    source: SourceInfo, filename: StringRef, package_identifier: StringRef
+) -> bytes:
     return b"".join(
         [
             struct.pack("<HHQ", source.source_type, 0, source.file_size),
@@ -421,10 +491,20 @@ def _book_metadata(title: StringRef, author: StringRef, language: StringRef) -> 
 
 
 def _rendition_identity(compiler_name: StringRef) -> bytes:
-    return b"".join([bytes(32 * 8), compiler_name.pack(), StringRef().pack(), struct.pack("<Q", 0), bytes(32)])
+    return b"".join(
+        [
+            bytes(32 * 8),
+            compiler_name.pack(),
+            StringRef().pack(),
+            struct.pack("<Q", 0),
+            bytes(32),
+        ]
+    )
 
 
-def _font_policy(font_info: FontInfo, font_name: StringRef, font_path: StringRef, renderer: StringRef) -> bytes:
+def _font_policy(
+    font_info: FontInfo, font_name: StringRef, font_path: StringRef, renderer: StringRef
+) -> bytes:
     font_mode_force = 2
     force_custom_font = 1 << 0
     return b"".join(
@@ -443,7 +523,23 @@ def _font_policy(font_info: FontInfo, font_name: StringRef, font_path: StringRef
 def _typography_policy(character_spacing_milli_em: int = 0) -> bytes:
     return b"".join(
         [
-            struct.pack("<HHHHIIHHiiBBBB", 24, 18, 0, 400, 1000, 1250, 0, 8, character_spacing_milli_em, 0, 1, 1, 1, 0),
+            struct.pack(
+                "<HHHHIIHHiiBBBB",
+                24,
+                18,
+                0,
+                400,
+                1000,
+                1250,
+                0,
+                8,
+                character_spacing_milli_em,
+                0,
+                1,
+                1,
+                1,
+                0,
+            ),
             StringRef().pack(),
             struct.pack("<I", 0),
             bytes(32),
@@ -452,7 +548,9 @@ def _typography_policy(character_spacing_milli_em: int = 0) -> bytes:
     )
 
 
-def _image_policy(profile: DisplayProfile, dither_method: int = DitherMethod.FLOYD_STEINBERG) -> bytes:
+def _image_policy(
+    profile: DisplayProfile, dither_method: int = DitherMethod.FLOYD_STEINBERG
+) -> bytes:
     white_value = profile.grayscale_levels - 1
     return struct.pack(
         "<HHHHHHHHHHHHI32s32s",
@@ -475,7 +573,16 @@ def _image_policy(profile: DisplayProfile, dither_method: int = DitherMethod.FLO
 
 
 def _compression_policy() -> bytes:
-    return struct.pack("<HIHHI32s32s", CompressionMethod.RLE_PACKBITS, 1 << CompressionMethod.RLE_PACKBITS, 1, 0, 0, bytes(32), bytes(32))
+    return struct.pack(
+        "<HIHHI32s32s",
+        CompressionMethod.RLE_PACKBITS,
+        1 << CompressionMethod.RLE_PACKBITS,
+        1,
+        0,
+        0,
+        bytes(32),
+        bytes(32),
+    )
 
 
 def _chrome_policy() -> bytes:

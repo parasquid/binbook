@@ -1,7 +1,7 @@
 use binbook_cli::protocol::{delete_command, list_command, upload_command};
 use binbook_diagnostic_protocol::{
-    decode_frame, encode_frame, FrameHeader, FrameKind, KeyCode, Opcode, Status,
-    PageAction as ProtoPageAction,
+    decode_frame, encode_frame, FrameHeader, FrameKind, KeyCode, Opcode,
+    PageAction as ProtoPageAction, Status,
 };
 use clap::Parser;
 
@@ -58,10 +58,7 @@ fn cli_page_goto_encodes_full_u32() {
     assert_eq!(header.sequence, 10);
     assert_eq!(payload_len, 5);
     assert_eq!(payload_buf[0], ProtoPageAction::Goto as u8);
-    assert_eq!(
-        payload_buf[1..5],
-        0x0102_0304u32.to_le_bytes()
-    );
+    assert_eq!(payload_buf[1..5], 0x0102_0304u32.to_le_bytes());
 }
 
 #[test]
@@ -107,14 +104,8 @@ fn cli_logs_since_encodes_cursor_and_budget() {
     assert_eq!(header.opcode, Opcode::LogGet);
     assert_eq!(header.sequence, 50);
     assert_eq!(payload_len, 6);
-    assert_eq!(
-        payload_buf[0..4],
-        42u32.to_le_bytes()
-    );
-    assert_eq!(
-        payload_buf[4..6],
-        256u16.to_le_bytes()
-    );
+    assert_eq!(payload_buf[0..4], 42u32.to_le_bytes());
+    assert_eq!(payload_buf[4..6], 256u16.to_le_bytes());
 }
 
 #[test]
@@ -147,9 +138,15 @@ fn cli_crash_clear_sends_crash_clear() {
 #[test]
 fn cli_probe_supports_all_three_probe_codes() {
     let probes = [
-        (binbook_cli::diag_protocol::ProbeChoice::FullRefreshCurrent, 0x01u8),
+        (
+            binbook_cli::diag_protocol::ProbeChoice::FullRefreshCurrent,
+            0x01u8,
+        ),
         (binbook_cli::diag_protocol::ProbeChoice::ClearWhite, 0x02u8),
-        (binbook_cli::diag_protocol::ProbeChoice::WindowCorners, 0x03u8),
+        (
+            binbook_cli::diag_protocol::ProbeChoice::WindowCorners,
+            0x03u8,
+        ),
     ];
     for (i, (choice, expected_code)) in probes.iter().enumerate() {
         let frame = binbook_cli::diag_protocol::display_probe_request(60 + i as u16, *choice);
@@ -180,14 +177,16 @@ fn cli_status_decodes_canonical_u32_layout() {
         payload_len: 0,
     };
     let mut payload_buf = [0u8; 64];
-    let plen = binbook_diagnostic_protocol::encode_status_payload(payload, &mut payload_buf).unwrap();
+    let plen =
+        binbook_diagnostic_protocol::encode_status_payload(payload, &mut payload_buf).unwrap();
 
     let mut frame_buf = [0u8; 512];
     let mut hdr = header;
     hdr.payload_len = plen as u16;
     let frame_len = encode_frame(&hdr, &payload_buf[..plen], &mut frame_buf).unwrap();
 
-    let decoded = binbook_cli::diag_protocol::decode_status_response(&frame_buf[..frame_len]).unwrap();
+    let decoded =
+        binbook_cli::diag_protocol::decode_status_response(&frame_buf[..frame_len]).unwrap();
     assert_eq!(decoded.current_page, 70_001);
     assert_eq!(decoded.page_count, 80_002);
     assert_eq!(decoded.dropped_log_count, 90_003);
@@ -208,7 +207,8 @@ fn cli_hello_formats_identity_and_capabilities() {
             target: "xteink-x4",
         },
         &mut payload,
-    ).unwrap();
+    )
+    .unwrap();
     let frame = response_frame(Opcode::Hello, 7, Status::Ok, &payload[..payload_len]);
     let text = binbook_cli::diag_protocol::format_response(&frame, Opcode::Hello, 7).unwrap();
     assert!(text.contains("firmware=binbook-fw"));
@@ -226,7 +226,8 @@ fn cli_logs_formats_event_names_and_sequences() {
             record_count: 1,
         },
         &mut payload,
-    ).unwrap();
+    )
+    .unwrap();
     let record_len = binbook_diagnostic_protocol::encode_log_record(
         binbook_diagnostic_protocol::LogRecordPayload {
             sequence: 11,
@@ -239,8 +240,14 @@ fn cli_logs_formats_event_names_and_sequences() {
             arg2: 0,
         },
         &mut payload[header_len..],
-    ).unwrap();
-    let frame = response_frame(Opcode::LogGet, 8, Status::Ok, &payload[..header_len + record_len]);
+    )
+    .unwrap();
+    let frame = response_frame(
+        Opcode::LogGet,
+        8,
+        Status::Ok,
+        &payload[..header_len + record_len],
+    );
     let text = binbook_cli::diag_protocol::format_response(&frame, Opcode::LogGet, 8).unwrap();
     assert!(text.contains("seq=11"));
     assert!(text.contains("RENDER_SUCCESS"));
@@ -250,13 +257,21 @@ fn cli_logs_formats_event_names_and_sequences() {
 #[test]
 fn cli_crash_formats_empty_and_present_distinctly() {
     let empty = response_frame(Opcode::CrashGet, 9, Status::Ok, &[0]);
-    assert!(binbook_cli::diag_protocol::format_response(&empty, Opcode::CrashGet, 9).unwrap().contains("crash=empty"));
+    assert!(
+        binbook_cli::diag_protocol::format_response(&empty, Opcode::CrashGet, 9)
+            .unwrap()
+            .contains("crash=empty")
+    );
     let mut payload = [0u8; 129];
     payload[0] = 1;
     payload[1..5].copy_from_slice(b"BBCR");
     payload[5] = 1;
     let present = response_frame(Opcode::CrashGet, 10, Status::Ok, &payload);
-    assert!(binbook_cli::diag_protocol::format_response(&present, Opcode::CrashGet, 10).unwrap().contains("crash=present"));
+    assert!(
+        binbook_cli::diag_protocol::format_response(&present, Opcode::CrashGet, 10)
+            .unwrap()
+            .contains("crash=present")
+    );
 }
 
 fn response_frame(opcode: Opcode, sequence: u16, status: Status, payload: &[u8]) -> Vec<u8> {
@@ -274,86 +289,221 @@ fn response_frame(opcode: Opcode, sequence: u16, status: Status, payload: &[u8])
 
 #[test]
 fn cli_probe_window_corners_subcommand_parses() {
-    let cli = binbook_cli::Cli::try_parse_from(["binbook-cli", "diag", "probe", "--port", "/dev/ttyACM0", "window-corners"]);
-    assert!(cli.is_ok(), "diag probe window-corners should parse: {:?}", cli.err());
+    let cli = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "probe",
+        "--port",
+        "/dev/ttyACM0",
+        "window-corners",
+    ]);
+    assert!(
+        cli.is_ok(),
+        "diag probe window-corners should parse: {:?}",
+        cli.err()
+    );
 }
 
 #[test]
 fn cli_probe_clear_white_subcommand_parses() {
-    let cli = binbook_cli::Cli::try_parse_from(["binbook-cli", "diag", "probe", "--port", "/dev/ttyACM0", "clear-white"]);
-    assert!(cli.is_ok(), "diag probe clear-white should parse: {:?}", cli.err());
+    let cli = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "probe",
+        "--port",
+        "/dev/ttyACM0",
+        "clear-white",
+    ]);
+    assert!(
+        cli.is_ok(),
+        "diag probe clear-white should parse: {:?}",
+        cli.err()
+    );
 }
 
 #[test]
 fn cli_probe_full_refresh_current_subcommand_parses() {
-    let cli = binbook_cli::Cli::try_parse_from(["binbook-cli", "diag", "probe", "--port", "/dev/ttyACM0", "full-refresh-current"]);
-    assert!(cli.is_ok(), "diag probe full-refresh-current should parse: {:?}", cli.err());
+    let cli = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "probe",
+        "--port",
+        "/dev/ttyACM0",
+        "full-refresh-current",
+    ]);
+    assert!(
+        cli.is_ok(),
+        "diag probe full-refresh-current should parse: {:?}",
+        cli.err()
+    );
 }
 
 #[test]
 fn cli_page_goto_subcommand_parses_u32() {
-    let cli = binbook_cli::Cli::try_parse_from(["binbook-cli", "diag", "page", "--port", "/dev/ttyACM0", "goto", "50000"]);
-    assert!(cli.is_ok(), "diag page goto 50000 should parse: {:?}", cli.err());
+    let cli = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "page",
+        "--port",
+        "/dev/ttyACM0",
+        "goto",
+        "50000",
+    ]);
+    assert!(
+        cli.is_ok(),
+        "diag page goto 50000 should parse: {:?}",
+        cli.err()
+    );
 }
 
 #[test]
 fn cli_page_first_last_current_subcommands_parse() {
     for action in &["first", "last", "current"] {
-        let cli = binbook_cli::Cli::try_parse_from(["binbook-cli", "diag", "page", "--port", "/dev/ttyACM0", action]);
-        assert!(cli.is_ok(), "diag page {} should parse: {:?}", action, cli.err());
+        let cli = binbook_cli::Cli::try_parse_from([
+            "binbook-cli",
+            "diag",
+            "page",
+            "--port",
+            "/dev/ttyACM0",
+            action,
+        ]);
+        assert!(
+            cli.is_ok(),
+            "diag page {} should parse: {:?}",
+            action,
+            cli.err()
+        );
     }
 }
 
 #[test]
 fn diag_hello_subcommand_parses() {
-    let cli = binbook_cli::Cli::try_parse_from(["binbook-cli", "diag", "hello", "--port", "/dev/ttyACM0"]);
+    let cli = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "hello",
+        "--port",
+        "/dev/ttyACM0",
+    ]);
     assert!(cli.is_ok(), "diag hello should parse: {:?}", cli.err());
 }
 
 #[test]
 fn diag_key_subcommand_parses() {
-    let cli = binbook_cli::Cli::try_parse_from(["binbook-cli", "diag", "key", "--port", "/dev/ttyACM0", "RIGHT"]);
+    let cli = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "key",
+        "--port",
+        "/dev/ttyACM0",
+        "RIGHT",
+    ]);
     assert!(cli.is_ok(), "diag key RIGHT should parse: {:?}", cli.err());
 }
 
 #[test]
 fn diag_page_next_subcommand_parses() {
-    let cli = binbook_cli::Cli::try_parse_from(["binbook-cli", "diag", "page", "--port", "/dev/ttyACM0", "next"]);
+    let cli = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "page",
+        "--port",
+        "/dev/ttyACM0",
+        "next",
+    ]);
     assert!(cli.is_ok(), "diag page next should parse: {:?}", cli.err());
 }
 
 #[test]
 fn diag_page_goto_subcommand_parses() {
-    let cli = binbook_cli::Cli::try_parse_from(["binbook-cli", "diag", "page", "--port", "/dev/ttyACM0", "goto", "3"]);
-    assert!(cli.is_ok(), "diag page goto 3 should parse: {:?}", cli.err());
+    let cli = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "page",
+        "--port",
+        "/dev/ttyACM0",
+        "goto",
+        "3",
+    ]);
+    assert!(
+        cli.is_ok(),
+        "diag page goto 3 should parse: {:?}",
+        cli.err()
+    );
 }
 
 #[test]
 fn diag_status_subcommand_parses() {
-    let cli = binbook_cli::Cli::try_parse_from(["binbook-cli", "diag", "status", "--port", "/dev/ttyACM0"]);
+    let cli = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "status",
+        "--port",
+        "/dev/ttyACM0",
+    ]);
     assert!(cli.is_ok(), "diag status should parse: {:?}", cli.err());
 }
 
 #[test]
 fn diag_logs_since_subcommand_parses() {
-    let cli = binbook_cli::Cli::try_parse_from(["binbook-cli", "diag", "logs", "--port", "/dev/ttyACM0", "--since", "0"]);
-    assert!(cli.is_ok(), "diag logs --since 0 should parse: {:?}", cli.err());
+    let cli = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "logs",
+        "--port",
+        "/dev/ttyACM0",
+        "--since",
+        "0",
+    ]);
+    assert!(
+        cli.is_ok(),
+        "diag logs --since 0 should parse: {:?}",
+        cli.err()
+    );
 }
 
 #[test]
 fn diag_logs_clear_subcommand_parses() {
-    let cli = binbook_cli::Cli::try_parse_from(["binbook-cli", "diag", "logs", "--port", "/dev/ttyACM0", "--clear"]);
-    assert!(cli.is_ok(), "diag logs --clear should parse: {:?}", cli.err());
+    let cli = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "logs",
+        "--port",
+        "/dev/ttyACM0",
+        "--clear",
+    ]);
+    assert!(
+        cli.is_ok(),
+        "diag logs --clear should parse: {:?}",
+        cli.err()
+    );
 }
 
 #[test]
 fn diag_crash_subcommand_parses() {
-    let cli = binbook_cli::Cli::try_parse_from(["binbook-cli", "diag", "crash", "--port", "/dev/ttyACM0"]);
+    let cli = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "crash",
+        "--port",
+        "/dev/ttyACM0",
+    ]);
     assert!(cli.is_ok(), "diag crash should parse: {:?}", cli.err());
 }
 
 #[test]
 fn diag_crash_clear_subcommand_parses() {
-    let cli = binbook_cli::Cli::try_parse_from(["binbook-cli", "diag", "crash", "--port", "/dev/ttyACM0", "--clear"]);
-    assert!(cli.is_ok(), "diag crash --clear should parse: {:?}", cli.err());
+    let cli = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "crash",
+        "--port",
+        "/dev/ttyACM0",
+        "--clear",
+    ]);
+    assert!(
+        cli.is_ok(),
+        "diag crash --clear should parse: {:?}",
+        cli.err()
+    );
 }

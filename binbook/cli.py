@@ -16,12 +16,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="binbook")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    encode_png = subparsers.add_parser("encode-png-folder", help="encode a folder of page PNGs")
+    encode_png = subparsers.add_parser(
+        "encode-png-folder", help="encode a folder of page PNGs"
+    )
     encode_png.add_argument("input_dir", type=Path)
     encode_png.add_argument("-o", "--output", required=True, type=Path)
     encode_png.add_argument("--profile", default="xteink-x4-portrait")
     encode_png.add_argument("--pixel-format", choices=("gray2", "gray1"), default=None)
-    encode_png.add_argument("--no-dither", action="store_true", help="disable Floyd-Steinberg image dithering")
+    encode_png.add_argument(
+        "--no-dither",
+        action="store_true",
+        help="disable Floyd-Steinberg image dithering",
+    )
 
     encode = subparsers.add_parser("encode", help="encode an EPUB into a BinBook file")
     encode.add_argument("input_epub", type=Path)
@@ -29,7 +35,11 @@ def main(argv: list[str] | None = None) -> int:
     encode.add_argument("--profile", default="xteink-x4-portrait")
     encode.add_argument("--font-family", default="literata")
     encode.add_argument("--pixel-format", choices=("gray2", "gray1"), default=None)
-    encode.add_argument("--no-dither", action="store_true", help="disable Floyd-Steinberg image dithering")
+    encode.add_argument(
+        "--no-dither",
+        action="store_true",
+        help="disable Floyd-Steinberg image dithering",
+    )
 
     decode = subparsers.add_parser("decode", help="decode one page to PNG")
     decode.add_argument("input", type=Path)
@@ -39,8 +49,14 @@ def main(argv: list[str] | None = None) -> int:
     inspect = subparsers.add_parser("inspect", help="inspect a BinBook file")
     inspect.add_argument("input", type=Path)
     inspect.add_argument("--validate", action="store_true")
-    inspect.add_argument("--strict", action="store_true", help="report all validation errors detected by inspect")
-    inspect.add_argument("--json", action="store_true", help="emit JSON inspection output")
+    inspect.add_argument(
+        "--strict",
+        action="store_true",
+        help="report all validation errors detected by inspect",
+    )
+    inspect.add_argument(
+        "--json", action="store_true", help="emit JSON inspection output"
+    )
 
     view = subparsers.add_parser(
         "view",
@@ -66,7 +82,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "encode-png-folder":
-            encode_png_folder(args.input_dir, args.output, args.profile, args.pixel_format, dither=not args.no_dither)
+            encode_png_folder(
+                args.input_dir,
+                args.output,
+                args.profile,
+                args.pixel_format,
+                dither=not args.no_dither,
+            )
         elif args.command == "encode":
             encode_epub(
                 args.input_epub,
@@ -80,7 +102,9 @@ def main(argv: list[str] | None = None) -> int:
             BinBookReader.open(args.input).decode_page_to_png(args.page, args.output)
         elif args.command == "inspect":
             reader = _open_for_inspect(args.input, strict=args.strict)
-            result = inspect_book(reader, args.validate, json_output=args.json, strict=args.strict)
+            result = inspect_book(
+                reader, args.validate, json_output=args.json, strict=args.strict
+            )
             print(result.json_text if args.json else result.text)
             if args.validate and not result.ok:
                 return 1

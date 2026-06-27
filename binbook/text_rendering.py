@@ -11,7 +11,9 @@ DEFAULT_FONT_PATH = DEFAULT_FONT.path
 TEXT_FEATURES = ["kern", "-liga"]
 
 
-def render_text_to_packed(text: str, profile: DisplayProfile, font_info: FontInfo = DEFAULT_FONT) -> bytes:
+def render_text_to_packed(
+    text: str, profile: DisplayProfile, font_info: FontInfo = DEFAULT_FONT
+) -> bytes:
     supersample_factor = 2
     supersampled_width = profile.logical_width * supersample_factor
     supersampled_height = profile.logical_height * supersample_factor
@@ -27,10 +29,25 @@ def render_text_to_packed(text: str, profile: DisplayProfile, font_info: FontInf
     line_height = 32 * supersample_factor
 
     for paragraph in text.splitlines() or [text]:
-        for line in wrap_text_to_width(paragraph, draw, font, right - x, character_spacing_milli_em, pair_kerning_milli_em) or [""]:
+        for line in wrap_text_to_width(
+            paragraph,
+            draw,
+            font,
+            right - x,
+            character_spacing_milli_em,
+            pair_kerning_milli_em,
+        ) or [""]:
             if y + line_height > supersampled_height - (24 * supersample_factor):
                 break
-            draw_text(draw, (x, y), line, font, character_spacing_milli_em, fill=0, pair_kerning_milli_em=pair_kerning_milli_em)
+            draw_text(
+                draw,
+                (x, y),
+                line,
+                font,
+                character_spacing_milli_em,
+                fill=0,
+                pair_kerning_milli_em=pair_kerning_milli_em,
+            )
             y += line_height
         y += 8 * supersample_factor
 
@@ -53,10 +70,26 @@ def wrap_text_to_width(
     lines: list[str] = []
     current = ""
     for word in words:
-        candidates = _split_word_to_width(word, draw, font, max_width, character_spacing_milli_em, pair_kerning_milli_em)
+        candidates = _split_word_to_width(
+            word,
+            draw,
+            font,
+            max_width,
+            character_spacing_milli_em,
+            pair_kerning_milli_em,
+        )
         for candidate in candidates:
             proposed = candidate if not current else f"{current} {candidate}"
-            if measure_text(draw, proposed, font, character_spacing_milli_em, pair_kerning_milli_em) <= max_width:
+            if (
+                measure_text(
+                    draw,
+                    proposed,
+                    font,
+                    character_spacing_milli_em,
+                    pair_kerning_milli_em,
+                )
+                <= max_width
+            ):
                 current = proposed
             else:
                 if current:
@@ -84,11 +117,15 @@ def measure_text(
     for index, character in enumerate(text):
         width += draw.textlength(character, font=font, features=TEXT_FEATURES)
         if index != len(text) - 1:
-            width += spacing_px + pair_kerning_px(font, text[index], text[index + 1], pair_kerning_milli_em)
+            width += spacing_px + pair_kerning_px(
+                font, text[index], text[index + 1], pair_kerning_milli_em
+            )
     return max(0, int(round(width)))
 
 
-def character_spacing_px(font: ImageFont.ImageFont, character_spacing_milli_em: int) -> float:
+def character_spacing_px(
+    font: ImageFont.ImageFont, character_spacing_milli_em: int
+) -> float:
     size = getattr(font, "size", 24)
     return size * (character_spacing_milli_em / 1000)
 
@@ -124,7 +161,9 @@ def draw_text(
         draw.text((x, y), character, fill=fill, font=font, features=TEXT_FEATURES)
         x += draw.textlength(character, font=font, features=TEXT_FEATURES)
         if index != len(text) - 1:
-            x += spacing_px + pair_kerning_px(font, character, text[index + 1], pair_kerning_milli_em)
+            x += spacing_px + pair_kerning_px(
+                font, character, text[index + 1], pair_kerning_milli_em
+            )
 
 
 def load_font(size: int, font_info: FontInfo = DEFAULT_FONT) -> ImageFont.ImageFont:
@@ -146,13 +185,24 @@ def _split_word_to_width(
     character_spacing_milli_em: int = 0,
     pair_kerning_milli_em: PairKerningTable | None = None,
 ) -> list[str]:
-    if measure_text(draw, word, font, character_spacing_milli_em, pair_kerning_milli_em) <= max_width:
+    if (
+        measure_text(
+            draw, word, font, character_spacing_milli_em, pair_kerning_milli_em
+        )
+        <= max_width
+    ):
         return [word]
     parts: list[str] = []
     current = ""
     for char in word:
         proposed = current + char
-        if current and measure_text(draw, proposed, font, character_spacing_milli_em, pair_kerning_milli_em) > max_width:
+        if (
+            current
+            and measure_text(
+                draw, proposed, font, character_spacing_milli_em, pair_kerning_milli_em
+            )
+            > max_width
+        ):
             parts.append(current)
             current = char
         else:

@@ -28,4 +28,4 @@ def read_string(table: bytes, ref: StringRef, *, errors: str = "replace") -> str
     end = ref.offset + ref.length
     if ref.offset < 0 or end > len(table):
         raise ValueError("StringRef is outside the string table")
-    return table[ref.offset:end].decode("utf-8", errors=errors)
+    return table[ref.offset : end].decode("utf-8", errors=errors)

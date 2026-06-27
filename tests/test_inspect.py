@@ -58,20 +58,27 @@ def test_reader_open_can_skip_validation_for_inspection(tmp_path: Path):
     reader = BinBookReader.open(path, validate=False)
 
     assert reader.header.page_data_length > 0
-    assert "display profile logical dimensions must be non-zero" in reader.profile_validation_errors()
+    assert (
+        "display profile logical dimensions must be non-zero"
+        in reader.profile_validation_errors()
+    )
 
 
 def _book_bytes() -> bytes:
     packed_white_page = bytes([0xFF]) * 96_000
     compressed = encode_packbits(packed_white_page)
-    page = EncodedPage(compressed=compressed, uncompressed_size=len(packed_white_page), page_crc32=0)
+    page = EncodedPage(
+        compressed=compressed, uncompressed_size=len(packed_white_page), page_crc32=0
+    )
     return build_binbook([page], XTEINK_X4_PORTRAIT, source_name="inspect")
 
 
 def _section(book: bytes | bytearray, section_id: SectionId) -> SectionEntry:
     header = BinBookHeader.unpack(bytes(book[:HEADER_SIZE]))
     for index in range(header.section_count):
-        entry = SectionEntry.unpack(bytes(book), header.section_table_offset + index * SECTION_ENTRY_SIZE)
+        entry = SectionEntry.unpack(
+            bytes(book), header.section_table_offset + index * SECTION_ENTRY_SIZE
+        )
         if entry.section_id == section_id:
             return entry
     raise AssertionError(f"missing section {section_id.name}")

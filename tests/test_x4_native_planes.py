@@ -18,7 +18,9 @@ def _storage_pixel_page(gray: int, x: int = 0, y: int = 0) -> bytes:
 
 
 def test_x4_native_planes_map_black_pixel_to_all_planes():
-    msb, lsb, bw = gray2_packed_to_x4_native_planes(_storage_pixel_page(0, 799, 0), 800, 480)
+    msb, lsb, bw = gray2_packed_to_x4_native_planes(
+        _storage_pixel_page(0, 799, 0), 800, 480
+    )
 
     assert len(msb) == 48_000
     assert len(lsb) == 48_000
@@ -72,11 +74,15 @@ def test_native_planes_full_pipeline():
 
     row0_msb = msb[:X4_ROW_BYTES]
     row0_has_cleared = any(b != 0xFF for b in row0_msb)
-    assert row0_has_cleared, "row 0 of MSB should have cleared bits from the black strip"
+    assert row0_has_cleared, (
+        "row 0 of MSB should have cleared bits from the black strip"
+    )
 
     row120_msb = msb[120 * X4_ROW_BYTES : 121 * X4_ROW_BYTES]
     row120_all_white = all(b == 0xFF for b in row120_msb)
-    assert row120_all_white, f"row 120 of MSB should be untouched white after the strip ends"
+    assert row120_all_white, (
+        f"row 120 of MSB should be untouched white after the strip ends"
+    )
 
 
 def test_native_planes_top_row_black_bottom_rows_white():

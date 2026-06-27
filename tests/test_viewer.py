@@ -22,7 +22,9 @@ def test_viewer_state_navigates_and_clamps_page_numbers():
     assert state.jump_to_page(-5) == 0
 
 
-def test_render_page_image_returns_display_sized_image_with_optional_overlay(tmp_path: Path):
+def test_render_page_image_returns_display_sized_image_with_optional_overlay(
+    tmp_path: Path,
+):
     book_path = _sample_book(tmp_path)
     reader = BinBookReader.open(book_path)
 

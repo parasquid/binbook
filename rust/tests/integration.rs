@@ -111,10 +111,7 @@ fn page_ref_exposes_current_packed_gray2_blob() {
 
     assert_eq!(page.uncompressed_size, 48_000);
     let total: u32 = page.info.plane_dir.sizes.iter().sum();
-    assert_eq!(
-        page.compressed_data().len(),
-        total as usize
-    );
+    assert_eq!(page.compressed_data().len(), total as usize);
     assert_eq!(&page.compressed_data()[..8], &[0xFF; 8]);
 }
 

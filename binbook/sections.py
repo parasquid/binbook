@@ -244,7 +244,12 @@ class ReaderRequirementsSection:
 
     @classmethod
     def from_profile(cls, profile: DisplayProfile) -> "ReaderRequirementsSection":
-        page_bytes = (profile.logical_width * profile.logical_height * profile.framebuffer_bits_per_pixel + 7) // 8
+        page_bytes = (
+            profile.logical_width
+            * profile.logical_height
+            * profile.framebuffer_bits_per_pixel
+            + 7
+        ) // 8
         return cls(
             feature_flags=(1 << 0) | (1 << 3),
             required_features=(1 << 0) | (1 << 2) | (1 << 3) | (1 << 4),

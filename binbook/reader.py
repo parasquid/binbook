@@ -39,10 +39,10 @@ from .structs import (
 )
 
 SUPPORTED_READER_FEATURES = (1 << 0) | (1 << 2) | (1 << 3) | (1 << 4)
-SUPPORTED_STORAGE_PIXEL_FORMATS = int(PixelFormatFlag.GRAY1_PACKED | PixelFormatFlag.GRAY2_PACKED)
-SUPPORTED_COMPRESSION_METHOD_FLAGS = (
-    1 << int(CompressionMethod.RLE_PACKBITS)
+SUPPORTED_STORAGE_PIXEL_FORMATS = int(
+    PixelFormatFlag.GRAY1_PACKED | PixelFormatFlag.GRAY2_PACKED
 )
+SUPPORTED_COMPRESSION_METHOD_FLAGS = 1 << int(CompressionMethod.RLE_PACKBITS)
 
 
 @dataclass
@@ -66,7 +66,9 @@ class BinBookReader:
         chapters = _read_chapters(data, sections)
         page_chunks = _read_page_chunks(data, sections)
         page_transitions = _read_page_transitions(data, sections)
-        reader = cls(path, data, header, sections, pages, chapters, page_chunks, page_transitions)
+        reader = cls(
+            path, data, header, sections, pages, chapters, page_chunks, page_transitions
+        )
         if validate:
             reader.validate()
         return reader
@@ -82,7 +84,9 @@ class BinBookReader:
             raise ValueError("file is smaller than header.file_size")
         missing = REQUIRED_SECTIONS.difference(self.sections)
         if missing:
-            raise ValueError(f"missing required sections: {sorted(int(s) for s in missing)}")
+            raise ValueError(
+                f"missing required sections: {sorted(int(s) for s in missing)}"
+            )
         metadata_end = max(
             section.offset + section.length
             for section_id, section in self.sections.items()
@@ -91,12 +95,19 @@ class BinBookReader:
         if self.header.page_data_offset < metadata_end:
             raise ValueError("page_data_offset is before end of metadata")
         page_data = self.sections[SectionId.PAGE_DATA]
-        if page_data.offset != self.header.page_data_offset or page_data.length != self.header.page_data_length:
+        if (
+            page_data.offset != self.header.page_data_offset
+            or page_data.length != self.header.page_data_length
+        ):
             raise ValueError("PAGE_DATA section does not match header")
         for section in self.sections.values():
             if section.offset + section.length > len(self.data):
                 raise ValueError(f"section {section.section_id} is outside file bounds")
-            if section.crc32 and crc32(self.data[section.offset : section.offset + section.length]) != section.crc32:
+            if (
+                section.crc32
+                and crc32(self.data[section.offset : section.offset + section.length])
+                != section.crc32
+            ):
                 name = SectionId(section.section_id).name
                 raise ValueError(f"section {name} CRC32 mismatch")
         self._validate_reader_requirements()
@@ -124,7 +135,10 @@ class BinBookReader:
                     blob_end = page.plane_dir.offsets[slot] + page.plane_dir.sizes[slot]
                     if blob_end > self.header.page_data_length:
                         raise ValueError("page blob is outside PAGE_DATA")
-            if page.progress_start_ppm > page.progress_end_ppm or page.progress_end_ppm > 1_000_000:
+            if (
+                page.progress_start_ppm > page.progress_end_ppm
+                or page.progress_end_ppm > 1_000_000
+            ):
                 raise ValueError("invalid page progress range")
             if page.progress_start_ppm < previous_progress:
                 raise ValueError("page progress is not monotonic")
@@ -161,14 +175,24 @@ class BinBookReader:
     def _validate_reader_requirements(self) -> None:
         data = self._section_data(SectionId.READER_REQUIREMENTS)
         requirements = ReaderRequirementsSection.unpack(data)
-        unsupported_features = requirements.required_features & ~SUPPORTED_READER_FEATURES
+        unsupported_features = (
+            requirements.required_features & ~SUPPORTED_READER_FEATURES
+        )
         if unsupported_features:
-            raise ValueError(f"unsupported required reader features: 0x{unsupported_features:x}")
-        if not requirements.required_storage_pixel_format_flags & SUPPORTED_STORAGE_PIXEL_FORMATS:
+            raise ValueError(
+                f"unsupported required reader features: 0x{unsupported_features:x}"
+            )
+        if (
+            not requirements.required_storage_pixel_format_flags
+            & SUPPORTED_STORAGE_PIXEL_FORMATS
+        ):
             raise ValueError("unsupported required storage pixel formats")
         if requirements.required_grayscale_levels not in (0, 2, 4):
             raise ValueError("unsupported required output grayscale levels")
-        if not requirements.required_compression_method_flags & SUPPORTED_COMPRESSION_METHOD_FLAGS:
+        if (
+            not requirements.required_compression_method_flags
+            & SUPPORTED_COMPRESSION_METHOD_FLAGS
+        ):
             raise ValueError("unsupported required compression methods")
 
     def _validate_display_and_layout_profiles(self) -> None:
@@ -179,18 +203,29 @@ class BinBookReader:
     def profile_validation_errors(self) -> list[str]:
         errors: list[str] = []
         try:
-            display = DisplayProfileSection.unpack(self._section_data(SectionId.DISPLAY_PROFILE))
-            layout = LayoutProfileSection.unpack(self._section_data(SectionId.LAYOUT_PROFILE))
+            display = DisplayProfileSection.unpack(
+                self._section_data(SectionId.DISPLAY_PROFILE)
+            )
+            layout = LayoutProfileSection.unpack(
+                self._section_data(SectionId.LAYOUT_PROFILE)
+            )
         except ValueError as exc:
             return [str(exc)]
         if display.logical_width == 0 or display.logical_height == 0:
             errors.append("display profile logical dimensions must be non-zero")
         if display.supported_storage_pixel_format_flags == 0:
-            errors.append("display profile must advertise at least one storage pixel format")
+            errors.append(
+                "display profile must advertise at least one storage pixel format"
+            )
         if display.native_grayscale_levels < 2:
             errors.append("display profile must use at least 2 grayscale levels")
-        if (layout.full_width, layout.full_height) != (display.logical_width, display.logical_height):
-            errors.append("LayoutProfile full page dimensions do not match DisplayProfile")
+        if (layout.full_width, layout.full_height) != (
+            display.logical_width,
+            display.logical_height,
+        ):
+            errors.append(
+                "LayoutProfile full page dimensions do not match DisplayProfile"
+            )
         expected_x = layout.margin_left
         expected_y = layout.margin_top + layout.header_height
         expected_width = layout.full_width - layout.margin_left - layout.margin_right
@@ -201,7 +236,12 @@ class BinBookReader:
             - layout.header_height
             - layout.footer_height
         )
-        if (layout.content_x, layout.content_y, layout.content_width, layout.content_height) != (
+        if (
+            layout.content_x,
+            layout.content_y,
+            layout.content_width,
+            layout.content_height,
+        ) != (
             expected_x,
             expected_y,
             expected_width,
@@ -222,7 +262,9 @@ class BinBookReader:
                 for offset in offsets:
                     absolute = base + offset
                     if absolute + 8 > len(data):
-                        raise ValueError(f"{section_id.name} StringRef field is outside section")
+                        raise ValueError(
+                            f"{section_id.name} StringRef field is outside section"
+                        )
                     ref = StringRef.unpack(data, absolute)
                     if ref.length == 0:
                         continue
@@ -245,18 +287,25 @@ class BinBookReader:
                 continue
             absolute = self.header.page_data_offset + pd.offsets[slot]
             compressed = self.data[absolute : absolute + pd.sizes[slot]]
-            method = pd.compression[slot] if (page.page_flags & 1) else page.compression_method
+            method = (
+                pd.compression[slot]
+                if (page.page_flags & 1)
+                else page.compression_method
+            )
             parts.append(decode_packbits(compressed))
         unpacked = b"".join(parts)
         return unpacked, page
 
-    def _decode_x4_native_page(self, page: PageIndexEntry) -> tuple[bytes, PageIndexEntry]:
+    def _decode_x4_native_page(
+        self, page: PageIndexEntry
+    ) -> tuple[bytes, PageIndexEntry]:
         from .pixels import (
             X4_PHYSICAL_HEIGHT,
             X4_PHYSICAL_WIDTH,
             X4_ROW_BYTES,
             pack_gray2,
         )
+
         pd = page.plane_dir
         planes_data: list[bytes] = []
         for slot in range(3):
@@ -276,8 +325,12 @@ class BinBookReader:
                 ram_x = X4_PHYSICAL_WIDTH - 1 - physical_x
                 byte_idx = ram_x // 8
                 bit_mask = 0x80 >> (ram_x % 8)
-                msb_set = (msb_rows[physical_y * X4_ROW_BYTES + byte_idx] & bit_mask) != 0
-                lsb_set = (lsb_rows[physical_y * X4_ROW_BYTES + byte_idx] & bit_mask) != 0
+                msb_set = (
+                    msb_rows[physical_y * X4_ROW_BYTES + byte_idx] & bit_mask
+                ) != 0
+                lsb_set = (
+                    lsb_rows[physical_y * X4_ROW_BYTES + byte_idx] & bit_mask
+                ) != 0
                 if msb_set and lsb_set:
                     gray = 3
                 elif msb_set and not lsb_set:
@@ -295,7 +348,13 @@ class BinBookReader:
 
     def decode_page_to_png(self, page_number: int, output: Path | str) -> None:
         unpacked, page = self.decode_page_bytes(page_number)
-        packed_to_png(unpacked, PixelFormat(page.pixel_format), page.stored_width, page.stored_height, Path(output))
+        packed_to_png(
+            unpacked,
+            PixelFormat(page.pixel_format),
+            page.stored_width,
+            page.stored_height,
+            Path(output),
+        )
 
 
 def _read_sections(data: bytes, header: BinBookHeader) -> dict[SectionId, SectionEntry]:
@@ -305,7 +364,9 @@ def _read_sections(data: bytes, header: BinBookHeader) -> dict[SectionId, Sectio
         raise ValueError("section table is outside file bounds")
     sections: dict[SectionId, SectionEntry] = {}
     for index in range(header.section_count):
-        entry = SectionEntry.unpack(data, start + index * header.section_table_entry_size)
+        entry = SectionEntry.unpack(
+            data, start + index * header.section_table_entry_size
+        )
         try:
             sections[SectionId(entry.section_id)] = entry
         except ValueError:
@@ -313,7 +374,9 @@ def _read_sections(data: bytes, header: BinBookHeader) -> dict[SectionId, Sectio
     return sections
 
 
-def _read_pages(data: bytes, sections: dict[SectionId, SectionEntry]) -> list[PageIndexEntry]:
+def _read_pages(
+    data: bytes, sections: dict[SectionId, SectionEntry]
+) -> list[PageIndexEntry]:
     section = sections.get(SectionId.PAGE_INDEX)
     if section is None:
         return []
@@ -323,7 +386,9 @@ def _read_pages(data: bytes, sections: dict[SectionId, SectionEntry]) -> list[Pa
     ]
 
 
-def _read_chapters(data: bytes, sections: dict[SectionId, SectionEntry]) -> list[ChapterIndexEntry]:
+def _read_chapters(
+    data: bytes, sections: dict[SectionId, SectionEntry]
+) -> list[ChapterIndexEntry]:
     section = sections.get(SectionId.CHAPTER_INDEX)
     if section is None:
         return []
@@ -333,7 +398,9 @@ def _read_chapters(data: bytes, sections: dict[SectionId, SectionEntry]) -> list
     ]
 
 
-def _read_page_chunks(data: bytes, sections: dict[SectionId, SectionEntry]) -> list[PageChunkIndexEntry]:
+def _read_page_chunks(
+    data: bytes, sections: dict[SectionId, SectionEntry]
+) -> list[PageChunkIndexEntry]:
     section = sections.get(SectionId.PAGE_CHUNK_INDEX)
     if section is None:
         return []
@@ -343,11 +410,15 @@ def _read_page_chunks(data: bytes, sections: dict[SectionId, SectionEntry]) -> l
     ]
 
 
-def _read_page_transitions(data: bytes, sections: dict[SectionId, SectionEntry]) -> list[PageTransitionIndexEntry]:
+def _read_page_transitions(
+    data: bytes, sections: dict[SectionId, SectionEntry]
+) -> list[PageTransitionIndexEntry]:
     section = sections.get(SectionId.PAGE_TRANSITION_INDEX)
     if section is None:
         return []
     return [
-        PageTransitionIndexEntry.unpack(data, section.offset + index * section.entry_size)
+        PageTransitionIndexEntry.unpack(
+            data, section.offset + index * section.entry_size
+        )
         for index in range(section.record_count)
     ]

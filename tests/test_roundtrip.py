@@ -37,7 +37,9 @@ def test_png_folder_can_encode_inspect_and_decode(tmp_path: Path, capsys):
     assert image.getpixel((0, 0)) == 0
 
 
-def test_png_folder_stores_portrait_profile_pages_in_native_physical_orientation(tmp_path: Path):
+def test_png_folder_stores_portrait_profile_pages_in_native_physical_orientation(
+    tmp_path: Path,
+):
     pages = tmp_path / "pages"
     pages.mkdir()
     image = Image.new("L", (480, 800), 255)
@@ -62,7 +64,19 @@ def test_png_folder_can_encode_x4_gray1_when_requested(tmp_path: Path):
     Image.new("L", (480, 800), 255).save(pages / "001.png")
     book = tmp_path / "gray1.binbook"
 
-    assert main(["encode-png-folder", str(pages), "-o", str(book), "--pixel-format", "gray1"]) == 0
+    assert (
+        main(
+            [
+                "encode-png-folder",
+                str(pages),
+                "-o",
+                str(book),
+                "--pixel-format",
+                "gray1",
+            ]
+        )
+        == 0
+    )
 
     reader = BinBookReader.open(book)
     assert {page.pixel_format for page in reader.pages} == {PixelFormat.GRAY1_PACKED}
@@ -81,7 +95,9 @@ def test_png_folder_records_floyd_steinberg_dither_by_default(tmp_path: Path):
     assert struct.unpack_from("<H", image_policy, 8)[0] == 1
 
 
-def test_png_folder_no_dither_records_none_and_uses_threshold_quantization(tmp_path: Path):
+def test_png_folder_no_dither_records_none_and_uses_threshold_quantization(
+    tmp_path: Path,
+):
     pages = tmp_path / "pages"
     pages.mkdir()
     Image.new("L", (480, 800), 127).save(pages / "001.png")

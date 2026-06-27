@@ -1,9 +1,8 @@
 pub mod diag_protocol {
     use binbook_diagnostic_protocol::{
-        encode_frame, decode_frame, FrameHeader, FrameKind, KeyCode, KeyAction,
-        Opcode, PageAction, Status, MAX_FRAME_BYTES,
-        encode_page_payload, encode_log_get_payload, encode_probe_payload,
-        LogGetPayload, ProbeCode,
+        decode_frame, encode_frame, encode_log_get_payload, encode_page_payload,
+        encode_probe_payload, FrameHeader, FrameKind, KeyAction, KeyCode, LogGetPayload, Opcode,
+        PageAction, ProbeCode, Status, MAX_FRAME_BYTES,
     };
 
     fn request_header(sequence: u16, opcode: Opcode) -> FrameHeader {
@@ -62,7 +61,14 @@ pub mod diag_protocol {
     pub fn log_get_request(sequence: u16, cursor: u32, max_bytes: u16) -> Vec<u8> {
         let mut header = request_header(sequence, Opcode::LogGet);
         let mut payload_buf = [0u8; 6];
-        let plen = encode_log_get_payload(LogGetPayload { cursor_sequence: cursor, max_bytes }, &mut payload_buf).unwrap();
+        let plen = encode_log_get_payload(
+            LogGetPayload {
+                cursor_sequence: cursor,
+                max_bytes,
+            },
+            &mut payload_buf,
+        )
+        .unwrap();
         header.payload_len = plen as u16;
         let mut buf = [0u8; MAX_FRAME_BYTES];
         let len = encode_frame(&header, &payload_buf[..plen], &mut buf).unwrap();
@@ -126,7 +132,9 @@ pub mod diag_protocol {
         pub last_error: i32,
     }
 
-    pub fn decode_status_response(frame: &[u8]) -> Result<StatusResponse, binbook_diagnostic_protocol::ProtocolError> {
+    pub fn decode_status_response(
+        frame: &[u8],
+    ) -> Result<StatusResponse, binbook_diagnostic_protocol::ProtocolError> {
         let mut payload_buf = [0u8; 256];
         let (header, payload_len) = decode_frame(frame, &mut payload_buf)?;
 
@@ -149,23 +157,40 @@ pub mod diag_protocol {
         })
     }
 
-    pub fn decode_hello_response_payload(payload: &[u8]) -> Result<binbook_diagnostic_protocol::HelloResponseRef<'_>, binbook_diagnostic_protocol::ProtocolError> {
+    pub fn decode_hello_response_payload(
+        payload: &[u8],
+    ) -> Result<
+        binbook_diagnostic_protocol::HelloResponseRef<'_>,
+        binbook_diagnostic_protocol::ProtocolError,
+    > {
         binbook_diagnostic_protocol::decode_hello_response(payload)
     }
 
-    pub fn format_response(frame: &[u8], expected_opcode: Opcode, expected_sequence: u16) -> Result<String, String> {
+    pub fn format_response(
+        frame: &[u8],
+        expected_opcode: Opcode,
+        expected_sequence: u16,
+    ) -> Result<String, String> {
         use binbook_diagnostic_protocol::{
             decode_crash_response, decode_hello_response, decode_log_record,
             decode_log_response_header, decode_status_payload, CAP_CRASH, CAP_DISPLAY_PROBE,
-            CAP_KEY, CAP_LOG, CAP_PAGE, CAP_STATUS, LOG_RECORD_BYTES,
-            LOG_RESPONSE_HEADER_BYTES,
+            CAP_KEY, CAP_LOG, CAP_PAGE, CAP_STATUS, LOG_RECORD_BYTES, LOG_RESPONSE_HEADER_BYTES,
         };
         let mut payload = [0u8; MAX_FRAME_BYTES];
-        let (header, payload_len) = decode_frame(frame, &mut payload).map_err(|e| format!("decode error: {e:?}"))?;
-        if header.kind != FrameKind::Response { return Err("expected response frame".into()); }
-        if header.sequence != expected_sequence { return Err(format!("unexpected sequence {}", header.sequence)); }
-        if header.opcode != expected_opcode { return Err(format!("unexpected opcode {:?}", header.opcode)); }
-        if header.status != Status::Ok { return Err(format!("device returned {:?}", header.status)); }
+        let (header, payload_len) =
+            decode_frame(frame, &mut payload).map_err(|e| format!("decode error: {e:?}"))?;
+        if header.kind != FrameKind::Response {
+            return Err("expected response frame".into());
+        }
+        if header.sequence != expected_sequence {
+            return Err(format!("unexpected sequence {}", header.sequence));
+        }
+        if header.opcode != expected_opcode {
+            return Err(format!("unexpected opcode {:?}", header.opcode));
+        }
+        if header.status != Status::Ok {
+            return Err(format!("device returned {:?}", header.status));
+        }
         let payload = &payload[..payload_len];
         match header.opcode {
             Opcode::Hello => {
@@ -257,7 +282,9 @@ pub mod diag_protocol {
 
 #[cfg(feature = "serial-device")]
 pub mod serial_transport {
-    use binbook_diagnostic_protocol::{decode_frame, FrameKind, Opcode, Status, FRAME_DELIMITER, MAX_FRAME_BYTES};
+    use binbook_diagnostic_protocol::{
+        decode_frame, FrameKind, Opcode, Status, FRAME_DELIMITER, MAX_FRAME_BYTES,
+    };
     use std::io::{Read, Write};
     use std::time::{Duration, Instant};
 
@@ -274,7 +301,13 @@ pub mod serial_transport {
             Ok(Self { port })
         }
 
-        pub fn send_and_receive(&mut self, frame: &[u8], opcode: Opcode, sequence: u16, timeout: Duration) -> Result<Vec<u8>, String> {
+        pub fn send_and_receive(
+            &mut self,
+            frame: &[u8],
+            opcode: Opcode,
+            sequence: u16,
+            timeout: Duration,
+        ) -> Result<Vec<u8>, String> {
             send_and_receive_io(&mut self.port, frame, opcode, sequence, timeout)
         }
     }
@@ -286,7 +319,8 @@ pub mod serial_transport {
         expected_sequence: u16,
         timeout: Duration,
     ) -> Result<Vec<u8>, String> {
-        io.write_all(request).map_err(|e| format!("write failed: {e}"))?;
+        io.write_all(request)
+            .map_err(|e| format!("write failed: {e}"))?;
         io.flush().map_err(|e| format!("flush failed: {e}"))?;
         let deadline = Instant::now() + timeout;
         let mut buffered = Vec::new();
@@ -295,18 +329,32 @@ pub mod serial_transport {
             match io.read(&mut chunk) {
                 Ok(0) => std::thread::yield_now(),
                 Ok(count) => buffered.extend_from_slice(&chunk[..count]),
-                Err(error) if error.kind() == std::io::ErrorKind::TimedOut || error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::TimedOut
+                        || error.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(error) => return Err(format!("read failed: {error}")),
             }
             while let Some(end) = buffered.iter().position(|&byte| byte == FRAME_DELIMITER) {
                 let frame: Vec<u8> = buffered.drain(..=end).collect();
-                if frame.len() > MAX_FRAME_BYTES { continue; }
+                if frame.len() > MAX_FRAME_BYTES {
+                    continue;
+                }
                 let mut payload = [0u8; MAX_FRAME_BYTES];
-                let Ok((header, _)) = decode_frame(&frame, &mut payload) else { continue; };
-                if header.sequence != expected_sequence { continue; }
-                if header.kind != FrameKind::Response { return Err("matching frame is not a response".into()); }
-                if header.opcode != expected_opcode { return Err(format!("unexpected opcode {:?}", header.opcode)); }
-                if header.status != Status::Ok { return Err(format!("device returned {:?}", header.status)); }
+                let Ok((header, _)) = decode_frame(&frame, &mut payload) else {
+                    continue;
+                };
+                if header.sequence != expected_sequence {
+                    continue;
+                }
+                if header.kind != FrameKind::Response {
+                    return Err("matching frame is not a response".into());
+                }
+                if header.opcode != expected_opcode {
+                    return Err(format!("unexpected opcode {:?}", header.opcode));
+                }
+                if header.status != Status::Ok {
+                    return Err(format!("device returned {:?}", header.status));
+                }
                 return Ok(frame);
             }
             if buffered.len() > MAX_FRAME_BYTES {
@@ -427,9 +475,7 @@ pub enum PageAction {
     First,
     Last,
     Current,
-    Goto {
-        page: u32,
-    },
+    Goto { page: u32 },
 }
 
 #[derive(Subcommand)]

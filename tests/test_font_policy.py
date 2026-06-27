@@ -21,7 +21,10 @@ def test_encode_records_selected_font_policy(tmp_path: Path, capsys):
     output = tmp_path / "book.binbook"
     _write_minimal_epub(epub_path)
 
-    assert main(["encode", str(epub_path), "-o", str(output), "--font-family", "literata"]) == 0
+    assert (
+        main(["encode", str(epub_path), "-o", str(output), "--font-family", "literata"])
+        == 0
+    )
     reader = BinBookReader.open(output)
 
     font_policy = _section_bytes(reader, SectionId.FONT_POLICY)
@@ -51,15 +54,25 @@ def test_sans_serif_alias_records_opendyslexic_font_policy(tmp_path: Path):
     output = tmp_path / "book.binbook"
     _write_minimal_epub(epub_path)
 
-    assert main(["encode", str(epub_path), "-o", str(output), "--font-family", "sans-serif"]) == 0
+    assert (
+        main(
+            ["encode", str(epub_path), "-o", str(output), "--font-family", "sans-serif"]
+        )
+        == 0
+    )
     reader = BinBookReader.open(output)
     font_policy = _section_bytes(reader, SectionId.FONT_POLICY)
     string_table = _section_bytes(reader, SectionId.STRING_TABLE)
     selected = get_font("sans-serif")
 
     assert font_policy[4:36] == selected.sha256
-    assert read_string(string_table, StringRef.unpack(font_policy, 36)) == "OpenDyslexic"
-    assert read_string(string_table, StringRef.unpack(font_policy, 44)) == selected.stable_path
+    assert (
+        read_string(string_table, StringRef.unpack(font_policy, 36)) == "OpenDyslexic"
+    )
+    assert (
+        read_string(string_table, StringRef.unpack(font_policy, 44))
+        == selected.stable_path
+    )
 
 
 def test_sans_serif_records_default_character_spacing(tmp_path: Path):
@@ -67,13 +80,21 @@ def test_sans_serif_records_default_character_spacing(tmp_path: Path):
     output = tmp_path / "book.binbook"
     _write_minimal_epub(epub_path)
 
-    assert main(["encode", str(epub_path), "-o", str(output), "--font-family", "sans-serif"]) == 0
+    assert (
+        main(
+            ["encode", str(epub_path), "-o", str(output), "--font-family", "sans-serif"]
+        )
+        == 0
+    )
     reader = BinBookReader.open(output)
     typography_policy = _section_bytes(reader, SectionId.TYPOGRAPHY_POLICY)
 
     character_spacing_milli_em = struct.unpack_from("<i", typography_policy, 20)[0]
 
-    assert character_spacing_milli_em == get_font("sans-serif").default_character_spacing_milli_em
+    assert (
+        character_spacing_milli_em
+        == get_font("sans-serif").default_character_spacing_milli_em
+    )
 
 
 def test_encode_rejects_unknown_font_family(tmp_path: Path):
@@ -81,7 +102,10 @@ def test_encode_rejects_unknown_font_family(tmp_path: Path):
     output = tmp_path / "book.binbook"
     _write_minimal_epub(epub_path)
 
-    assert main(["encode", str(epub_path), "-o", str(output), "--font-family", "papyrus"]) == 1
+    assert (
+        main(["encode", str(epub_path), "-o", str(output), "--font-family", "papyrus"])
+        == 1
+    )
 
 
 def _section_bytes(reader: BinBookReader, section_id: SectionId) -> bytes:
@@ -121,4 +145,6 @@ def _write_minimal_epub(path: Path) -> None:
 </package>
 """,
         )
-        zf.writestr("OEBPS/Text/chapter1.xhtml", "<html><body><p>Font test.</p></body></html>")
+        zf.writestr(
+            "OEBPS/Text/chapter1.xhtml", "<html><body><p>Font test.</p></body></html>"
+        )

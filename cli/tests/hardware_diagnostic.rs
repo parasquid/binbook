@@ -1,8 +1,8 @@
 #![cfg(feature = "serial-device")]
 
 use binbook_diagnostic_protocol::{
-    encode_frame, decode_frame, crc16_ccitt_false, FrameHeader, FrameKind, Opcode, Status,
-    FRAME_DELIMITER, MAX_FRAME_BYTES, MAGIC, PROTOCOL_VERSION,
+    crc16_ccitt_false, decode_frame, encode_frame, FrameHeader, FrameKind, Opcode, Status,
+    FRAME_DELIMITER, MAGIC, MAX_FRAME_BYTES, PROTOCOL_VERSION,
 };
 
 const PORT: &str = "/dev/ttyACM0";

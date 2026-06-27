@@ -72,7 +72,9 @@ def test_section_page_and_nav_entries_roundtrip():
         progress_end_ppm=500000,
         plane_dir=plane,
     )
-    nav = NavIndexEntry(nav_index=0, nav_type=1, title=StringRef(3, 4), target_page_number=0)
+    nav = NavIndexEntry(
+        nav_index=0, nav_type=1, title=StringRef(3, 4), target_page_number=0
+    )
     chapter = ChapterIndexEntry(
         chapter_index=0,
         nav_index=2,

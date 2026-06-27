@@ -19,7 +19,9 @@ def encode_packbits(data: bytes) -> bytes:
         i += 1
         while i < n and i - literal_start < 128:
             lookahead = 1
-            while i + lookahead < n and lookahead < 128 and data[i + lookahead] == data[i]:
+            while (
+                i + lookahead < n and lookahead < 128 and data[i + lookahead] == data[i]
+            ):
                 lookahead += 1
             if lookahead >= 2:
                 break

@@ -11,7 +11,10 @@ import zipfile
 
 CONTAINER_PATH = "META-INF/container.xml"
 CONTAINER_NS = {"container": "urn:oasis:names:tc:opendocument:xmlns:container"}
-OPF_NS = {"opf": "http://www.idpf.org/2007/opf", "dc": "http://purl.org/dc/elements/1.1/"}
+OPF_NS = {
+    "opf": "http://www.idpf.org/2007/opf",
+    "dc": "http://purl.org/dc/elements/1.1/",
+}
 
 
 @dataclass(frozen=True)
@@ -68,7 +71,11 @@ class EpubBook:
 
     def rough_page_sequence(self) -> list[RoughPage]:
         return [
-            RoughPage(source_spine_index=item.index, href=item.href, text=extract_text(item.html))
+            RoughPage(
+                source_spine_index=item.index,
+                href=item.href,
+                text=extract_text(item.html),
+            )
             for item in self.spine
         ]
 
@@ -141,12 +148,18 @@ def _manifest(opf: ET.Element, opf_dir: str) -> dict[str, ManifestItem]:
         media_type = element.attrib.get("media-type", "")
         if not item_id or not href:
             continue
-        full_path = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
-        items[item_id] = ManifestItem(item_id, href, media_type, full_path, element.attrib.get("properties", ""))
+        full_path = (
+            posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
+        )
+        items[item_id] = ManifestItem(
+            item_id, href, media_type, full_path, element.attrib.get("properties", "")
+        )
     return items
 
 
-def _spine(archive: zipfile.ZipFile, opf: ET.Element, manifest: dict[str, ManifestItem]) -> list[SpineItem]:
+def _spine(
+    archive: zipfile.ZipFile, opf: ET.Element, manifest: dict[str, ManifestItem]
+) -> list[SpineItem]:
     spine: list[SpineItem] = []
     for index, itemref in enumerate(opf.findall(".//opf:spine/opf:itemref", OPF_NS)):
         idref = itemref.attrib.get("idref", "")
@@ -167,8 +180,12 @@ def _spine(archive: zipfile.ZipFile, opf: ET.Element, manifest: dict[str, Manife
     return spine
 
 
-def _nav_points(archive: zipfile.ZipFile, opf: ET.Element, manifest: dict[str, ManifestItem]) -> list[NavPoint]:
-    nav_item = next((item for item in manifest.values() if "nav" in item.properties.split()), None)
+def _nav_points(
+    archive: zipfile.ZipFile, opf: ET.Element, manifest: dict[str, ManifestItem]
+) -> list[NavPoint]:
+    nav_item = next(
+        (item for item in manifest.values() if "nav" in item.properties.split()), None
+    )
     if nav_item is not None:
         html = archive.read(nav_item.full_path).decode("utf-8", errors="replace")
         parser = _NavExtractor(posixpath.dirname(nav_item.full_path))
@@ -184,21 +201,29 @@ def _nav_points(archive: zipfile.ZipFile, opf: ET.Element, manifest: dict[str, M
     for nav_point in _children_by_local_name(ncx, "navPoint"):
         title = _descendant_text(nav_point, "text")
         content = next(_children_by_local_name(nav_point, "content"), None)
-        href = (content.attrib.get("src", "") if content is not None else "").split("#", 1)[0]
+        href = (content.attrib.get("src", "") if content is not None else "").split(
+            "#", 1
+        )[0]
         if title and href:
             full_path = posixpath.normpath(posixpath.join(ncx_dir, href))
             points.append(NavPoint(title, href, full_path))
     return points
 
 
-def _ncx_item(opf: ET.Element, manifest: dict[str, ManifestItem]) -> ManifestItem | None:
+def _ncx_item(
+    opf: ET.Element, manifest: dict[str, ManifestItem]
+) -> ManifestItem | None:
     spine = opf.find(".//opf:spine", OPF_NS)
     if spine is not None:
         toc_id = spine.attrib.get("toc", "")
         if toc_id and toc_id in manifest:
             return manifest[toc_id]
     return next(
-        (item for item in manifest.values() if item.media_type == "application/x-dtbncx+xml"),
+        (
+            item
+            for item in manifest.values()
+            if item.media_type == "application/x-dtbncx+xml"
+        ),
         None,
     )
 

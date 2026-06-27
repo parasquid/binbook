@@ -16,10 +16,16 @@ def test_inspect_includes_chunk_and_transition_counts(tmp_path, capsys):
     black = pack_gray2([0] * (480 * 800), 480, 800)
     path = tmp_path / "inspect.binbook"
 
-    path.write_bytes(build_binbook([
-        encoded_page(white, PageKind.TEXT, UINT32_MAX),
-        encoded_page(black, PageKind.TEXT, UINT32_MAX),
-    ], profile, source_name="inspect-test"))
+    path.write_bytes(
+        build_binbook(
+            [
+                encoded_page(white, PageKind.TEXT, UINT32_MAX),
+                encoded_page(black, PageKind.TEXT, UINT32_MAX),
+            ],
+            profile,
+            source_name="inspect-test",
+        )
+    )
 
     assert main(["inspect", str(path), "--json", "--validate"]) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -30,16 +36,28 @@ def test_inspect_includes_chunk_and_transition_counts(tmp_path, capsys):
 
 def test_validate_rejects_chunk_outside_page_data(tmp_path):
     from binbook.constants import SectionId
-    from binbook.structs import HEADER_SIZE, SECTION_ENTRY_SIZE, BinBookHeader, SectionEntry, PAGE_CHUNK_INDEX_ENTRY_SIZE
+    from binbook.structs import (
+        HEADER_SIZE,
+        SECTION_ENTRY_SIZE,
+        BinBookHeader,
+        SectionEntry,
+        PAGE_CHUNK_INDEX_ENTRY_SIZE,
+    )
     import struct
 
     profile = get_profile("xteink-x4-portrait")
     white = pack_gray2([3] * (480 * 800), 480, 800)
     path = tmp_path / "invalid_chunks.binbook"
 
-    path.write_bytes(build_binbook([
-        encoded_page(white, PageKind.TEXT, UINT32_MAX),
-    ], profile, source_name="chunk-validation"))
+    path.write_bytes(
+        build_binbook(
+            [
+                encoded_page(white, PageKind.TEXT, UINT32_MAX),
+            ],
+            profile,
+            source_name="chunk-validation",
+        )
+    )
 
     book = bytearray(path.read_bytes())
     header = BinBookHeader.unpack(bytes(book[:HEADER_SIZE]))
@@ -61,4 +79,7 @@ def test_validate_rejects_chunk_outside_page_data(tmp_path):
         reader.validate()
     except ValueError as e:
         errors.append(str(e))
-    assert any("PAGE_DATA" in e or "outside" in e.lower() or "chunk" in e.lower() for e in errors)
+    assert any(
+        "PAGE_DATA" in e or "outside" in e.lower() or "chunk" in e.lower()
+        for e in errors
+    )

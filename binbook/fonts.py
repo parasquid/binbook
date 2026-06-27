@@ -60,7 +60,9 @@ FONTS = {
         path=FONT_ASSET_DIR / "OpenDyslexic" / "OpenDyslexic-Regular.otf",
         stable_path="binbook/assets/fonts/OpenDyslexic/OpenDyslexic-Regular.otf",
         default_character_spacing_milli_em=-160,
-        pair_kerning_milli_em=load_pair_kerning_table(FONT_KERNING_DIR / "opendyslexic.json"),
+        pair_kerning_milli_em=load_pair_kerning_table(
+            FONT_KERNING_DIR / "opendyslexic.json"
+        ),
     ),
     "sans-serif": FontInfo(
         family="sans-serif",
@@ -80,7 +82,9 @@ def get_font(family: str) -> FontInfo:
         raise ValueError(f"unsupported font family: {family}") from exc
     return replace(
         font_info,
-        pair_kerning_milli_em=load_pair_kerning_table(FONT_KERNING_DIR / f"{font_info.family}.json"),
+        pair_kerning_milli_em=load_pair_kerning_table(
+            FONT_KERNING_DIR / f"{font_info.family}.json"
+        ),
     )
 
 

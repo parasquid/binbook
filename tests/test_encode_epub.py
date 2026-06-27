@@ -25,12 +25,19 @@ def test_encode_epub_creates_text_image_and_nav_pages(tmp_path: Path, capsys):
     assert main(["encode", str(epub_path), "-o", str(output)]) == 0
     reader = BinBookReader.open(output)
 
-    assert [page.page_kind for page in reader.pages] == [PageKind.TEXT, PageKind.IMAGE, PageKind.TEXT, PageKind.TEXT]
+    assert [page.page_kind for page in reader.pages] == [
+        PageKind.TEXT,
+        PageKind.IMAGE,
+        PageKind.TEXT,
+        PageKind.TEXT,
+    ]
     assert [page.source_spine_index for page in reader.pages] == [0, 0, 0, 1]
     assert reader.sections[SectionId.NAV_INDEX].record_count == 2
     assert reader.sections[SectionId.CHAPTER_INDEX].record_count == 2
     string_table = reader._section_data(SectionId.STRING_TABLE)
-    assert [read_string(string_table, chapter.title) for chapter in reader.chapters] == [
+    assert [
+        read_string(string_table, chapter.title) for chapter in reader.chapters
+    ] == [
         "Chapter One",
         "Chapter Two",
     ]
@@ -45,7 +52,9 @@ def test_encode_epub_creates_text_image_and_nav_pages(tmp_path: Path, capsys):
     assert Image.open(decoded).size == (800, 480)
 
 
-def test_encode_epub_dithers_embedded_images_but_not_rendered_text(tmp_path: Path, monkeypatch):
+def test_encode_epub_dithers_embedded_images_but_not_rendered_text(
+    tmp_path: Path, monkeypatch
+):
     epub_path = tmp_path / "book.epub"
     output = tmp_path / "book.binbook"
     _write_epub_with_text_image_and_nav(epub_path)
@@ -61,7 +70,9 @@ def test_encode_epub_dithers_embedded_images_but_not_rendered_text(tmp_path: Pat
         return bytes([0xFF]) * 96_000
 
     monkeypatch.setattr(text_rendering, "pil_image_to_packed", fake_pil_image_to_packed)
-    monkeypatch.setattr(page_compiler, "image_bytes_to_packed", fake_image_bytes_to_packed)
+    monkeypatch.setattr(
+        page_compiler, "image_bytes_to_packed", fake_image_bytes_to_packed
+    )
 
     assert main(["encode", str(epub_path), "-o", str(output)]) == 0
 
@@ -72,7 +83,9 @@ def test_encode_epub_dithers_embedded_images_but_not_rendered_text(tmp_path: Pat
     assert struct.unpack_from("<H", image_policy, 8)[0] == 1
 
 
-def test_encode_epub_no_dither_disables_embedded_image_dithering(tmp_path: Path, monkeypatch):
+def test_encode_epub_no_dither_disables_embedded_image_dithering(
+    tmp_path: Path, monkeypatch
+):
     epub_path = tmp_path / "book.epub"
     output = tmp_path / "book.binbook"
     _write_epub_with_text_image_and_nav(epub_path)
@@ -82,7 +95,9 @@ def test_encode_epub_no_dither_disables_embedded_image_dithering(tmp_path: Path,
         image_dither_flags.append(dither)
         return bytes([0xFF]) * 96_000
 
-    monkeypatch.setattr(page_compiler, "image_bytes_to_packed", fake_image_bytes_to_packed)
+    monkeypatch.setattr(
+        page_compiler, "image_bytes_to_packed", fake_image_bytes_to_packed
+    )
 
     assert main(["encode", str(epub_path), "-o", str(output), "--no-dither"]) == 0
 
@@ -141,5 +156,8 @@ def _write_epub_with_text_image_and_nav(path: Path) -> None:
             "OEBPS/Text/chapter1.xhtml",
             '<html><body><h1>Chapter One</h1><p>Text before image.</p><img src="../Images/picture.png"/><p>Text after image.</p></body></html>',
         )
-        zf.writestr("OEBPS/Text/chapter2.xhtml", "<html><body><h1>Chapter Two</h1><p>More text.</p></body></html>")
+        zf.writestr(
+            "OEBPS/Text/chapter2.xhtml",
+            "<html><body><h1>Chapter Two</h1><p>More text.</p></body></html>",
+        )
         zf.writestr("OEBPS/Images/picture.png", image_bytes.getvalue())
