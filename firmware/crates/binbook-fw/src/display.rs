@@ -232,9 +232,9 @@ where
     let base = compressed_native_plane(book_bytes, page_data_offset, pd, 2)?;
     let strip_count = DISPLAY_HEIGHT / X4_CHUNK_ROWS;
 
-    let mut msb_decoder = PackBitsStream::new(msb);
-    let mut lsb_decoder = PackBitsStream::new(lsb);
-    let mut base_decoder = PackBitsStream::new(base);
+    let mut msb_decoder = PackBitsCursor::new(msb);
+    let mut lsb_decoder = PackBitsCursor::new(lsb);
+    let mut base_decoder = PackBitsCursor::new(base);
     let mut msb_row = [0u8; DISPLAY_ROW_BYTES];
     let mut lsb_row = [0u8; DISPLAY_ROW_BYTES];
     let mut base_row = [0u8; DISPLAY_ROW_BYTES];
@@ -251,8 +251,8 @@ where
         delay.ms(0).await;
     }
 
-    let mut lsb_decoder = PackBitsStream::new(lsb);
-    let mut base_decoder = PackBitsStream::new(base);
+    let mut lsb_decoder = PackBitsCursor::new(lsb);
+    let mut base_decoder = PackBitsCursor::new(base);
     for strip in 0..strip_count {
         display.set_window(0, strip * X4_CHUNK_ROWS, DISPLAY_WIDTH, X4_CHUNK_ROWS)?;
         display.write_frame_rows::<DISPLAY_ROW_BYTES>(X4_CHUNK_ROWS, |_, row| {
@@ -547,7 +547,7 @@ where
     RST: OutputPin,
     BUSY: InputPin,
 {
-    let mut decoder = PackBitsStream::new(compressed_data);
+    let mut decoder = PackBitsCursor::new(compressed_data);
     let mut gray2_row = [0u8; GRAY2_ROW_BYTES];
     let mut red = [0u8; DISPLAY_ROW_BYTES];
     let mut black = [0u8; DISPLAY_ROW_BYTES];
@@ -586,7 +586,7 @@ where
     BUSY: InputPin,
     D: AsyncDelay + ?Sized,
 {
-    let mut decoder = PackBitsStream::new(compressed_data);
+    let mut decoder = PackBitsCursor::new(compressed_data);
     let mut gray2_row = [0u8; GRAY2_ROW_BYTES];
     let mut red = [0u8; DISPLAY_ROW_BYTES];
     let mut black = [0u8; DISPLAY_ROW_BYTES];
@@ -637,7 +637,7 @@ where
     BUSY: InputPin,
     D: AsyncDelay + ?Sized,
 {
-    let mut decoder = PackBitsStream::new(compressed_data);
+    let mut decoder = PackBitsCursor::new(compressed_data);
     let strip_count = DISPLAY_HEIGHT / X4_CHUNK_ROWS;
 
     for strip in 0..strip_count {
@@ -731,7 +731,7 @@ where
     if end > book_bytes.len() {
         return Err(HalError::InvalidParam);
     }
-    let mut decoder = PackBitsStream::new(&book_bytes[start..end]);
+    let mut decoder = PackBitsCursor::new(&book_bytes[start..end]);
     let strip_count = DISPLAY_HEIGHT / X4_CHUNK_ROWS;
 
     for strip in 0..strip_count {
@@ -761,7 +761,7 @@ pub fn stream_gray1_rows<E>(
     row_count: u16,
     mut write_row: impl FnMut(u16, &[u8]) -> Result<(), E>,
 ) -> Result<(), E> {
-    let mut decoder = PackBitsStream::new(compressed_data);
+    let mut decoder = PackBitsCursor::new(compressed_data);
     let mut row_buf = [0u8; GRAY1_ROW_BYTES];
 
     for row in 0..row_count {
@@ -778,7 +778,7 @@ pub fn stream_gray2_rows<E>(
     row_count: u16,
     mut write_row: impl FnMut(u16, &[u8; GRAY2_ROW_BYTES]) -> Result<(), E>,
 ) -> Result<(), E> {
-    let mut decoder = PackBitsStream::new(compressed_data);
+    let mut decoder = PackBitsCursor::new(compressed_data);
     let mut row_buf = [0u8; GRAY2_ROW_BYTES];
 
     for row in 0..row_count {
@@ -832,37 +832,10 @@ fn set_ssd1677_pixel(row: &mut [u8; DISPLAY_ROW_BYTES], physical_x: u16) {
 }
 
 pub fn decompress_row(input: &[u8], output: &mut [u8]) -> usize {
-    let mut in_pos = 0;
-    let mut out_pos = 0;
-
-    while out_pos < output.len() && in_pos < input.len() {
-        let control = input[in_pos];
-        in_pos += 1;
-
-        if control <= 127 {
-            let requested = control as usize + 1;
-            let copy_count = requested
-                .min(output.len() - out_pos)
-                .min(input.len().saturating_sub(in_pos));
-            output[out_pos..out_pos + copy_count]
-                .copy_from_slice(&input[in_pos..in_pos + copy_count]);
-            out_pos += copy_count;
-            in_pos += copy_count;
-        } else {
-            if in_pos >= input.len() {
-                break;
-            }
-
-            let value = input[in_pos];
-            in_pos += 1;
-
-            let repeat_count = ((control & 0x7F) as usize + 1).min(output.len() - out_pos);
-            output[out_pos..out_pos + repeat_count].fill(value);
-            out_pos += repeat_count;
-        }
-    }
-
-    in_pos
+    let mut decoder = binbook_decompress::PackBitsDecoder::new();
+    decoder
+        .decode(input, output)
+        .map_or(0, |progress| progress.consumed)
 }
 
 pub fn is_supported_embedded_gray2_page(page: &binbook_core::PageInfo) -> bool {
@@ -1218,7 +1191,7 @@ where
         return Err(HalError::InvalidParam);
     }
     let compressed = &book_bytes[start..end];
-    let mut decoder = PackBitsStream::new(compressed);
+    let mut decoder = PackBitsCursor::new(compressed);
     display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |_, row_buf| {
         row_buf.fill(0xFF);
         decoder.fill(row_buf);
@@ -1250,7 +1223,7 @@ where
         return Err(HalError::InvalidParam);
     }
     let compressed = &book_bytes[start..end];
-    let mut decoder = PackBitsStream::new(compressed);
+    let mut decoder = PackBitsCursor::new(compressed);
     display.write_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |_, row_buf| {
         row_buf.fill(0xFF);
         decoder.fill(row_buf);
@@ -1258,7 +1231,7 @@ where
 }
 
 fn stream_compressed_row(compressed: &[u8], row: usize, row_buf: &mut [u8; DISPLAY_ROW_BYTES]) {
-    let mut decoder = PackBitsStream::new(compressed);
+    let mut decoder = PackBitsCursor::new(compressed);
     let mut skip = [0u8; DISPLAY_ROW_BYTES];
     for _ in 0..row {
         decoder.fill(&mut skip);
@@ -1289,7 +1262,7 @@ where
         return Err(HalError::InvalidParam);
     }
     let compressed = &book_bytes[start..];
-    let mut decoder = PackBitsStream::new(compressed);
+    let mut decoder = PackBitsCursor::new(compressed);
     let mut skip = [0u8; DISPLAY_ROW_BYTES];
     let skip_rows = chunk_idx as usize * X4_CHUNK_ROWS as usize;
     for _ in 0..skip_rows {
@@ -1325,7 +1298,7 @@ where
         return Err(HalError::InvalidParam);
     }
     let compressed = &book_bytes[start..];
-    let mut decoder = PackBitsStream::new(compressed);
+    let mut decoder = PackBitsCursor::new(compressed);
     let mut skip = [0u8; DISPLAY_ROW_BYTES];
     let skip_rows = chunk_idx as usize * X4_CHUNK_ROWS as usize;
     for _ in 0..skip_rows {
@@ -1346,99 +1319,37 @@ impl xteink_hal::Delay for NoDelay {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Run {
-    Literal { remaining: usize },
-    Repeat { value: u8, remaining: usize },
-}
-
-#[derive(Debug, Clone, Copy)]
-struct PackBitsStream<'a> {
+struct PackBitsCursor<'a> {
     input: &'a [u8],
     pos: usize,
-    run: Option<Run>,
+    decoder: binbook_decompress::PackBitsDecoder,
 }
 
-impl<'a> PackBitsStream<'a> {
+impl<'a> PackBitsCursor<'a> {
     const fn new(input: &'a [u8]) -> Self {
         Self {
             input,
             pos: 0,
-            run: None,
+            decoder: binbook_decompress::PackBitsDecoder::new(),
         }
     }
 
     fn fill(&mut self, output: &mut [u8]) {
-        let mut out_pos = 0;
-
-        while out_pos < output.len() {
-            if self.run.is_none() && !self.load_next_run() {
+        let mut produced = 0;
+        while produced < output.len() {
+            let Ok(progress) = self
+                .decoder
+                .decode(&self.input[self.pos..], &mut output[produced..])
+            else {
+                break;
+            };
+            self.pos += progress.consumed;
+            produced += progress.produced;
+            if progress.consumed == 0 && progress.produced == 0 {
                 break;
             }
-
-            match self.run {
-                Some(Run::Literal { remaining }) => {
-                    let count = remaining
-                        .min(output.len() - out_pos)
-                        .min(self.input.len().saturating_sub(self.pos));
-                    output[out_pos..out_pos + count]
-                        .copy_from_slice(&self.input[self.pos..self.pos + count]);
-                    self.pos += count;
-                    out_pos += count;
-                    self.run = update_literal_run(remaining, count);
-                    if count == 0 {
-                        break;
-                    }
-                }
-                Some(Run::Repeat { value, remaining }) => {
-                    let count = remaining.min(output.len() - out_pos);
-                    output[out_pos..out_pos + count].fill(value);
-                    out_pos += count;
-                    self.run = update_repeat_run(value, remaining, count);
-                }
-                None => {}
-            }
         }
     }
-
-    fn load_next_run(&mut self) -> bool {
-        if self.pos >= self.input.len() {
-            return false;
-        }
-
-        let control = self.input[self.pos];
-        self.pos += 1;
-
-        if control <= 127 {
-            self.run = Some(Run::Literal {
-                remaining: control as usize + 1,
-            });
-            true
-        } else if self.pos < self.input.len() {
-            let value = self.input[self.pos];
-            self.pos += 1;
-            self.run = Some(Run::Repeat {
-                value,
-                remaining: (control & 0x7F) as usize + 1,
-            });
-            true
-        } else {
-            false
-        }
-    }
-}
-
-fn update_literal_run(remaining: usize, consumed: usize) -> Option<Run> {
-    remaining
-        .checked_sub(consumed)
-        .filter(|&remaining| remaining > 0)
-        .map(|remaining| Run::Literal { remaining })
-}
-
-fn update_repeat_run(value: u8, remaining: usize, consumed: usize) -> Option<Run> {
-    remaining
-        .checked_sub(consumed)
-        .filter(|&remaining| remaining > 0)
-        .map(|remaining| Run::Repeat { value, remaining })
 }
 
 #[cfg(feature = "diagnostic-console")]

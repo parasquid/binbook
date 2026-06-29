@@ -1,0 +1,15 @@
+[package]
+name = "binbook-decompress"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Allocation-free BinBook decompression"
+
+[features]
+default = []
+lz4 = ["dep:lz4_flex"]
+
+[dependencies]
+binbook-core.workspace = true
+lz4_flex = { workspace = true, optional = true }

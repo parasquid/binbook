@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/binbook-core",
+    "crates/binbook-decompress",
     "cli",
     "firmware/crates/binbook-diagnostic-protocol",
     "firmware/crates/binbook-fw",
@@ -17,6 +18,7 @@ repository = "https://github.com/parasquid/binbook"
 
 [workspace.dependencies]
 binbook-core = { path = "crates/binbook-core" }
+binbook-decompress = { path = "crates/binbook-decompress" }
 binbook-diagnostic-protocol = { path = "firmware/crates/binbook-diagnostic-protocol" }
 clap = { version = "4", features = ["derive"] }
 embassy-executor = { version = "0.10.0", default-features = false }
