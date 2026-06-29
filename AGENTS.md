@@ -37,13 +37,15 @@ The firmware is structured as independent crates with clear boundaries:
 | `binbook-decompress` | RLE_PACKBITS, LZ4 decompression | Yes — currently inline in SquidScript display driver |
 | `ssd1677-driver` | SPI command layer, init sequences | Yes — currently C code in SquidScript |
 | `gray2-render` | GRAY2 plane decomposition, dithering | Yes — currently C code in SquidScript |
-| `xteink-hal` | GPIO, SPI, ADC, power abstractions | Partially — SquidScript uses Zephyr HAL |
-| `firmware` | Binary entry point, app logic | No — too specific |
+| `xteink-x4-display` | X4 page streaming, refresh policy, staged grayscale, and display state | Yes — reusable X4 display pipeline |
+| `binbook-fw` | ESP32-C3/Embassy wiring, input, storage, diagnostics, and application lifecycle | No — board/application specific |
 
 Rules:
 - No repo-level dependencies in library crates (no `#[path]` hacks, no sibling references).
 - Each crate must be independently compilable and testable.
-- Keep board-specific aliases, fixed GPIO mappings, and physical details in the firmware crate or `xteink-hal`, not in library crates.
+- Use `embedded-hal` 1.0, `embedded-hal-async`, and `embedded-storage` at reusable hardware boundaries. Do not introduce a custom transport HAL crate.
+- Keep board-specific aliases, fixed GPIO mappings, ADC handling, and physical details in `binbook-fw`.
+- Firmware application code may not parse BinBook records, decode PackBits/LZ4 data, convert GRAY2 planes, or issue SSD1677 commands. Those responsibilities belong to the reusable crates above.
 - Prefer library-quality seams over one-off harness slots.
 
 ## Setup and Commands

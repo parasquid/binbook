@@ -1,7 +1,13 @@
 # BinBook Xteink X4 Firmware — Design Spec
 
+> Superseded architecture record. This document describes the initial firmware
+> layout and is retained for historical context. The current crate boundaries
+> are defined in
+> [`2026-06-30-rust-modular-foundation-design.md`](2026-06-30-rust-modular-foundation-design.md);
+> in particular, `xteink-hal` is not a current transport dependency.
+
 Date: 2026-06-24
-Status: In Progress
+Status: Superseded
 Target: Xteink X4 (ESP32-C3, SSD1677/GDEQ0426T82, 800×480 e-ink)
 
 ---

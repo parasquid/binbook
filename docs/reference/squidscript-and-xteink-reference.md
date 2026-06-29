@@ -286,8 +286,12 @@ The firmware should be structured as independent crates that SquidScript could a
 | `binbook-decompress` | RLE_PACKBITS, LZ4 decompression | Yes — currently inline in display driver |
 | `ssd1677-driver` | SPI command layer, init sequences | Yes — currently C code |
 | `gray2-render` | GRAY2 plane decomposition, dithering | Yes — currently C code |
-| `xteink-hal` | GPIO, SPI, ADC, power abstractions | Partially — Zephyr HAL is different |
-| `firmware` | Binary entry point, app logic | No — too specific |
+| `xteink-x4-display` | X4 page streaming, refresh policy, staged grayscale, and display state | Yes — reusable X4 display pipeline |
+| `binbook-fw` | ESP32-C3/Embassy wiring, input, storage, diagnostics, and application lifecycle | No — too specific |
+
+Reusable hardware boundaries use `embedded-hal` 1.0, `embedded-hal-async`, and
+`embedded-storage`; the current architecture does not require a custom
+`xteink-hal` transport crate.
 
 ---
 
