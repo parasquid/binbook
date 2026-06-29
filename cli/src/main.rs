@@ -17,6 +17,23 @@ fn run_diag(cmd: DiagCommand) {
                 }
                 return;
             }
+            ExerciseCommand::NavBurst {
+                port,
+                rounds,
+                inter_key_ms,
+                output,
+            } => {
+                if let Err(error) = binbook_cli::nav_burst::run_nav_burst(
+                    port,
+                    *rounds,
+                    *inter_key_ms,
+                    output.as_deref(),
+                ) {
+                    eprintln!("Diagnostic error: {error}");
+                    std::process::exit(1);
+                }
+                return;
+            }
         }
     }
 

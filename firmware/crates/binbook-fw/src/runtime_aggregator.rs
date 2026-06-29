@@ -8,10 +8,11 @@ use crate::{
         DiagEvent, DiagLog, EVT_BW_BASE_SYNC_CANCELLED, EVT_BW_BASE_SYNC_COMPLETE,
         EVT_BW_BASE_SYNC_START, EVT_CONTROLLER_RAM_STATE, EVT_DISPLAY_ERROR, EVT_DISPLAY_RECOVERY,
         EVT_GRAY_DELAY_CANCELLED, EVT_GRAY_OVERLAY_ACTIVATE, EVT_GRAY_OVERLAY_CANCELLED,
-        EVT_GRAY_OVERLAY_COMPLETE, EVT_GRAY_OVERLAY_START, EVT_PANEL_MODE, EVT_REFRESH_PHASE,
-        EVT_RENDER_FAILURE, EVT_RENDER_START, EVT_RENDER_SUCCESS, EVT_TURN_DEQUEUED,
-        EVT_TURN_DROPPED, EVT_TURN_QUEUED, EVT_WAVEFORM_SELECTED, LEVEL_ERROR, LEVEL_INFO,
-        SUB_DISPLAY, SUB_INPUT, SUB_NAV, SUB_SERIAL, SUB_SYSTEM,
+        EVT_GRAY_OVERLAY_COMPLETE, EVT_GRAY_OVERLAY_START, EVT_INPUT_DECISION,
+        EVT_INPUT_TRANSITION, EVT_PANEL_MODE, EVT_REFRESH_PHASE, EVT_RENDER_FAILURE,
+        EVT_RENDER_START, EVT_RENDER_SUCCESS, EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED,
+        EVT_TURN_DROPPED, EVT_TURN_QUEUED, EVT_TURN_STARTED, EVT_WAVEFORM_SELECTED, LEVEL_ERROR,
+        LEVEL_INFO, SUB_DISPLAY, SUB_INPUT, SUB_NAV, SUB_SERIAL, SUB_SYSTEM,
     },
     runtime_engine::{
         RuntimeCompletion, RuntimeCompletionStatus, RuntimeEvent, RuntimeEventKind,
@@ -185,6 +186,68 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
                     sequence.map(i32::from).unwrap_or(-1),
                     turn as i32,
                     0,
+                );
+            }
+            RuntimeEventKind::InputTransition { ch1, ch2, observed } => {
+                self.push_with_subsystem(
+                    tick_ms,
+                    LEVEL_INFO,
+                    SUB_INPUT,
+                    EVT_INPUT_TRANSITION,
+                    i32::from(ch1),
+                    i32::from(ch2),
+                    observed.map(|button| button as i32).unwrap_or(-1),
+                );
+            }
+            RuntimeEventKind::InputDecision {
+                observed,
+                decision,
+                elapsed_ms,
+            } => {
+                let decision_code = match decision {
+                    crate::input::InputDecision::Press(_) => 0,
+                    crate::input::InputDecision::Released => 1,
+                    crate::input::InputDecision::SuppressedByCooldown { .. } => 2,
+                    crate::input::InputDecision::Unchanged => -1,
+                };
+                self.push_with_subsystem(
+                    tick_ms,
+                    LEVEL_INFO,
+                    SUB_INPUT,
+                    EVT_INPUT_DECISION,
+                    observed.map(|button| button as i32).unwrap_or(-1),
+                    decision_code,
+                    elapsed_ms.min(i32::MAX as u32) as i32,
+                );
+            }
+            RuntimeEventKind::TurnStarted {
+                sequence,
+                from,
+                target,
+            } => {
+                self.push_with_subsystem(
+                    tick_ms,
+                    LEVEL_INFO,
+                    SUB_NAV,
+                    EVT_TURN_STARTED,
+                    sequence.map(i32::from).unwrap_or(-1),
+                    from as i32,
+                    target as i32,
+                );
+            }
+            RuntimeEventKind::TurnBoundaryNoop {
+                sequence,
+                page,
+                turn,
+            } => {
+                self.push_with_subsystem(
+                    tick_ms,
+                    LEVEL_INFO,
+                    SUB_NAV,
+                    EVT_TURN_BOUNDARY_NOOP,
+                    sequence.map(i32::from).unwrap_or(-1),
+                    page as i32,
+                    turn as i32,
                 );
             }
             RuntimeEventKind::PageDisplayed { from, page } => {

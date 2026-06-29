@@ -295,6 +295,62 @@ fn cli_logs_formats_event_names_and_sequences() {
 }
 
 #[test]
+fn cli_logs_formats_navigation_burst_event_names() {
+    let events = [
+        (
+            binbook_diagnostic_protocol::EVT_INPUT_TRANSITION,
+            "INPUT_TRANSITION",
+        ),
+        (
+            binbook_diagnostic_protocol::EVT_INPUT_DECISION,
+            "INPUT_DECISION",
+        ),
+        (
+            binbook_diagnostic_protocol::EVT_TURN_STARTED,
+            "TURN_STARTED",
+        ),
+        (
+            binbook_diagnostic_protocol::EVT_TURN_BOUNDARY_NOOP,
+            "TURN_BOUNDARY_NOOP",
+        ),
+    ];
+    for (event, name) in events {
+        let mut payload = [0u8; 64];
+        let header_len = binbook_diagnostic_protocol::encode_log_response_header(
+            binbook_diagnostic_protocol::LogResponseHeader {
+                next_cursor: 2,
+                dropped_log_count: 0,
+                record_count: 1,
+            },
+            &mut payload,
+        )
+        .unwrap();
+        let record_len = binbook_diagnostic_protocol::encode_log_record(
+            binbook_diagnostic_protocol::LogRecordPayload {
+                sequence: 1,
+                tick_ms: 10,
+                level: 2,
+                subsystem: 3,
+                event,
+                arg0: 0,
+                arg1: 0,
+                arg2: 0,
+            },
+            &mut payload[header_len..],
+        )
+        .unwrap();
+        let frame = response_frame(
+            Opcode::LogGet,
+            8,
+            Status::Ok,
+            &payload[..header_len + record_len],
+        );
+        let text = binbook_cli::diag_protocol::format_response(&frame, Opcode::LogGet, 8).unwrap();
+        assert!(text.contains(name));
+    }
+}
+
+#[test]
 fn cli_crash_formats_empty_and_present_distinctly() {
     let empty = response_frame(Opcode::CrashGet, 9, Status::Ok, &[0]);
     assert!(
@@ -498,6 +554,61 @@ fn staged_gray_exercise_subcommand_parses() {
         cli.is_ok(),
         "diag exercise staged-gray should parse: {:?}",
         cli.err()
+    );
+}
+
+#[test]
+fn nav_burst_exercise_parses_and_validates_rounds() {
+    let valid = binbook_cli::Cli::try_parse_from([
+        "binbook-cli",
+        "diag",
+        "exercise",
+        "nav-burst",
+        "--port",
+        "/dev/ttyACM0",
+        "--rounds",
+        "10",
+        "--inter-key-ms",
+        "0",
+        "--output",
+        "/tmp/x4-nav-burst/evidence.jsonl",
+    ]);
+    assert!(valid.is_ok());
+
+    for rounds in ["0", "101"] {
+        assert!(binbook_cli::Cli::try_parse_from([
+            "binbook-cli",
+            "diag",
+            "exercise",
+            "nav-burst",
+            "--port",
+            "/dev/ttyACM0",
+            "--rounds",
+            rounds,
+        ])
+        .is_err());
+    }
+}
+
+#[test]
+fn nav_burst_expected_page_model_clamps_interior_and_boundary_sequences() {
+    assert_eq!(
+        binbook_cli::nav_burst::expected_pages(8, 16, &binbook_cli::nav_burst::INTERIOR_BURST,),
+        binbook_cli::nav_burst::INTERIOR_EXPECTED
+    );
+    assert_eq!(
+        binbook_cli::nav_burst::expected_pages(
+            0,
+            16,
+            &[
+                binbook_diagnostic_protocol::KeyCode::Up,
+                binbook_diagnostic_protocol::KeyCode::Down,
+                binbook_diagnostic_protocol::KeyCode::Up,
+                binbook_diagnostic_protocol::KeyCode::Up,
+                binbook_diagnostic_protocol::KeyCode::Down,
+            ],
+        ),
+        [0, 1, 0, 0, 1]
     );
 }
 

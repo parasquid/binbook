@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 from PIL import Image
@@ -9,6 +10,7 @@ from binbook.rle import decode_packbits
 
 
 FIXTURE = Path("firmware/crates/binbook-fw/fixtures/nav_probe.binbook")
+PAGE_LABEL_BOX = (70, 170, 410, 360)
 
 
 def _decode_x4_native_page(reader: BinBookReader, page_index: int) -> Image.Image:
@@ -52,6 +54,50 @@ def _decode_x4_native_page(reader: BinBookReader, page_index: int) -> Image.Imag
     )
 
 
+def test_nav_probe_has_sixteen_numbered_pages():
+    reader = BinBookReader.open(FIXTURE, validate=True)
+
+    assert len(reader.pages) == 16
+    assert len(reader.page_chunks) == 16 * 3 * 30
+    assert len(reader.page_transitions) == 2 * (16 - 1)
+    assert [page.page_number for page in reader.pages] == list(range(16))
+
+
+def test_every_nav_probe_page_keeps_orientation_and_gray_frame():
+    reader = BinBookReader.open(FIXTURE)
+
+    for page_index in range(16):
+        image = _decode_x4_native_page(reader, page_index)
+        assert max(image.crop((0, 0, 480, 10)).get_flattened_data()) == 0
+        assert max(image.crop((0, 790, 480, 800)).get_flattened_data()) == 0
+        assert max(image.crop((0, 0, 10, 800)).get_flattened_data()) == 0
+        assert max(image.crop((470, 0, 480, 800)).get_flattened_data()) == 0
+        assert image.getpixel((240, 400)) == 0
+        assert [image.getpixel((x, 535)) for x in (140, 205, 270, 335)] == [
+            0,
+            85,
+            170,
+            255,
+        ]
+
+        for box in (
+            (10, 10, 240, 400),
+            (240, 10, 470, 400),
+            (10, 400, 240, 790),
+            (240, 400, 470, 790),
+        ):
+            assert min(image.crop(box).get_flattened_data()) < 255
+
+
+def test_nav_probe_pages_have_unique_labels_and_images():
+    reader = BinBookReader.open(FIXTURE)
+    images = [_decode_x4_native_page(reader, index) for index in range(16)]
+
+    label_bytes = [image.crop(PAGE_LABEL_BOX).tobytes() for image in images]
+    assert len(set(label_bytes)) == 16
+    assert len({hashlib.sha256(image.tobytes()).digest() for image in images}) == 16
+
+
 def test_nav_probe_page_0_is_a_full_panel_orientation_target():
     reader = BinBookReader.open(FIXTURE)
     display = reader._section_data(SectionId.DISPLAY_PROFILE)
@@ -88,7 +134,49 @@ def test_nav_probe_page_1_is_a_true_black_white_checkerboard():
     reader = BinBookReader.open(FIXTURE)
     image = _decode_x4_native_page(reader, 1)
 
-    assert [image.getpixel((x, y)) for x in (80, 240, 400) for y in (80, 240)] == [
+    assert [image.getpixel((x, y)) for x in (80, 180, 360) for y in (80, 620)] == [
+        255,
+        0,
+        0,
+        255,
+        255,
+        0,
+    ]
+
+
+def test_nav_probe_pages_keep_their_assigned_dominant_patterns():
+    reader = BinBookReader.open(FIXTURE)
+    images = [_decode_x4_native_page(reader, index) for index in range(16)]
+
+    assert [images[2].getpixel((x, 430)) for x in (60, 180, 300, 420)] == [
+        0,
+        85,
+        170,
+        255,
+    ]
+    assert [images[4].getpixel((60, y)) for y in (80, 280, 480, 680)] == [
+        0,
+        85,
+        170,
+        255,
+    ]
+    assert images[5].getpixel((80, 732)) == 0
+    assert images[6].getpixel((80, 68)) == 0
+    assert images[7].getpixel((80, 732)) == 0
+    assert images[8].getpixel((75, 75)) == 0
+    assert [images[9].getpixel((x, 430)) for x in (60, 80)] == [0, 255]
+    assert [images[10].getpixel((60, y)) for y in (420, 440)] == [0, 255]
+    assert [images[11].getpixel((x, y)) for x, y in ((80, 140), (420, 140), (80, 680), (420, 680))] == [
+        0,
+        85,
+        170,
+        255,
+    ]
+    sparse_black = sum(pixel == 0 for pixel in images[12].crop((20, 370, 460, 760)).get_flattened_data())
+    dense_black = sum(pixel == 0 for pixel in images[13].crop((20, 370, 460, 760)).get_flattened_data())
+    assert 0 < sparse_black < dense_black
+    assert images[14].getpixel((60, 60)) == 0
+    assert [images[15].getpixel((x, y)) for x in (80, 180, 360) for y in (80, 620)] == [
         0,
         255,
         255,

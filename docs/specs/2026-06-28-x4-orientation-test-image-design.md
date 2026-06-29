@@ -2,10 +2,9 @@
 
 ## Purpose
 
-Replace page 0 of the four-page navigation fixture with a diagnostic target
+Define the persistent frame used by every page of the 16-page navigation fixture
 that makes rotation, mirroring, clipping, half-screen writes, stale pixels, and
-grayscale errors unambiguous in a calibrated webcam image. Pages 1–3 remain
-available for navigation testing.
+grayscale errors unambiguous in a calibrated webcam image.
 
 ## Image Layout
 
@@ -35,8 +34,8 @@ the swatches, rulers, or one another.
 ## Integration
 
 `firmware/scripts/build-nav-probe-fixture.py` generates the image and uses it as
-page 0 of `firmware/crates/binbook-fw/fixtures/nav_probe.binbook`. The remaining
-fixture pages retain their distinct checkerboard, stripe, and text patterns.
+the common frame for `firmware/crates/binbook-fw/fixtures/nav_probe.binbook`.
+All fixture pages add a distinct dominant pattern beneath the frame.
 No protocol, runtime, or display-driver behavior changes for this diagnostic.
 
 ## Automated Checks

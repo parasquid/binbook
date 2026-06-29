@@ -400,11 +400,7 @@ pub fn dispatch_command(
                 }
             };
             let turn = crate::input::target_page_for_button(button);
-            if apply_page_turn(ctx.current_page, ctx.page_count, turn) == ctx.current_page {
-                DispatchResult::NoAction
-            } else {
-                DispatchResult::RenderTurn { turn }
-            }
+            DispatchResult::RenderTurn { turn }
         }
         Opcode::Page => {
             let page_payload = match decode_page_payload(payload) {

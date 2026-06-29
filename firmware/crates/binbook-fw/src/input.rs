@@ -55,6 +55,25 @@ pub enum ButtonEvent {
     Release(Button),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputDecision {
+    Unchanged,
+    Press(Button),
+    Released,
+    SuppressedByCooldown {
+        observed: Option<Button>,
+        elapsed_ms: u32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InputPollOutcome {
+    pub previous: Option<Button>,
+    pub observed: Option<Button>,
+    pub elapsed_since_last_press_ms: u32,
+    pub decision: InputDecision,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct InputState {
     last_button: Option<Button>,
@@ -76,21 +95,40 @@ impl InputState {
     }
 
     pub fn poll_raw(&mut self, ch1: u16, ch2: u16, now_ms: u64) -> Option<ButtonEvent> {
-        let button = decode_buttons(ch1, ch2);
+        match self.poll_raw_detailed(ch1, ch2, now_ms).decision {
+            InputDecision::Press(button) => Some(ButtonEvent::Press(button)),
+            InputDecision::Unchanged
+            | InputDecision::Released
+            | InputDecision::SuppressedByCooldown { .. } => None,
+        }
+    }
 
-        let event = if button != self.last_button {
-            if now_ms.saturating_sub(self.last_press_time) > self.cooldown_ms as u64 {
-                self.last_press_time = now_ms;
-                button.map(ButtonEvent::Press)
-            } else {
-                None
+    pub fn poll_raw_detailed(&mut self, ch1: u16, ch2: u16, now_ms: u64) -> InputPollOutcome {
+        let previous = self.last_button;
+        let observed = decode_buttons(ch1, ch2);
+        let elapsed = now_ms.saturating_sub(self.last_press_time);
+        let elapsed_ms = elapsed.min(u32::MAX as u64) as u32;
+        let decision = if observed == previous {
+            InputDecision::Unchanged
+        } else if elapsed > self.cooldown_ms as u64 {
+            self.last_press_time = now_ms;
+            match observed {
+                Some(button) => InputDecision::Press(button),
+                None => InputDecision::Released,
             }
         } else {
-            None
+            InputDecision::SuppressedByCooldown {
+                observed,
+                elapsed_ms,
+            }
         };
-
-        self.last_button = button;
-        event
+        self.last_button = observed;
+        InputPollOutcome {
+            previous,
+            observed,
+            elapsed_since_last_press_ms: elapsed_ms,
+            decision,
+        }
     }
 
     pub fn poll(

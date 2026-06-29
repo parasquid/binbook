@@ -3,7 +3,9 @@
 use std::io::{self, Read, Write};
 use std::time::Duration;
 
-use binbook_cli::serial_transport::{send_and_receive_io, send_batch_and_receive_io};
+use binbook_cli::serial_transport::{
+    send_and_receive_io, send_batch_and_receive_io, send_batch_observed_io,
+};
 use binbook_diagnostic_protocol::{
     decode_frame, encode_frame, FrameHeader, FrameKind, KeyCode, Opcode, Status, MAX_FRAME_BYTES,
 };
@@ -166,7 +168,11 @@ fn serial_transport_times_out_without_matching_response() {
 
 #[test]
 fn batch_transport_collects_every_sequence_checked_response() {
-    let requests = key_batch(&[(10, KeyCode::Right), (11, KeyCode::Right), (12, KeyCode::Left)]);
+    let requests = key_batch(&[
+        (10, KeyCode::Right),
+        (11, KeyCode::Right),
+        (12, KeyCode::Left),
+    ]);
     let mut io = FakeIo {
         reads: responses_for(&[10, 11, 12]),
         index: 0,
@@ -184,6 +190,42 @@ fn batch_transport_collects_every_sequence_checked_response() {
 
     assert_eq!(io.written, requests);
     assert_eq!(decoded_sequences(&responses), [10, 11, 12]);
+}
+
+#[test]
+fn observed_batch_transport_preserves_actual_arrival_order() {
+    let requests = key_batch(&[
+        (10, KeyCode::Right),
+        (11, KeyCode::Right),
+        (12, KeyCode::Left),
+    ]);
+    let mut io = FakeIo {
+        reads: responses_for(&[12, 10, 11]),
+        index: 0,
+        written: vec![],
+    };
+
+    let observed = send_batch_observed_io(
+        &mut io,
+        &requests,
+        Opcode::Key,
+        &[10, 11, 12],
+        Duration::from_secs(5),
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(
+        observed
+            .iter()
+            .map(|response| response.sequence)
+            .collect::<Vec<_>>(),
+        [12, 10, 11]
+    );
+    assert!(observed
+        .windows(2)
+        .all(|pair| pair[0].elapsed_ms <= pair[1].elapsed_ms));
+    assert_eq!(io.written, requests);
 }
 
 #[test]

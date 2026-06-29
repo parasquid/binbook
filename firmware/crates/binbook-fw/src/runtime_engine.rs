@@ -5,7 +5,7 @@ use crate::{
         DisplayProbeKind, DisplayRequest, RefreshAction, RefreshCoordinator, RefreshPhase,
     },
     display::{BaseSyncOutcome, GrayRenderOutcome},
-    input::{apply_page_turn, PageTurn},
+    input::{apply_page_turn, Button, InputDecision, PageTurn},
 };
 use xteink_hal::{HalError, HalResult};
 
@@ -55,6 +55,26 @@ pub enum RuntimeEventKind {
     ControllerRamStateChanged(ControllerRamState),
     TurnQueued {
         sequence: Option<u16>,
+        turn: PageTurn,
+    },
+    InputTransition {
+        ch1: u16,
+        ch2: u16,
+        observed: Option<Button>,
+    },
+    InputDecision {
+        observed: Option<Button>,
+        decision: InputDecision,
+        elapsed_ms: u32,
+    },
+    TurnStarted {
+        sequence: Option<u16>,
+        from: u32,
+        target: u32,
+    },
+    TurnBoundaryNoop {
+        sequence: Option<u16>,
+        page: u32,
         turn: PageTurn,
     },
     PageDisplayed {
@@ -260,16 +280,30 @@ impl DisplayEngine {
                 );
                 let target = apply_page_turn(self.current_page(), self.page_count, turn);
                 Some(
-                    self.navigate(target, completion_sequence, backend, events, now_ms)
-                        .await,
+                    self.navigate(
+                        target,
+                        completion_sequence,
+                        Some(turn),
+                        backend,
+                        events,
+                        now_ms,
+                    )
+                    .await,
                 )
             }
             DisplayRequest::Goto {
                 page,
                 completion_sequence,
             } => Some(
-                self.navigate(page, Some(completion_sequence), backend, events, now_ms)
-                    .await,
+                self.navigate(
+                    page,
+                    Some(completion_sequence),
+                    None,
+                    backend,
+                    events,
+                    now_ms,
+                )
+                .await,
             ),
         }
     }
@@ -299,6 +333,7 @@ impl DisplayEngine {
         &mut self,
         target: u32,
         sequence: Option<u16>,
+        boundary_turn: Option<PageTurn>,
         backend: &mut B,
         events: &mut S,
         now_ms: u64,
@@ -314,6 +349,19 @@ impl DisplayEngine {
             );
         }
         let cancelled_delay = self.phase() == RefreshPhase::GrayDelay;
+        if target == from {
+            if let Some(turn) = boundary_turn {
+                emit(
+                    events,
+                    now_ms,
+                    RuntimeEventKind::TurnBoundaryNoop {
+                        sequence,
+                        page: from,
+                        turn,
+                    },
+                );
+            }
+        }
         self.coordinator.request_arrived();
         if cancelled_delay {
             emit(
@@ -325,6 +373,15 @@ impl DisplayEngine {
         if target == from {
             return self.complete(sequence, RuntimeCompletionStatus::Ok, None, events, now_ms);
         }
+        emit(
+            events,
+            now_ms,
+            RuntimeEventKind::TurnStarted {
+                sequence,
+                from,
+                target,
+            },
+        );
         self.coordinator.start_bw(target);
         self.phase_event(events, now_ms);
         let result = backend.render_bw(from, target).await;

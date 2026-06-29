@@ -9,8 +9,8 @@ use binbook_fw::display::{
 };
 use binbook_fw::flash::{FlashStorage, FILE_ENTRY_SIZE};
 use binbook_fw::input::{
-    apply_page_turn, decode_buttons, page_turn_for_button, Button, ButtonEvent, InputState,
-    PageTurn,
+    apply_page_turn, decode_buttons, page_turn_for_button, Button, ButtonEvent, InputDecision,
+    InputPollOutcome, InputState, PageTurn,
 };
 use binbook_fw::refresh::{RefreshDecision, RefreshPolicy, RefreshState};
 use xteink_hal::{Flash, HalResult};
@@ -333,6 +333,80 @@ fn raw_poll_suppresses_transitions_inside_cooldown() {
 
     assert_eq!(input.poll_raw(500, 4095, 50), None);
     assert_eq!(input.poll_raw(500, 4095, 150), None);
+}
+
+#[test]
+fn detailed_poll_reports_the_initial_cooldown_suppression() {
+    let mut input = InputState::new();
+
+    assert_eq!(
+        input.poll_raw_detailed(500, 4095, 50),
+        InputPollOutcome {
+            previous: None,
+            observed: Some(Button::Right),
+            elapsed_since_last_press_ms: 50,
+            decision: InputDecision::SuppressedByCooldown {
+                observed: Some(Button::Right),
+                elapsed_ms: 50,
+            },
+        }
+    );
+}
+
+#[test]
+fn detailed_poll_reports_one_accepted_press() {
+    let mut input = InputState::new();
+
+    assert_eq!(
+        input.poll_raw_detailed(500, 4095, 101).decision,
+        InputDecision::Press(Button::Right)
+    );
+    assert_eq!(
+        input.poll_raw_detailed(500, 4095, 250).decision,
+        InputDecision::Unchanged
+    );
+}
+
+#[test]
+fn detailed_poll_preserves_exact_cooldown_and_suppressed_state_change() {
+    let mut input = InputState::new();
+    assert_eq!(
+        input.poll_raw_detailed(500, 4095, 101).decision,
+        InputDecision::Press(Button::Right)
+    );
+
+    assert_eq!(
+        input.poll_raw_detailed(1000, 4095, 201).decision,
+        InputDecision::SuppressedByCooldown {
+            observed: Some(Button::Left),
+            elapsed_ms: 100,
+        }
+    );
+    assert_eq!(input.last_button(), Some(Button::Left));
+    assert_eq!(
+        input.poll_raw_detailed(1000, 4095, 302).decision,
+        InputDecision::Unchanged
+    );
+}
+
+#[test]
+fn detailed_poll_reports_release_without_changing_legacy_events() {
+    let mut detailed = InputState::new();
+    assert_eq!(
+        detailed.poll_raw_detailed(500, 4095, 101).decision,
+        InputDecision::Press(Button::Right)
+    );
+    assert_eq!(
+        detailed.poll_raw_detailed(4095, 4095, 202).decision,
+        InputDecision::Released
+    );
+
+    let mut legacy = InputState::new();
+    assert_eq!(
+        legacy.poll_raw(500, 4095, 101),
+        Some(ButtonEvent::Press(Button::Right))
+    );
+    assert_eq!(legacy.poll_raw(4095, 4095, 202), None);
 }
 
 #[test]
@@ -3407,13 +3481,12 @@ fn diagnostic_command_acceptance_fixture_rejects_noops() {
     let flen = encode_frame(&header, &key_payload, &mut frame_buf).unwrap();
     let (dh, pl) = decode_frame(&frame_buf[..flen], &mut payload_out).unwrap();
     let result = dispatch_command(dh, &payload_out[..pl], &mut ctx, &mut resp_buf);
-    match result {
-        DispatchResult::NoAction => {}
-        other => panic!(
-            "KEY LEFT from page 0 expected NoAction (already at first), got {:?}",
-            other
-        ),
-    }
+    assert_eq!(
+        result,
+        DispatchResult::RenderTurn {
+            turn: PageTurn::Previous,
+        }
+    );
 
     ctx.current_page = 7;
     let header = FrameHeader {

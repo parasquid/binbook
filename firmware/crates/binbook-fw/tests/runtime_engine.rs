@@ -195,6 +195,77 @@ fn request_before_deadline_cancels_delay_and_starts_bw_immediately() {
 }
 
 #[test]
+fn moving_request_emits_start_before_page_displayed() {
+    let (mut engine, mut backend, mut events) = cold_seeded_engine();
+    events.0.clear();
+    block_on(engine.request(
+        DisplayRequest::Turn {
+            turn: PageTurn::Next,
+            completion_sequence: Some(31),
+        },
+        &mut backend,
+        &mut events,
+        1_100,
+    ));
+
+    let start = events
+        .0
+        .iter()
+        .position(|event| {
+            event.kind
+                == RuntimeEventKind::TurnStarted {
+                    sequence: Some(31),
+                    from: 0,
+                    target: 1,
+                }
+        })
+        .unwrap();
+    let displayed = events
+        .0
+        .iter()
+        .position(|event| event.kind == RuntimeEventKind::PageDisplayed { from: 0, page: 1 })
+        .unwrap();
+    assert!(start < displayed);
+}
+
+#[test]
+fn boundary_request_logs_noop_and_preserves_gray_delay_cancellation() {
+    let (mut engine, mut backend, mut events) = cold_seeded_engine();
+    events.0.clear();
+    let operation_count = backend.operations.len();
+    let completion = block_on(engine.request(
+        DisplayRequest::Turn {
+            turn: PageTurn::Previous,
+            completion_sequence: Some(32),
+        },
+        &mut backend,
+        &mut events,
+        1_100,
+    ))
+    .unwrap();
+
+    assert_eq!(completion.status, RuntimeCompletionStatus::Ok);
+    assert_eq!(completion.page, 0);
+    assert_eq!(backend.operations.len(), operation_count);
+    assert!(events.0.iter().any(|event| {
+        event.kind
+            == RuntimeEventKind::TurnBoundaryNoop {
+                sequence: Some(32),
+                page: 0,
+                turn: PageTurn::Previous,
+            }
+    }));
+    assert!(events
+        .0
+        .iter()
+        .any(|event| { event.kind == RuntimeEventKind::GrayDelayCancelled { page: 0 } }));
+    assert!(!events
+        .0
+        .iter()
+        .any(|event| matches!(event.kind, RuntimeEventKind::PageDisplayed { .. })));
+}
+
+#[test]
 fn successful_enqueue_during_overlay_cancels_without_failure() {
     let (mut engine, mut backend, mut events) = cold_seeded_engine();
     backend.gray_outcome = GrayRenderOutcome::Cancelled;

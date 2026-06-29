@@ -108,6 +108,148 @@ fn staged_gray_exercise_uses_the_planned_transport_script() {
     );
 }
 
+#[test]
+fn nav_burst_exercise_uses_key_batches_and_validates_logs() {
+    let mut io = ScriptedExerciseIo::new(nav_burst_responses());
+    let mut evidence = Vec::new();
+    let result = binbook_cli::nav_burst::run_nav_burst_io(
+        &mut io,
+        binbook_cli::nav_burst::NavBurstOptions {
+            port: PORT,
+            rounds: 1,
+            inter_key_ms: 0,
+        },
+        &mut evidence,
+    );
+
+    assert!(result.is_ok(), "nav-burst exercise should run: {result:?}");
+    assert_eq!(io.index, io.reads.len());
+    let transcript = decoded_request_transcript(&io.written);
+    assert_eq!(transcript.first(), Some(&(Opcode::Page, 1)));
+    assert!(transcript.contains(&(Opcode::Key, 3)));
+    assert!(transcript.contains(&(Opcode::Key, 18)));
+    assert!(transcript.contains(&(Opcode::Page, 22)));
+    let text = String::from_utf8(evidence).unwrap();
+    assert!(text.contains("\"kind\":\"run_result\""));
+    assert!(text.contains("\"boundary_key_count\":5"));
+}
+
+fn nav_burst_responses() -> Vec<Vec<u8>> {
+    let expected = binbook_cli::nav_burst::INTERIOR_EXPECTED;
+    let mut records = Vec::new();
+    let mut from = 8;
+    let mut record_sequence = 1;
+    for (protocol_sequence, &target) in (3u16..=18).zip(expected.iter()) {
+        records.push(log_record(
+            record_sequence,
+            100,
+            binbook_diagnostic_protocol::EVT_TURN_STARTED,
+            i32::from(protocol_sequence),
+            from as i32,
+            target as i32,
+        ));
+        record_sequence += 1;
+        records.push(log_record(
+            record_sequence,
+            110,
+            binbook_diagnostic_protocol::EVT_TURN_DEQUEUED,
+            i32::from(protocol_sequence),
+            target as i32,
+            0,
+        ));
+        record_sequence += 1;
+        from = target;
+    }
+    records.push(log_record(
+        record_sequence,
+        500,
+        binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_COMPLETE,
+        10,
+        0,
+        0,
+    ));
+
+    let mut reads = Vec::new();
+    reads.extend(fragment(page_response(1, 8)));
+    reads.extend(fragment(log_response(Opcode::LogClear, 2, 1, 0, &[])));
+    for sequence in 3..=18 {
+        reads.extend(fragment(ack(sequence, Opcode::Key)));
+    }
+    reads.extend(fragment(status_response(19, nav_status(10))));
+    reads.extend(fragment(log_response(
+        Opcode::LogGet,
+        20,
+        20,
+        0,
+        &records[..19],
+    )));
+    reads.extend(fragment(log_response(
+        Opcode::LogGet,
+        21,
+        34,
+        0,
+        &records[19..],
+    )));
+
+    let boundary_expected = [0, 1, 0, 0, 1];
+    let mut boundary = Vec::new();
+    let mut from = 0;
+    let mut log_sequence = 34;
+    for (protocol_sequence, &target) in (24u16..=28).zip(boundary_expected.iter()) {
+        let event = if target == from {
+            binbook_diagnostic_protocol::EVT_TURN_BOUNDARY_NOOP
+        } else {
+            binbook_diagnostic_protocol::EVT_TURN_STARTED
+        };
+        boundary.push(log_record(
+            log_sequence,
+            600,
+            event,
+            i32::from(protocol_sequence),
+            from,
+            target,
+        ));
+        log_sequence += 1;
+        boundary.push(log_record(
+            log_sequence,
+            610,
+            binbook_diagnostic_protocol::EVT_TURN_DEQUEUED,
+            i32::from(protocol_sequence),
+            target,
+            0,
+        ));
+        log_sequence += 1;
+        from = target;
+    }
+    boundary.push(log_record(
+        log_sequence,
+        900,
+        binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_COMPLETE,
+        1,
+        0,
+        0,
+    ));
+    reads.extend(fragment(page_response(22, 0)));
+    reads.extend(fragment(log_response(Opcode::LogClear, 23, 34, 0, &[])));
+    for sequence in 24..=28 {
+        reads.extend(fragment(ack(sequence, Opcode::Key)));
+    }
+    reads.extend(fragment(status_response(29, nav_status(1))));
+    reads.extend(fragment(log_response(Opcode::LogGet, 30, 45, 0, &boundary)));
+    reads
+}
+
+fn nav_status(current_page: u32) -> StatusPayload {
+    StatusPayload {
+        current_page,
+        page_count: 16,
+        panel_mode: PanelModeCode::Bw,
+        dropped_log_count: 0,
+        protocol_error_count: 0,
+        last_error: 0,
+    }
+}
+
 fn valid_status() -> StatusPayload {
     StatusPayload {
         current_page: 3,
@@ -642,7 +784,7 @@ fn log_response(
     dropped_log_count: u32,
     records: &[Vec<u8>],
 ) -> Vec<u8> {
-    let mut payload = [0u8; 256];
+    let mut payload = [0u8; 496];
     let header_len = encode_log_response_header(
         LogResponseHeader {
             next_cursor,

@@ -1,135 +1,69 @@
-# Handoff: X4 Staged-Grayscale Implementation
+# Handoff: X4 Boundary Burst FIFO Fix
 
-Date: 2026-06-29
+Date: 2026-06-30
 
-## Current State
+## Current state
 
-All implementation and agent-verifiable acceptance tasks in
-[`docs/plans/2026-06-29-x4-staged-grayscale.md`](docs/plans/2026-06-29-x4-staged-grayscale.md)
-have passed. The attached X4 is running the permanent
-`firmware-bin,diagnostic-console` image on page 0 in grayscale mode. The only
-outstanding acceptance input is the user's explicit verdict on the final webcam
-artifacts.
+The boundary and mixed-direction protocol KEY fix is implemented and verified on the attached Xteink X4. The device is running `firmware-bin,diagnostic-console` and is visibly settled on page 1 in grayscale mode.
 
-The runtime uses BinBook waveform hint `SSD1677_STAGED_GRAY2 = 2`: slot 0 is
-overlay MSB, slot 1 overlay LSB, and slot 2 the non-dithered BW base. Page turns
-are differential BW, refinement starts after 350 ms, request epochs cancel
-pre-activation streaming, and completed overlays perform cancellable background
-base sync.
+All 165 live KEY requests from the ten-round navigation diagnostic plus the five-key boundary burst produced unique sequence-matched engine completions. The boundary burst `[Up, Down, Up, Up, Down]` from page 0 completed as `0,1,0,0,1`; sequences 283 and 286 emitted `TURN_BOUNDARY_NOOP`, and independent STATUS reported page 1 with zero dropped logs, protocol errors, or display errors.
 
-SSD1677 staged activation is power-state aware: `0x0C` when clock/analog power
-is already on and `0xCC` after a full seed powers down. Explicit
-`full-refresh-current` reconstructs absolute LUT planes without a framebuffer:
-`red = !(base | (msb & !lsb))`, `black = !(base | lsb)`. The CLI permits 70
-seconds for probes, covering firmware's 60-second BUSY bound plus streaming.
+## Implementation
 
-## Host Verification
+Directional protocol KEY presses no longer complete as dispatch-time no-ops. Every accepted press becomes a typed relative `PageTurn` and enters the existing 16-request FIFO. The display engine applies turns in FIFO order, so dequeue order is the queue-tail logical page model. Boundary turns reach the existing no-render observation/completion path and retain their protocol sequence.
 
-Final clean matrix:
+This does not change ADC thresholds, 50 ms polling, 100 ms cooldown, physical button mapping, queue capacity, display coordination, SSD1677 behavior, protocol version, STATUS layout, or framebuffer/RAM usage.
 
-- `cargo clean`: removed 2,768 files / 526.0 MiB;
-- firmware diagnostic workspace: 209 passed;
-- firmware default workspace: 127 passed;
-- pinned-nightly RISC-V release builds passed for `firmware-bin`,
-  `firmware-bin,diagnostic-console`, and
-  `firmware-bin,diagnostic-console,debug-log`;
-- CLI default: 32 passed;
-- CLI `serial-device`: 51 passed, 4 live tests ignored;
-- Python: 93 passed, 26 skipped in 9.72 seconds;
-- `git diff --check`: required after this documentation update.
+## Host verification
 
-Key regressions include power-state-safe `0xCC/0x0C` activation, absolute-plane
-reconstruction from staged slots, canonical four-gray RAM polarity, true
-black/white checker generation, deterministic overlay cancellation, and the
-70-second display-probe timeout.
+- Regression red phase: `cargo test -p binbook-fw --features diagnostic-console --test boundary_fifo -- --nocapture` failed because sequences 100 and 77 returned immediate success instead of `RuntimeCommand::Hardware`.
+- Regression green phase: the same command passes 2 tests.
+- Focused protocol/engine/aggregator/transport/nav-burst suites pass.
+- Clean diagnostic firmware workspace: 218 tests pass (`27 + 22 + 2 + 128 + 9 + 11 + 19` across nonempty suites).
+- Default firmware workspace: 133 tests pass (`27 + 21 + 55 + 11 + 19` across nonempty suites).
+- CLI default: 35 tests pass.
+- CLI `serial-device`: 56 tests pass and 4 live tests remain explicitly ignored.
+- Python: 98 tests pass and 26 are skipped.
+- Pinned release binaries: default 1,084,436 bytes; diagnostic 1,101,692 bytes; diagnostic/debug 1,101,692 bytes.
+- `git diff --check` passes. Protocol version remains `1`; STATUS layout and input/queue constants are unchanged; no serde dependency was added to firmware crates.
 
-## Firmware And Boot Evidence
+## Live device evidence
 
-Final flash command:
+- Flash command: `FW_FEATURES="firmware-bin,diagnostic-console" firmware/scripts/flash-xteink-x4-nav-probe.sh`.
+- Flash result: ESP32-C3 rev v0.4, 40 MHz, 16 MB flash, application 1,116,352 bytes, completed successfully.
+- Boot capture command: the 15-second pyserial reset/capture from `AGENTS.md`.
+- Boot record: `/tmp/x4-nav-burst-fifo-fix-boot.txt`.
+- Baseline HELLO: protocol 1, frame limit 512, firmware `binbook-fw`, target `xteink-x4`, and all required capabilities.
+- Baseline STATUS: page 0, page count 16, grayscale, all counters zero.
+- Diagnostic command: `UV_CACHE_DIR=/tmp/binbook-uv-cache uv run --offline python firmware/scripts/run-x4-nav-burst-diagnostic.py --port /dev/ttyACM0 --video-device /dev/video1 --rounds 10 --inter-key-ms 0 --output-dir /tmp/x4-nav-burst-fifo-fix`.
+- JSONL: `/tmp/x4-nav-burst-fifo-fix/evidence.jsonl` contains 165 KEY records, 165 unique `TURN_DEQUEUED` sequence values, 11 successful round results, and `error_count=0`.
+- Boundary no-ops: sequence 283 at page 0 and sequence 286 at page 0.
+- Boundary completions: sequences 283 through 287 completed on pages `0,1,0,0,1`.
+- Independent final STATUS: `/tmp/x4-nav-burst-fifo-fix/final-status.txt` reports `current_page=1 page_count=16 panel_mode=Grayscale dropped_log_count=0 protocol_error_count=0 last_error=0`.
+- Independent boundary logs: `/tmp/x4-nav-burst-fifo-fix/final-boundary-log-page-1.txt` and `/tmp/x4-nav-burst-fifo-fix/final-boundary-log-page-2.txt`.
+- Video: `/tmp/x4-nav-burst-fifo-fix/nav-burst.mp4`.
+- Boundary contact sheet: `/tmp/x4-nav-burst-fifo-fix/round-11-contact-sheet.jpg`.
+- Settled boundary frame: `/tmp/x4-nav-burst-fifo-fix/round-11-settled.jpg` visibly reads `PAGE 01` with the orientation frame and grayscale swatches intact.
 
-```bash
-FW_FEATURES="firmware-bin,diagnostic-console" \
-  firmware/scripts/flash-xteink-x4-nav-probe.sh
-```
+The extracted per-key frames are host-timestamp samples from a zero-delay queued burst, not proof of exact transition timing. Some samples capture a later visible page while queued requests are still completing. Serial completion sequences and independent STATUS prove per-key logical outcomes; the settled webcam frame proves the required final visible page.
 
-Flash succeeded on ESP32-C3 revision v0.4, 40 MHz crystal, 16 MB flash, MAC
-`38:44:be:98:72:dc`; final application size is 263,328 bytes (1.61%). The
-15-second boot record at `/tmp/x4-staged-gray-boot.txt` contains ESP-IDF v5.5.1,
-the factory partition at `0x10000`, segment loads, and application load.
+## Acceptance matrix
 
-HELLO decodes as protocol 1, maximum frame 512, firmware `binbook-fw`, target
-`xteink-x4`, and capabilities `KEY,PAGE,STATUS,LOG,CRASH,DISPLAY_PROBE`.
-Immediate post-flash HELLO sometimes times out during USB re-enumeration; the
-single runbook-authorized retry succeeds. Combined
-`diagnostic-console,debug-log` also returns HELLO, proving packet transport owns
-USB. The normal diagnostic image was reflashed afterward and HELLO reconfirmed.
+| Requirement | Implementation path | Automated evidence | Live serial evidence | Webcam evidence | State |
+|---|---|---|---|---|---|
+| Boundary burst models `0,1,0,0,1` | KEY dispatch to typed FIFO `PageTurn` | `boundary_fifo` regression | seq 283–287 complete `0,1,0,0,1` | settled `PAGE 01` | Verified |
+| One completion per accepted KEY | runtime aggregator and display completion channel | boundary, aggregator, transport, scripted burst tests | 165 KEY records and 165 unique `TURN_DEQUEUED` sequences | final visible state agrees | Verified |
+| Boundary no-ops use observation/completion path | display engine `TurnBoundaryNoop` path | engine no-op test plus dispatch regression | seq 283 and 286 emit `TURN_BOUNDARY_NOOP` and `TURN_DEQUEUED` | no extra visible page transition required | Verified |
+| Boundary no-op performs no display operation | display engine returns before BW render | backend operation-count assertion | no `PAGE_TURN` for seq 283 or 286 | page remains 0 at those logical outcomes | Verified |
+| FIFO-relative intent preserved | bounded request FIFO | modeled burst and queue-capacity tests | all 165 sequences match host model | settled pages 10 and 1 visible | Verified |
+| No queue/counter regression | unchanged capacity and aggregator errors | full firmware/CLI/Python matrices | zero dropped logs, protocol errors, last error | no corruption in inspected contact sheets | Verified |
+| Physical ADC semantics unchanged | existing input mapping/timing | default and diagnostic input tests | no physical ADC exercise in this run | not exercised | Source/test verified; live physical path pending |
+| Display/SSD1677 behavior unchanged | no display/driver production changes | engine and SSD1677 suites | normal page events and grayscale settle | orientation frame and swatches intact | Verified |
 
-## Staged Exercise Evidence
+Transport acknowledgements are not counted as completion evidence. Completion claims above require matching engine events, resulting state, independent STATUS/log queries, and the required settled webcam observation.
 
-Final post-probe-fix exercise:
-`/tmp/x4-staged-gray-post-probe-fix-exercise.txt`. Every validator phase passed
-in 5.604 seconds. Earlier independently paginated logs established:
+## Adversarial completion review
 
-- page-1 BW completion→overlay start: 131604→131956 ms (352 ms);
-- waveform hint 2 / LUT revision 1;
-- page-2 overlay cancellation: 133049→133083 ms;
-- FIFO completions exactly page `2,3,2`;
-- page-2 and final page-3 overlay/base-sync completion;
-- no dropped turns, display errors, or protocol errors.
-
-After the final restore:
-
-```text
-current_page=0 page_count=4 panel_mode=Grayscale dropped_log_count=0 protocol_error_count=0 last_error=0
-```
-
-## General Device Runbook
-
-- KEY shared navigation: independently verified `0→1→0`.
-- PAGE: `goto 3`, `goto 0`, `next`, `previous`, `last`, `first`, and `current`
-  returned `3,0,1,0,3,0,0`; STATUS confirmed discriminating states.
-- LOG: a nonempty ring cleared at cursor 269; only the new retrieval receipt
-  remained. A subsequent render produced fresh origin-timestamped phase,
-  panel, controller-state, page-turn, and completion events from cursor 270.
-- CRASH: clear returned `ok`; independent get returned `crash=empty`.
-- Fragmented status, two-frame batch, and malformed-frame recovery tests passed
-  individually with one test thread. Malformed tests intentionally raised
-  `protocol_error_count` to 10 while valid STATUS still completed; reflashing
-  reset it to zero.
-- Full-refresh probe returned `ok`; isolated logs contained `RENDER_START`,
-  `RENDER_SUCCESS`, sequence-matched completion, and zero-error STATUS.
-
-## Webcam Evidence
-
-Confirmed crop is `crop=440:770:770:250`; it includes the black device bezel,
-which is not rendered content.
-
-- staged exercise video: `/tmp/x4-staged-gray-final-panel.mp4`;
-- four-corner probe: `/tmp/x4-probe-window-corners-panel.jpg`;
-- clear-white probe: `/tmp/x4-probe-clear-white-panel.jpg`;
-- corrected absolute full-refresh page 0:
-  `/tmp/x4-probe-full-refresh-page0-polarity-panel.jpg`;
-- final staged page 0: `/tmp/x4-final-page0-panel.jpg`.
-
-Agent inspection confirms full active-panel coverage, correct orientation,
-four corner rectangles, uniform white, four distinct grayscale swatches,
-stable black/white regions, no full navigation refresh, pre-activation
-cancellation, and artifact-free final content. The user still needs to provide
-an explicit verdict on these final artifacts if required for sign-off.
-
-## Acceptance Matrix
-
-| Requirement | Automated evidence | Device / visual evidence | State |
-|---|---|---|---|
-| Staged planes and hint 2 | Python truth-table, parser, fixture tests | Waveform event `2/1` | Verified |
-| Power-state-safe short LUT | Driver `0xCC/0x0C` tests | 143 ms boot overlay, no timeout | Verified |
-| BW turn and ≥350 ms delay | Coordinator/engine tests | 352 ms measured | Verified |
-| Pre-activation cancellation | Strip/epoch and CLI tests | 34 ms start→cancel | Verified |
-| FIFO and base sync | Engine/CLI tests | Pages `2,3,2`; sync events | Verified |
-| Stable full-panel base | True checker fixture test | Checker webcam sequence | Verified by agent |
-| Four gray levels, no navigation full refresh | Reconstruction tests | Staged video and final still | Verified by agent |
-| Explicit full-refresh probe | Absolute-plane and timeout tests | `ok`, `RENDER_SUCCESS`, corrected still | Verified |
-| KEY/PAGE/LOG/CRASH/stream handling | Host and live console tests | Independent state queries | Verified |
-| Combined-feature USB ownership | Feature builds | Combined-image HELLO | Verified |
-| Permanent final image | Release build | Normal image, page 0, clean STATUS | Verified |
-| User visual verdict | N/A | Final artifacts listed above | Pending user input |
+- Dispatch-bypass hypothesis: a boundary KEY could still return immediate `Ok`. Refuted by the red/green dispatch regression and live sequence 283 reaching both `TURN_BOUNDARY_NOOP` and `TURN_DEQUEUED`.
+- FIFO-drift hypothesis: later relative requests could still resolve from stale committed state. Refuted by live sequences 283–287 completing exactly `0,1,0,0,1` and all 165 KEY sequences matching the host model.
+- Misleading-success hypothesis: the runner could exit zero while device state remained wrong. Refuted by independent STATUS/log pagination after the runner exited and direct inspection of the fresh settled webcam frame showing `PAGE 01`.

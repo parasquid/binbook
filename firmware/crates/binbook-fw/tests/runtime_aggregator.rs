@@ -4,8 +4,11 @@ use binbook_diagnostic_protocol::{FrameHeader, FrameKind, Opcode, PanelModeCode,
 use binbook_fw::{
     async_refresh::RefreshPhase,
     diag::{DiagnosticSnapshot, PendingAction, PendingCommand},
-    diag_log::{DiagLogRecord, EVT_REFRESH_PHASE, EVT_TURN_DROPPED},
-    input::PageTurn,
+    diag_log::{
+        DiagLogRecord, EVT_INPUT_DECISION, EVT_INPUT_TRANSITION, EVT_REFRESH_PHASE,
+        EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DROPPED, EVT_TURN_STARTED,
+    },
+    input::{Button, InputDecision, PageTurn},
     runtime_aggregator::{ReserveError, RuntimeAggregator},
     runtime_engine::{
         RuntimeCompletion, RuntimeCompletionStatus, RuntimeEvent, RuntimeEventKind,
@@ -214,6 +217,74 @@ fn queue_drops_and_real_phase_events_are_recorded_with_origin_timestamps() {
     assert_eq!(records[0].tick_ms, 350);
     assert_eq!(records[1].event, EVT_TURN_DROPPED);
     assert_eq!(records[1].tick_ms, 400);
+}
+
+#[test]
+fn navigation_burst_events_keep_exact_log_argument_layouts() {
+    let mut aggregator = aggregator::<2>();
+    for kind in [
+        RuntimeEventKind::InputTransition {
+            ch1: 500,
+            ch2: 4095,
+            observed: Some(Button::Right),
+        },
+        RuntimeEventKind::InputDecision {
+            observed: Some(Button::Right),
+            decision: InputDecision::Press(Button::Right),
+            elapsed_ms: 101,
+        },
+        RuntimeEventKind::TurnStarted {
+            sequence: Some(44),
+            from: 8,
+            target: 9,
+        },
+        RuntimeEventKind::TurnBoundaryNoop {
+            sequence: Some(45),
+            page: 0,
+            turn: PageTurn::Previous,
+        },
+    ] {
+        aggregator.commit(event(123, kind));
+    }
+
+    let mut records = [DiagLogRecord::default(); 4];
+    aggregator.log().read_from_sequence(0, &mut records);
+    assert_eq!(
+        (
+            records[0].event,
+            records[0].arg0,
+            records[0].arg1,
+            records[0].arg2
+        ),
+        (EVT_INPUT_TRANSITION, 500, 4095, Button::Right as i32)
+    );
+    assert_eq!(
+        (
+            records[1].event,
+            records[1].arg0,
+            records[1].arg1,
+            records[1].arg2
+        ),
+        (EVT_INPUT_DECISION, Button::Right as i32, 0, 101)
+    );
+    assert_eq!(
+        (
+            records[2].event,
+            records[2].arg0,
+            records[2].arg1,
+            records[2].arg2
+        ),
+        (EVT_TURN_STARTED, 44, 8, 9)
+    );
+    assert_eq!(
+        (
+            records[3].event,
+            records[3].arg0,
+            records[3].arg1,
+            records[3].arg2
+        ),
+        (EVT_TURN_BOUNDARY_NOOP, 45, 0, PageTurn::Previous as i32)
+    );
 }
 
 #[test]

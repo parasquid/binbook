@@ -10,6 +10,7 @@ clap = { version = "4", features = ["derive"] }
 binbook = { path = "../rust" }
 binbook-diagnostic-protocol = { path = "../firmware/crates/binbook-diagnostic-protocol" }
 serialport = { version = "4", optional = true, default-features = false }
+serde_json = "1"
 
 [features]
 serial-device = ["dep:serialport"]

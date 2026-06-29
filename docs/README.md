@@ -6,6 +6,8 @@ The authoritative BinBook 0.1 candidate file-format specification lives at
 ## Current Reference
 
 - [`reference/xteink-x4-grayscale-research.md`](reference/xteink-x4-grayscale-research.md) - supporting research for the Xteink X4 grayscale display profile.
+- [`ROADMAP.md`](ROADMAP.md) - evidence-gated implementation work.
+- [`specs/2026-06-29-x4-navigation-burst-diagnostics-design.md`](specs/2026-06-29-x4-navigation-burst-diagnostics-design.md) - current navigation diagnostic contract.
 
 ## Historical POC Material
 

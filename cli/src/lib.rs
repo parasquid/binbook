@@ -1,4 +1,5 @@
 pub const DISPLAY_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(70);
+pub mod nav_burst;
 
 pub mod diag_protocol {
     use binbook_diagnostic_protocol::{
@@ -265,6 +266,8 @@ pub mod diag_protocol {
             EVT_CMD_ERROR => "CMD_ERROR",
             EVT_KEY_PRESS => "KEY_PRESS",
             EVT_BUTTON_EVENT => "BUTTON_EVENT",
+            EVT_INPUT_TRANSITION => "INPUT_TRANSITION",
+            EVT_INPUT_DECISION => "INPUT_DECISION",
             EVT_PAGE_DECISION => "PAGE_DECISION",
             EVT_PAGE_TURN => "PAGE_TURN",
             EVT_RENDER_START => "RENDER_START",
@@ -281,6 +284,8 @@ pub mod diag_protocol {
             EVT_TURN_QUEUED => "TURN_QUEUED",
             EVT_TURN_DEQUEUED => "TURN_DEQUEUED",
             EVT_TURN_DROPPED => "TURN_DROPPED",
+            EVT_TURN_STARTED => "TURN_STARTED",
+            EVT_TURN_BOUNDARY_NOOP => "TURN_BOUNDARY_NOOP",
             EVT_RESEED_START => "RESEED_START",
             EVT_RESEED_COMPLETE => "RESEED_COMPLETE",
             EVT_GRAY_DELAY_CANCELLED => "GRAY_DELAY_CANCELLED",
@@ -309,6 +314,13 @@ pub mod serial_transport {
 
     pub struct SerialSession {
         port: Box<dyn serialport::SerialPort>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ObservedResponse {
+        pub sequence: u16,
+        pub elapsed_ms: u128,
+        pub frame: Vec<u8>,
     }
 
     impl SerialSession {
@@ -394,20 +406,62 @@ pub mod serial_transport {
         expected_sequences: &[u16],
         timeout: Duration,
     ) -> Result<Vec<Vec<u8>>, String> {
+        let observed = send_batch_observed_io(
+            io,
+            requests,
+            expected_opcode,
+            expected_sequences,
+            timeout,
+            0,
+        )?;
+        expected_sequences
+            .iter()
+            .map(|sequence| {
+                observed
+                    .iter()
+                    .find(|response| response.sequence == *sequence)
+                    .map(|response| response.frame.clone())
+                    .ok_or_else(|| format!("missing observed sequence {sequence}"))
+            })
+            .collect()
+    }
+
+    pub fn send_batch_observed_io<T: Read + Write>(
+        io: &mut T,
+        requests: &[u8],
+        expected_opcode: Opcode,
+        expected_sequences: &[u16],
+        timeout: Duration,
+        inter_key_ms: u64,
+    ) -> Result<Vec<ObservedResponse>, String> {
         for (index, &sequence) in expected_sequences.iter().enumerate() {
             if expected_sequences[..index].contains(&sequence) {
                 return Err(format!("duplicate expected sequence {sequence}"));
             }
         }
 
-        io.write_all(requests)
-            .map_err(|e| format!("write failed: {e}"))?;
-        io.flush().map_err(|e| format!("flush failed: {e}"))?;
+        let started = Instant::now();
+        if inter_key_ms == 0 {
+            io.write_all(requests)
+                .map_err(|e| format!("write failed: {e}"))?;
+            io.flush().map_err(|e| format!("flush failed: {e}"))?;
+        } else {
+            let frames = requests.split_inclusive(|byte| *byte == FRAME_DELIMITER);
+            for frame in frames {
+                if frame.last() != Some(&FRAME_DELIMITER) {
+                    return Err("batch contains an incomplete request frame".into());
+                }
+                io.write_all(frame)
+                    .map_err(|e| format!("write failed: {e}"))?;
+                io.flush().map_err(|e| format!("flush failed: {e}"))?;
+                std::thread::sleep(Duration::from_millis(inter_key_ms));
+            }
+        }
 
-        let deadline = Instant::now() + timeout;
+        let deadline = started + timeout;
         let mut buffered = Vec::new();
         let mut chunk = [0u8; 256];
-        let mut responses: Vec<Option<Vec<u8>>> = vec![None; expected_sequences.len()];
+        let mut responses = Vec::with_capacity(expected_sequences.len());
 
         while Instant::now() < deadline {
             match io.read(&mut chunk) {
@@ -428,7 +482,7 @@ pub mod serial_transport {
                     continue;
                 };
 
-                let Some(expected_index) = expected_sequences
+                let Some(_) = expected_sequences
                     .iter()
                     .position(|&sequence| sequence == header.sequence)
                 else {
@@ -444,15 +498,19 @@ pub mod serial_transport {
                 if header.status != Status::Ok {
                     return Err(format!("device returned {:?}", header.status));
                 }
-                if responses[expected_index].is_some() {
+                if responses
+                    .iter()
+                    .any(|response: &ObservedResponse| response.sequence == header.sequence)
+                {
                     return Err(format!("duplicate sequence {}", header.sequence));
                 }
-                responses[expected_index] = Some(frame);
-                if responses.iter().all(Option::is_some) {
-                    return Ok(responses
-                        .into_iter()
-                        .map(|frame| frame.expect("all expected sequences present"))
-                        .collect());
+                responses.push(ObservedResponse {
+                    sequence: header.sequence,
+                    elapsed_ms: started.elapsed().as_millis(),
+                    frame,
+                });
+                if responses.len() == expected_sequences.len() {
+                    return Ok(responses);
                 }
             }
             if buffered.len() > MAX_FRAME_BYTES {
@@ -466,9 +524,12 @@ pub mod serial_transport {
 
         let missing: Vec<String> = expected_sequences
             .iter()
-            .zip(responses.iter())
-            .filter(|(_, response)| response.is_none())
-            .map(|(sequence, _)| sequence.to_string())
+            .filter(|sequence| {
+                !responses
+                    .iter()
+                    .any(|response| response.sequence == **sequence)
+            })
+            .map(u16::to_string)
             .collect();
         if missing.is_empty() {
             Err("response timeout".into())
@@ -1056,6 +1117,27 @@ pub enum ExerciseCommand {
         #[arg(short, long)]
         port: String,
     },
+    NavBurst {
+        #[arg(short, long)]
+        port: String,
+        #[arg(long, default_value_t = 10, value_parser = parse_rounds)]
+        rounds: u16,
+        #[arg(long, default_value_t = 0)]
+        inter_key_ms: u64,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+}
+
+fn parse_rounds(value: &str) -> Result<u16, String> {
+    let rounds = value
+        .parse::<u16>()
+        .map_err(|error| format!("invalid rounds: {error}"))?;
+    if (1..=100).contains(&rounds) {
+        Ok(rounds)
+    } else {
+        Err("rounds must be between 1 and 100".into())
+    }
 }
 
 #[derive(Subcommand)]

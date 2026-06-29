@@ -1,5 +1,15 @@
 # Xteink X4 Agent-Driven Device Verification
 
+## Navigation Burst Diagnostic
+
+Build and flash with `FW_FEATURES="firmware-bin,diagnostic-console" firmware/scripts/flash-xteink-x4-nav-probe.sh`. Capture boot serial for at least 15 seconds, then establish independent HELLO and STATUS baselines. STATUS must report `page_count=16`, zero protocol errors, and `last_error=0`.
+
+```bash
+UV_CACHE_DIR=/tmp/binbook-uv-cache uv run --offline python firmware/scripts/run-x4-nav-burst-diagnostic.py --port /dev/ttyACM0 --video-device /dev/video1 --rounds 10 --inter-key-ms 0 --output-dir /tmp/x4-nav-burst
+```
+
+After it exits, query STATUS and paginate LOG independently. Compare every contact-sheet `PAGE NN` label with JSONL `expected_to`; CLI success alone is insufficient. Record the MP4, JSONL, transcript, contact sheets, exact commands, relevant output, first divergence or clean result, and acceptance matrix in `HANDOFF.md`.
+
 ## Purpose
 
 This runbook is the authoritative procedure for an AI agent to build, flash,

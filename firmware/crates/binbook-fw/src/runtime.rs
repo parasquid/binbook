@@ -1,6 +1,5 @@
 #[cfg(feature = "diagnostic-console")]
 use core::cell::RefCell;
-use portable_atomic::{AtomicU32, Ordering};
 use embassy_executor::Spawner;
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
@@ -18,6 +17,7 @@ use esp_hal::{
     },
     time::Rate,
 };
+use portable_atomic::{AtomicU32, Ordering};
 
 use crate::{Delay, InputPin, OutputPin, Spi, BINBOOK_SCRATCH_BYTES, PROBE_BOOK};
 #[cfg(feature = "diagnostic-console")]
@@ -29,9 +29,7 @@ use binbook_fw::{
     async_refresh::DISPLAY_COMPLETION_CAPACITY, runtime_engine::RuntimeCompletionStatus,
 };
 use binbook_fw::{
-    async_refresh::{
-        DisplayRequest, INPUT_POLL_INTERVAL_MS, PAGE_TURN_QUEUE_CAPACITY,
-    },
+    async_refresh::{DisplayRequest, INPUT_POLL_INTERVAL_MS, PAGE_TURN_QUEUE_CAPACITY},
     input::{self, InputState},
     runtime_engine::{DisplayBackend, DisplayEngine, EventSink, RuntimeEvent},
 };
@@ -374,28 +372,54 @@ async fn input_task(
             }
         };
 
-        if let Some(event) = input_state.poll_raw(ch1, ch2, tick) {
-            if let input::ButtonEvent::Press(button) = event {
-                if let Some(turn) = input::page_turn_for_button(button) {
-                    if request_tx
-                        .try_send(DisplayRequest::Turn {
-                            turn,
-                            completion_sequence: None,
+        let outcome = input_state.poll_raw_detailed(ch1, ch2, tick);
+        let timestamp_ms = embassy_time::Instant::now().as_millis();
+        if outcome.previous != outcome.observed {
+            RUNTIME_EVENT_CHANNEL
+                .sender()
+                .send(RuntimeEvent {
+                    timestamp_ms,
+                    kind: binbook_fw::runtime_engine::RuntimeEventKind::InputTransition {
+                        ch1,
+                        ch2,
+                        observed: outcome.observed,
+                    },
+                })
+                .await;
+        }
+        if outcome.decision != input::InputDecision::Unchanged {
+            RUNTIME_EVENT_CHANNEL
+                .sender()
+                .send(RuntimeEvent {
+                    timestamp_ms,
+                    kind: binbook_fw::runtime_engine::RuntimeEventKind::InputDecision {
+                        observed: outcome.observed,
+                        decision: outcome.decision,
+                        elapsed_ms: outcome.elapsed_since_last_press_ms,
+                    },
+                })
+                .await;
+        }
+        if let input::InputDecision::Press(button) = outcome.decision {
+            if let Some(turn) = input::page_turn_for_button(button) {
+                if request_tx
+                    .try_send(DisplayRequest::Turn {
+                        turn,
+                        completion_sequence: None,
+                    })
+                    .is_ok()
+                {
+                    REQUEST_EPOCH.fetch_add(1, Ordering::AcqRel);
+                } else {
+                    RUNTIME_EVENT_CHANNEL
+                        .sender()
+                        .send(RuntimeEvent {
+                            timestamp_ms: embassy_time::Instant::now().as_millis(),
+                            kind: binbook_fw::runtime_engine::RuntimeEventKind::TurnDropped {
+                                turn,
+                            },
                         })
-                        .is_ok()
-                    {
-                        REQUEST_EPOCH.fetch_add(1, Ordering::AcqRel);
-                    } else {
-                        RUNTIME_EVENT_CHANNEL
-                            .sender()
-                            .send(RuntimeEvent {
-                                timestamp_ms: embassy_time::Instant::now().as_millis(),
-                                kind: binbook_fw::runtime_engine::RuntimeEventKind::TurnDropped {
-                                    turn,
-                                },
-                            })
-                            .await;
-                    }
+                        .await;
                 }
             }
         }

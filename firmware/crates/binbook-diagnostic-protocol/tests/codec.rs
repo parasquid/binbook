@@ -5,9 +5,10 @@ use binbook_diagnostic_protocol::{
     encode_log_record, encode_page_payload, encode_page_response, encode_probe_payload,
     encode_status_payload, FrameHeader, FrameKind, HelloResponse, KeyAction, KeyCode, KeyPayload,
     LogGetPayload, LogRecordPayload, Opcode, PageAction, PagePayload, PanelModeCode, ProbeCode,
-    Status, StatusPayload, FRAME_DELIMITER, LOG_RECORD_BYTES, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES,
-    PROTOCOL_VERSION, EVT_DISPLAY_RECOVERY, EVT_REFRESH_PHASE, EVT_RESEED_COMPLETE,
-    EVT_RESEED_START, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED, EVT_TURN_QUEUED,
+    Status, StatusPayload, EVT_DISPLAY_RECOVERY, EVT_INPUT_DECISION, EVT_INPUT_TRANSITION,
+    EVT_REFRESH_PHASE, EVT_RESEED_COMPLETE, EVT_RESEED_START, EVT_TURN_BOUNDARY_NOOP,
+    EVT_TURN_DEQUEUED, EVT_TURN_DROPPED, EVT_TURN_QUEUED, EVT_TURN_STARTED, FRAME_DELIMITER,
+    LOG_RECORD_BYTES, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
 };
 
 #[test]
@@ -61,10 +62,16 @@ fn deferred_gray_event_codes_are_stable_and_nonzero() {
         EVT_RESEED_START,
         EVT_RESEED_COMPLETE,
         EVT_DISPLAY_RECOVERY,
+        EVT_INPUT_TRANSITION,
+        EVT_INPUT_DECISION,
+        EVT_TURN_STARTED,
+        EVT_TURN_BOUNDARY_NOOP,
     ];
 
     assert!(codes.iter().all(|code| *code != 0));
-    assert!(codes.windows(2).all(|pair| pair[0] != pair[1]));
+    for (index, code) in codes.iter().enumerate() {
+        assert!(!codes[..index].contains(code));
+    }
 }
 
 #[test]

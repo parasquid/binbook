@@ -6,7 +6,7 @@ This document records the working flash path for the BinBook bare-metal Rust fir
 
 - Target board: Xteink X4, ESP32-C3 over USB JTAG serial.
 - Firmware artifact: `firmware/target/riscv32imc-unknown-none-elf/release/binbook-fw`.
-- Current firmware behavior: four-page navigation probe with directional button page turns.
+- Current firmware behavior: 16-page labeled navigation probe with directional button and diagnostic KEY page turns.
 - Flash tool: `espflash 4.4.0`.
 
 SquidScript's command:
@@ -110,14 +110,9 @@ The smoke firmware first cleared both SSD1677 RAM planes to white and performed 
 
 ## Current navigation probe
 
-The current `binbook-fw` binary initializes the SSD1677 grayscale path, opens `firmware/crates/binbook-fw/fixtures/nav_probe.binbook` via `include_bytes!`, and renders page 0. The fixture contains four `GRAY2_PACKED` pages stored at `800x480` with RLE PackBits compression.
+The current `binbook-fw` binary initializes the SSD1677 grayscale path, opens `firmware/crates/binbook-fw/fixtures/nav_probe.binbook` via `include_bytes!`, and renders page 0. The fixture contains 16 labeled `GRAY2_PACKED` pages stored at `800x480` with RLE PackBits compression.
 
-Page order:
-
-1. Gray-band page (preserved byte-for-byte from `gray2_probe.binbook`)
-2. Checkerboard pattern (160px cells)
-3. Four-tone vertical stripes (black, dark gray, light gray, white)
-4. Lorem ipsum text
+Every page retains the orientation/calibration frame and a large `PAGE NN` label. Distinct checker, stripe, text, diagonal, crosshatch, rectangle, bar, quadrant, dot, and asymmetric X patterns identify individual pages.
 
 Button mapping:
 
@@ -125,19 +120,9 @@ Button mapping:
 - `Left` / `Up` — previous page
 - `Back` / `Select` / `Power` — ignored
 
-Navigation clamps at edges: previous on page 1 does nothing; next on page 4 does nothing.
+Navigation clamps at edges: previous on page 0 does nothing; next on page 15 does nothing.
 
-Expected display result after boot:
-
-- page 0: full-screen gray bands with asymmetric edge markers
-
-After pressing `Right` or `Down`:
-
-- page 1: checkerboard pattern
-- page 2: four vertical stripes
-- page 3: lorem ipsum text
-
-Pressing `Left` or `Up` navigates backward through the same sequence.
+Boot displays `PAGE 00`. Directional input navigates through `PAGE 01` to `PAGE 15` and backward through the same sequence.
 
 The verified Rust GRAY2 plane mapping for the Xteink X4 grayscale LUT is:
 
