@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+use binbook_fw::panel_driver::{new_legacy_display, DisplayDriver};
 use esp_hal::{
     analog::adc::{Adc, AdcCalBasic, AdcConfig, Attenuation},
     delay::Delay as EspDelay,
@@ -12,7 +13,6 @@ use esp_hal::{
     time::Rate,
     Blocking,
 };
-use ssd1677_driver::Ssd1677Driver;
 use xteink_hal::{Delay as _, HalError, HalResult};
 
 #[cfg(feature = "diagnostic-console")]
@@ -251,7 +251,7 @@ fn main() -> ! {
     ));
     let busy = InputPin(Input::new(peripherals.GPIO6, InputConfig::default()));
 
-    let mut display = Ssd1677Driver::new(Spi(spi), cs, dc, rst, busy);
+    let mut display = new_legacy_display(Spi(spi), cs, dc, rst, busy);
 
     let mut adc_config = AdcConfig::new();
     let mut ch1_pin =
@@ -716,8 +716,8 @@ struct RenderReport {
     panel_mode: binbook_fw::display::PanelMode,
 }
 
-fn render_current_page<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+fn render_current_page<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book: &mut binbook_core::Book<binbook_core::SliceSource<'_>>,
     delay: &dyn xteink_hal::Delay,
     refresh_state: &mut binbook_fw::refresh::RefreshState,
@@ -725,11 +725,10 @@ fn render_current_page<SPI, CS, DC, RST, BUSY>(
     page_index: u32,
 ) -> HalResult<RenderReport>
 where
-    SPI: xteink_hal::Spi,
-    CS: xteink_hal::OutputPin,
-    DC: xteink_hal::OutputPin,
-    RST: xteink_hal::OutputPin,
-    BUSY: xteink_hal::InputPin,
+    SPI: embedded_hal::spi::SpiDevice<u8>,
+    DC: embedded_hal::digital::OutputPin,
+    RST: embedded_hal::digital::OutputPin,
+    BUSY: embedded_hal::digital::InputPin,
 {
     #[cfg(not(feature = "chunk-dirty-probe"))]
     let decision = refresh_state.decide(

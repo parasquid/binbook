@@ -7,6 +7,9 @@
 #![no_std]
 #![allow(async_fn_in_trait)]
 
+use embedded_hal::digital::ErrorType as DigitalErrorType;
+use embedded_hal::spi::{ErrorType as SpiErrorType, Operation, SpiDevice};
+
 /// Error type for HAL operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HalError {
@@ -22,8 +25,31 @@ pub enum HalError {
     InvalidParam,
 }
 
+impl embedded_hal::digital::Error for HalError {
+    fn kind(&self) -> embedded_hal::digital::ErrorKind {
+        embedded_hal::digital::ErrorKind::Other
+    }
+}
+
+impl embedded_hal::spi::Error for HalError {
+    fn kind(&self) -> embedded_hal::spi::ErrorKind {
+        embedded_hal::spi::ErrorKind::Other
+    }
+}
+
 /// Result type alias for HAL operations.
 pub type HalResult<T> = Result<T, HalError>;
+
+impl From<ssd1677_driver::Error> for HalError {
+    fn from(error: ssd1677_driver::Error) -> Self {
+        match error {
+            ssd1677_driver::Error::Spi => Self::Spi,
+            ssd1677_driver::Error::Gpio => Self::Gpio,
+            ssd1677_driver::Error::Timeout => Self::Timeout,
+            ssd1677_driver::Error::InvalidParameter => Self::InvalidParam,
+        }
+    }
+}
 
 /// SPI bus trait.
 pub trait Spi {
@@ -79,15 +105,7 @@ pub trait Flash {
 }
 
 /// Display refresh mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RefreshMode {
-    /// Full display refresh.
-    Full,
-    /// Partial display refresh.
-    Partial,
-    /// Four-level grayscale display refresh.
-    Grayscale,
-}
+pub use ssd1677_driver::RefreshMode;
 
 /// Display trait for e-ink screens.
 pub trait Display {
@@ -120,6 +138,100 @@ pub trait Delay {
 pub trait AsyncDelay {
     /// Wait for the specified number of milliseconds.
     async fn ms(&self, ms: u32);
+}
+
+pub struct SpiDeviceAdapter<SPI, CS> {
+    spi: SPI,
+    cs: CS,
+}
+
+impl<SPI, CS> SpiDeviceAdapter<SPI, CS> {
+    pub fn new(spi: SPI, cs: CS) -> Self {
+        Self { spi, cs }
+    }
+}
+
+impl<SPI, CS> SpiErrorType for SpiDeviceAdapter<SPI, CS>
+where
+    SPI: Spi,
+    CS: OutputPin,
+{
+    type Error = HalError;
+}
+
+impl<SPI, CS> SpiDevice<u8> for SpiDeviceAdapter<SPI, CS>
+where
+    SPI: Spi,
+    CS: OutputPin,
+{
+    fn transaction(&mut self, operations: &mut [Operation<'_, u8>]) -> Result<(), Self::Error> {
+        self.cs.set_low()?;
+        let result = operations
+            .iter_mut()
+            .try_for_each(|operation| match operation {
+                Operation::Read(buffer) => self.spi.read(buffer),
+                Operation::Write(buffer) => self.spi.write(buffer),
+                Operation::Transfer(read, write) => {
+                    self.spi.write(write)?;
+                    self.spi.read(read)
+                }
+                Operation::TransferInPlace(buffer) => {
+                    self.spi.write(buffer)?;
+                    self.spi.read(buffer)
+                }
+                Operation::DelayNs(_) => Ok(()),
+            });
+        let deselect = self.cs.set_high();
+        result.and(deselect)
+    }
+}
+
+pub struct OutputPinAdapter<P>(pub P);
+
+impl<P: OutputPin> DigitalErrorType for OutputPinAdapter<P> {
+    type Error = HalError;
+}
+
+impl<P: OutputPin> embedded_hal::digital::OutputPin for OutputPinAdapter<P> {
+    fn set_low(&mut self) -> Result<(), Self::Error> {
+        self.0.set_low()
+    }
+
+    fn set_high(&mut self) -> Result<(), Self::Error> {
+        self.0.set_high()
+    }
+}
+
+pub struct InputPinAdapter<P>(pub P);
+
+impl<P: InputPin> DigitalErrorType for InputPinAdapter<P> {
+    type Error = HalError;
+}
+
+impl<P: InputPin> embedded_hal::digital::InputPin for InputPinAdapter<P> {
+    fn is_high(&mut self) -> Result<bool, Self::Error> {
+        self.0.is_high()
+    }
+
+    fn is_low(&mut self) -> Result<bool, Self::Error> {
+        self.0.is_low()
+    }
+}
+
+pub struct DelayAdapter<'a>(pub &'a dyn Delay);
+
+impl embedded_hal::delay::DelayNs for DelayAdapter<'_> {
+    fn delay_ns(&mut self, ns: u32) {
+        self.0.ms(ns.div_ceil(1_000_000));
+    }
+}
+
+pub struct AsyncDelayAdapter<'a, D: AsyncDelay + ?Sized>(pub &'a D);
+
+impl<D: AsyncDelay + ?Sized> embedded_hal_async::delay::DelayNs for AsyncDelayAdapter<'_, D> {
+    async fn delay_ns(&mut self, ns: u32) {
+        self.0.ms(ns.div_ceil(1_000_000)).await;
+    }
 }
 
 /// Button state.

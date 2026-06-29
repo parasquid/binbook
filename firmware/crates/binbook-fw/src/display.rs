@@ -1,5 +1,7 @@
-use ssd1677_driver::Ssd1677Driver;
-use xteink_hal::{AsyncDelay, HalError, HalResult, InputPin, OutputPin, RefreshMode, Spi};
+use crate::panel_driver::DisplayDriver;
+use embedded_hal::digital::{InputPin, OutputPin};
+use embedded_hal::spi::SpiDevice;
+use xteink_hal::{AsyncDelay, HalError, HalResult, RefreshMode};
 
 use crate::refresh::{RefreshDecision, RefreshPolicy, RefreshState, X4_CHUNK_COUNT};
 
@@ -60,14 +62,13 @@ pub enum BaseSyncOutcome {
     Cancelled,
 }
 
-fn ensure_grayscale_mode<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+fn ensure_grayscale_mode<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     delay: &dyn xteink_hal::Delay,
     panel_mode: &mut PanelMode,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -79,14 +80,13 @@ where
     Ok(())
 }
 
-fn ensure_bw_mode<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+fn ensure_bw_mode<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     delay: &dyn xteink_hal::Delay,
     panel_mode: &mut PanelMode,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -147,13 +147,12 @@ pub fn build_display_smoke_row(row: u16, row_buf: &mut [u8; DISPLAY_ROW_BYTES]) 
     }
 }
 
-pub fn display_page<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub fn display_page<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     compressed_data: &[u8],
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -167,14 +166,13 @@ where
     display.refresh_with_delay(RefreshMode::Partial, &NoDelay)
 }
 
-pub fn display_gray2_page<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub fn display_gray2_page<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     compressed_data: &[u8],
     delay: &dyn xteink_hal::Delay,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -186,14 +184,13 @@ where
     display.refresh_with_delay(RefreshMode::Grayscale, delay)
 }
 
-pub async fn display_gray2_page_async<SPI, CS, DC, RST, BUSY, D>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub async fn display_gray2_page_async<SPI, DC, RST, BUSY, D>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     compressed_data: &[u8],
     delay: &D,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -206,16 +203,15 @@ where
     display.refresh_async(RefreshMode::Grayscale, delay).await
 }
 
-pub async fn display_full_grayscale_async<SPI, CS, DC, RST, BUSY, D>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub async fn display_full_grayscale_async<SPI, DC, RST, BUSY, D>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     target_page: u32,
     delay: &D,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -296,8 +292,8 @@ fn compressed_native_plane<'a>(
     book_bytes.get(start..end).ok_or(HalError::InvalidParam)
 }
 
-pub async fn display_staged_grayscale_async<SPI, CS, DC, RST, BUSY, D, E, A>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub async fn display_staged_grayscale_async<SPI, DC, RST, BUSY, D, E, A>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     target_page: u32,
@@ -307,8 +303,7 @@ pub async fn display_staged_grayscale_async<SPI, CS, DC, RST, BUSY, D, E, A>(
     delay: &D,
 ) -> HalResult<GrayRenderOutcome>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -361,8 +356,8 @@ where
     Ok(GrayRenderOutcome::Completed)
 }
 
-pub async fn sync_bw_base_async<SPI, CS, DC, RST, BUSY, D, E>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub async fn sync_bw_base_async<SPI, DC, RST, BUSY, D, E>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     target_page: u32,
@@ -371,8 +366,7 @@ pub async fn sync_bw_base_async<SPI, CS, DC, RST, BUSY, D, E>(
     delay: &D,
 ) -> HalResult<BaseSyncOutcome>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -400,8 +394,8 @@ where
     })
 }
 
-pub async fn bw_differential_async<SPI, CS, DC, RST, BUSY, D>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub async fn bw_differential_async<SPI, DC, RST, BUSY, D>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     prev_page: u32,
@@ -409,8 +403,7 @@ pub async fn bw_differential_async<SPI, CS, DC, RST, BUSY, D>(
     delay: &D,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -453,16 +446,15 @@ where
     display.refresh_async(RefreshMode::Partial, delay).await
 }
 
-pub async fn recovery_seed_async<SPI, CS, DC, RST, BUSY, D>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub async fn recovery_seed_async<SPI, DC, RST, BUSY, D>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     target_page: u32,
     delay: &D,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -502,13 +494,12 @@ where
 }
 
 #[cfg(feature = "diagnostic-console")]
-pub async fn clear_white_probe_async<SPI, CS, DC, RST, BUSY, D>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub async fn clear_white_probe_async<SPI, DC, RST, BUSY, D>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     delay: &D,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -522,13 +513,12 @@ where
 }
 
 #[cfg(feature = "diagnostic-console")]
-pub async fn window_corners_probe_async<SPI, CS, DC, RST, BUSY, D>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub async fn window_corners_probe_async<SPI, DC, RST, BUSY, D>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     delay: &D,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -547,14 +537,13 @@ where
     display.refresh_async(RefreshMode::Full, delay).await
 }
 
-fn stream_gray2_plane<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+fn stream_gray2_plane<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     compressed_data: &[u8],
     red_plane: bool,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -587,16 +576,15 @@ where
     }
 }
 
-async fn stream_gray2_plane_strips_async<SPI, CS, DC, RST, BUSY, D>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+async fn stream_gray2_plane_strips_async<SPI, DC, RST, BUSY, D>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     compressed_data: &[u8],
     red_plane: bool,
     yield_after_last_strip: bool,
     delay: &D,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -642,16 +630,15 @@ where
     Ok(())
 }
 
-async fn stream_native_plane_strips_async<SPI, CS, DC, RST, BUSY, D>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+async fn stream_native_plane_strips_async<SPI, DC, RST, BUSY, D>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     compressed_data: &[u8],
     red_plane: bool,
     yield_after_last_strip: bool,
     delay: &D,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -684,8 +671,8 @@ where
     Ok(())
 }
 
-async fn stream_plane_chunks_strips_async<SPI, CS, DC, RST, BUSY, D>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+async fn stream_plane_chunks_strips_async<SPI, DC, RST, BUSY, D>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book_bytes: &[u8],
     page_data_offset: u64,
     pd: &binbook_core::PlaneDirectory,
@@ -695,8 +682,7 @@ async fn stream_plane_chunks_strips_async<SPI, CS, DC, RST, BUSY, D>(
     delay: &D,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -722,8 +708,8 @@ where
     .await
 }
 
-async fn stream_plane_chunks_cancellable_async<SPI, CS, DC, RST, BUSY, D, E>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+async fn stream_plane_chunks_cancellable_async<SPI, DC, RST, BUSY, D, E>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book_bytes: &[u8],
     page_data_offset: u64,
     pd: &binbook_core::PlaneDirectory,
@@ -734,8 +720,7 @@ async fn stream_plane_chunks_cancellable_async<SPI, CS, DC, RST, BUSY, D, E>(
     delay: &D,
 ) -> HalResult<bool>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -905,8 +890,8 @@ pub fn find_transition_mask(
     None
 }
 
-pub fn display_page_with_policy<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub fn display_page_with_policy<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     delay: &dyn xteink_hal::Delay,
@@ -915,8 +900,7 @@ pub fn display_page_with_policy<SPI, CS, DC, RST, BUSY>(
     target_page: u32,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -933,8 +917,8 @@ where
     )
 }
 
-pub fn display_page_with_chunk_dirty_probe_policy<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub fn display_page_with_chunk_dirty_probe_policy<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     delay: &dyn xteink_hal::Delay,
@@ -943,8 +927,7 @@ pub fn display_page_with_chunk_dirty_probe_policy<SPI, CS, DC, RST, BUSY>(
     target_page: u32,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -961,8 +944,8 @@ where
     )
 }
 
-pub fn display_page_with_refresh_policy<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub fn display_page_with_refresh_policy<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     delay: &dyn xteink_hal::Delay,
@@ -972,8 +955,7 @@ pub fn display_page_with_refresh_policy<SPI, CS, DC, RST, BUSY>(
     target_page: u32,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -1017,16 +999,15 @@ where
     Ok(())
 }
 
-fn stream_full_grayscale<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+fn stream_full_grayscale<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     target_page: u32,
     delay: &dyn xteink_hal::Delay,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -1044,16 +1025,15 @@ where
     display.refresh_with_delay(RefreshMode::Grayscale, delay)
 }
 
-fn stream_bw_seed_full<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+fn stream_bw_seed_full<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     target_page: u32,
     delay: &dyn xteink_hal::Delay,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -1070,8 +1050,8 @@ where
     display.refresh_with_delay(RefreshMode::Full, delay)
 }
 
-fn stream_bw_differential_chunked<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+fn stream_bw_differential_chunked<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     prev_page: u32,
@@ -1080,8 +1060,7 @@ fn stream_bw_differential_chunked<SPI, CS, DC, RST, BUSY>(
     delay: &dyn xteink_hal::Delay,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -1115,8 +1094,8 @@ where
     display.refresh_with_delay(RefreshMode::Partial, delay)
 }
 
-fn stream_bw_differential_full<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+fn stream_bw_differential_full<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     prev_page: u32,
@@ -1124,8 +1103,7 @@ fn stream_bw_differential_full<SPI, CS, DC, RST, BUSY>(
     delay: &dyn xteink_hal::Delay,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -1145,8 +1123,8 @@ where
     display.refresh_with_delay(RefreshMode::Partial, delay)
 }
 
-fn stream_plane_chunks_to_red<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+fn stream_plane_chunks_to_red<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book_bytes: &[u8],
     page_data_offset: u64,
     pd: &binbook_core::PlaneDirectory,
@@ -1154,8 +1132,7 @@ fn stream_plane_chunks_to_red<SPI, CS, DC, RST, BUSY>(
     _delay: &dyn xteink_hal::Delay,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -1177,8 +1154,8 @@ where
     })
 }
 
-fn stream_plane_chunks_to_black<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+fn stream_plane_chunks_to_black<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book_bytes: &[u8],
     page_data_offset: u64,
     pd: &binbook_core::PlaneDirectory,
@@ -1186,8 +1163,7 @@ fn stream_plane_chunks_to_black<SPI, CS, DC, RST, BUSY>(
     _delay: &dyn xteink_hal::Delay,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -1219,8 +1195,8 @@ fn stream_compressed_row(compressed: &[u8], row: usize, row_buf: &mut [u8; DISPL
     decoder.fill(row_buf);
 }
 
-fn stream_single_chunk_to_red<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+fn stream_single_chunk_to_red<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book_bytes: &[u8],
     page_data_offset: u64,
     pd: &binbook_core::PlaneDirectory,
@@ -1228,8 +1204,7 @@ fn stream_single_chunk_to_red<SPI, CS, DC, RST, BUSY>(
     chunk_idx: u8,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -1255,8 +1230,8 @@ where
     Ok(())
 }
 
-fn stream_single_chunk_to_black<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+fn stream_single_chunk_to_black<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book_bytes: &[u8],
     page_data_offset: u64,
     pd: &binbook_core::PlaneDirectory,
@@ -1264,8 +1239,7 @@ fn stream_single_chunk_to_black<SPI, CS, DC, RST, BUSY>(
     chunk_idx: u8,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -1332,8 +1306,8 @@ impl<'a> PackBitsCursor<'a> {
 }
 
 #[cfg(feature = "diagnostic-console")]
-pub fn display_full_refresh_current<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub fn display_full_refresh_current<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     delay: &dyn xteink_hal::Delay,
@@ -1341,8 +1315,7 @@ pub fn display_full_refresh_current<SPI, CS, DC, RST, BUSY>(
     current_page: u32,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -1352,14 +1325,13 @@ where
 }
 
 #[cfg(feature = "diagnostic-console")]
-pub fn display_clear_white_probe<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub fn display_clear_white_probe<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     delay: &dyn xteink_hal::Delay,
     panel_mode: &mut PanelMode,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,
@@ -1377,14 +1349,13 @@ where
 }
 
 #[cfg(feature = "diagnostic-console")]
-pub fn display_window_corners_probe<SPI, CS, DC, RST, BUSY>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+pub fn display_window_corners_probe<SPI, DC, RST, BUSY>(
+    display: &mut DisplayDriver<SPI, DC, RST, BUSY>,
     delay: &dyn xteink_hal::Delay,
     panel_mode: &mut PanelMode,
 ) -> HalResult<()>
 where
-    SPI: Spi,
-    CS: OutputPin,
+    SPI: SpiDevice<u8>,
     DC: OutputPin,
     RST: OutputPin,
     BUSY: InputPin,

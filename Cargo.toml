@@ -3,10 +3,10 @@ members = [
     "crates/binbook-core",
     "crates/binbook-decompress",
     "crates/gray2-render",
+    "crates/ssd1677-driver",
     "cli",
     "firmware/crates/binbook-diagnostic-protocol",
     "firmware/crates/binbook-fw",
-    "firmware/crates/ssd1677-driver",
     "firmware/crates/xteink-hal",
 ]
 resolver = "2"
@@ -21,6 +21,7 @@ repository = "https://github.com/parasquid/binbook"
 binbook-core = { path = "crates/binbook-core" }
 binbook-decompress = { path = "crates/binbook-decompress" }
 gray2-render = { path = "crates/gray2-render" }
+ssd1677-driver = { path = "crates/ssd1677-driver" }
 binbook-diagnostic-protocol = { path = "firmware/crates/binbook-diagnostic-protocol" }
 clap = { version = "4", features = ["derive"] }
 embassy-executor = { version = "0.10.0", default-features = false }
@@ -39,7 +40,8 @@ nb = "1.1.0"
 portable-atomic = { version = "1.13.1", default-features = false }
 serde_json = "1"
 serialport = { version = "4", default-features = false }
-ssd1677-driver = { path = "firmware/crates/ssd1677-driver" }
+embedded-hal = "1.0.0"
+embedded-hal-async = "1.0.0"
 static_cell = { version = "2.1.1", default-features = false }
 xteink-hal = { path = "firmware/crates/xteink-hal" }
 

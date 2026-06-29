@@ -19,6 +19,7 @@ use esp_hal::{
 };
 use portable_atomic::{AtomicU32, Ordering};
 
+use binbook_fw::panel_driver::{new_legacy_display, LegacyDisplayDriver};
 use crate::{Delay, InputPin, OutputPin, Spi, BINBOOK_SCRATCH_BYTES, PROBE_BOOK};
 #[cfg(feature = "diagnostic-console")]
 use binbook_diagnostic_protocol::{encode_crash_response, CRASH_SUMMARY_BYTES};
@@ -40,7 +41,6 @@ use binbook_fw::{
     },
     diag_flash::CrashStore,
 };
-use ssd1677_driver::Ssd1677Driver;
 
 type RequestSender =
     Sender<'static, CriticalSectionRawMutex, DisplayRequest, { PAGE_TURN_QUEUE_CAPACITY }>;
@@ -170,7 +170,7 @@ impl EventSink for RuntimeEventSink {
 }
 
 struct HardwareDisplayBackend<'a, SPI, CS, DC, RST, BUSY> {
-    display: Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    display: LegacyDisplayDriver<SPI, CS, DC, RST, BUSY>,
     book: binbook_core::Book<binbook_core::SliceSource<'a>>,
     delay: Delay,
 }
@@ -215,7 +215,7 @@ where
                     timestamp_ms,
                     kind: binbook_fw::runtime_engine::RuntimeEventKind::WaveformSelected {
                         waveform_hint: binbook_core::WAVEFORM_SSD1677_STAGED_GRAY2,
-                        lut_revision: ssd1677_driver::STAGED_GRAY_LUT_REVISION,
+                        lut_revision: binbook_fw::panel_driver::STAGED_GRAY_LUT_REVISION,
                     },
                 });
                 let _ = sender.try_send(RuntimeEvent {
@@ -458,7 +458,7 @@ async fn display_task(
         .expect("failed to open embedded BinBook");
     let page_count = book.page_count();
     let mut backend = HardwareDisplayBackend {
-        display: Ssd1677Driver::new(Spi(spi), cs, dc, rst, busy),
+        display: new_legacy_display(Spi(spi), cs, dc, rst, busy),
         book,
         delay: Delay(EspDelay::new()),
     };

@@ -105,6 +105,7 @@ dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
+ "embedded-hal 1.0.0",
  "embedded-storage",
  "esp-backtrace",
  "esp-bootloader-esp-idf",
@@ -1307,6 +1308,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "pollster"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
+
+[[package]]
 name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1602,7 +1609,9 @@ checksum = "a0f368519fc6c85fc1afdb769fb5a51123f6158013e143656e25a3485a0d401c"
 name = "ssd1677-driver"
 version = "0.1.0"
 dependencies = [
- "xteink-hal",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "pollster",
 ]
 
 [[package]]
@@ -1968,6 +1977,11 @@ dependencies = [
 [[package]]
 name = "xteink-hal"
 version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "ssd1677-driver",
+]
 
 [[package]]
 name = "xtensa-lx"

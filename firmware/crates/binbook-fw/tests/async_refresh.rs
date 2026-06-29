@@ -4,7 +4,8 @@ use binbook_fw::async_refresh::{
     INPUT_POLL_INTERVAL_MS, PAGE_TURN_QUEUE_CAPACITY,
 };
 use binbook_fw::display;
-use ssd1677_driver::{Ssd1677, Ssd1677Driver};
+use binbook_fw::panel_driver::new_legacy_display;
+use ssd1677_driver::Command;
 use std::boxed::Box;
 use std::cell::Cell;
 use std::cell::RefCell;
@@ -157,7 +158,7 @@ fn parse_gray_render_trace(writes: &[Vec<u8>], zero_yield_count: usize) -> Async
 
     while index < writes.len() {
         match writes[index].as_slice() {
-            [cmd] if *cmd == Ssd1677::SET_RAM_Y_ADDR => {
+            [cmd] if *cmd == Command::SET_RAM_Y_ADDR => {
                 let data = writes
                     .get(index + 1)
                     .expect("SET_RAM_Y_ADDR must be followed by data");
@@ -167,7 +168,7 @@ fn parse_gray_render_trace(writes: &[Vec<u8>], zero_yield_count: usize) -> Async
                 index += 2;
                 continue;
             }
-            [cmd] if *cmd == Ssd1677::WRITE_RAM_RED => {
+            [cmd] if *cmd == Command::WRITE_RAM_RED => {
                 trace.red_windows += 1;
                 trace.red_window_heights.push(
                     pending_window_height
@@ -175,7 +176,7 @@ fn parse_gray_render_trace(writes: &[Vec<u8>], zero_yield_count: usize) -> Async
                 );
                 pending_window_height = None;
             }
-            [cmd] if *cmd == Ssd1677::WRITE_RAM => {
+            [cmd] if *cmd == Command::WRITE_RAM => {
                 trace.black_windows += 1;
                 trace.black_window_heights.push(
                     pending_window_height
@@ -183,14 +184,14 @@ fn parse_gray_render_trace(writes: &[Vec<u8>], zero_yield_count: usize) -> Async
                 );
                 pending_window_height = None;
             }
-            [cmd] if *cmd == Ssd1677::DISPLAY_UPDATE_CTRL2 => {
+            [cmd] if *cmd == Command::DISPLAY_UPDATE_CTRL2 => {
                 let data = writes
                     .get(index + 1)
                     .expect("DISPLAY_UPDATE_CTRL2 must be followed by data");
                 pending_refresh_mode = match data.as_slice() {
-                    [value] if *value == Ssd1677::UPDATE_CTRL_NORMAL => Some(RefreshMode::Full),
-                    [value] if *value == Ssd1677::UPDATE_CTRL_FAST => Some(RefreshMode::Partial),
-                    [value] if *value == Ssd1677::UPDATE_CTRL_GRAYSCALE => {
+                    [value] if *value == Command::UPDATE_CTRL_NORMAL => Some(RefreshMode::Full),
+                    [value] if *value == Command::UPDATE_CTRL_FAST => Some(RefreshMode::Partial),
+                    [value] if *value == Command::UPDATE_CTRL_GRAYSCALE => {
                         Some(RefreshMode::Grayscale)
                     }
                     _ => None,
@@ -198,7 +199,7 @@ fn parse_gray_render_trace(writes: &[Vec<u8>], zero_yield_count: usize) -> Async
                 index += 2;
                 continue;
             }
-            [cmd] if *cmd == Ssd1677::MASTER_ACTIVATION => {
+            [cmd] if *cmd == Command::MASTER_ACTIVATION => {
                 if let Some(mode) = pending_refresh_mode.take() {
                     trace.refreshes.push(mode);
                 }
@@ -229,7 +230,7 @@ fn run_async_gray_render_with_writes(page: u32) -> (AsyncGrayTrace, Vec<Vec<u8>>
 
     let writes = Rc::new(RefCell::new(Vec::new()));
     let delay_calls = Rc::new(RefCell::new(Vec::new()));
-    let mut driver = Ssd1677Driver::new(
+    let mut driver = new_legacy_display(
         RecordingSpi {
             writes: Rc::clone(&writes),
         },
@@ -282,7 +283,7 @@ fn run_async_bw_differential(prev_page: u32, target_page: u32) -> AsyncReseedTra
 
     let writes = Rc::new(RefCell::new(Vec::new()));
     let delay_calls = Rc::new(RefCell::new(Vec::new()));
-    let mut driver = Ssd1677Driver::new(
+    let mut driver = new_legacy_display(
         RecordingSpi {
             writes: Rc::clone(&writes),
         },
@@ -330,7 +331,7 @@ fn run_async_recovery(page: u32) -> AsyncReseedTrace {
 
     let writes = Rc::new(RefCell::new(Vec::new()));
     let delay_calls = Rc::new(RefCell::new(Vec::new()));
-    let mut driver = Ssd1677Driver::new(
+    let mut driver = new_legacy_display(
         RecordingSpi {
             writes: Rc::clone(&writes),
         },
@@ -385,7 +386,7 @@ fn mismatched_waveform_is_rejected_before_controller_writes() {
     )
     .unwrap();
     let writes = Rc::new(RefCell::new(Vec::new()));
-    let mut driver = Ssd1677Driver::new(
+    let mut driver = new_legacy_display(
         RecordingSpi {
             writes: Rc::clone(&writes),
         },
@@ -419,7 +420,7 @@ fn run_staged_gray_with_cancel_at(
     )
     .unwrap();
     let writes = Rc::new(RefCell::new(Vec::new()));
-    let mut driver = Ssd1677Driver::new(
+    let mut driver = new_legacy_display(
         RecordingSpi {
             writes: Rc::clone(&writes),
         },
@@ -461,24 +462,24 @@ fn staged_grayscale_streams_overlay_planes_then_activates() {
     assert_eq!(
         writes
             .iter()
-            .filter(|write| write.as_slice() == [Ssd1677::WRITE_RAM])
+            .filter(|write| write.as_slice() == [Command::WRITE_RAM])
             .count(),
         30
     );
     assert_eq!(
         writes
             .iter()
-            .filter(|write| write.as_slice() == [Ssd1677::WRITE_RAM_RED])
+            .filter(|write| write.as_slice() == [Command::WRITE_RAM_RED])
             .count(),
         30
     );
     assert!(writes.windows(2).any(|pair| {
-        pair[0].as_slice() == [Ssd1677::DISPLAY_UPDATE_CTRL2]
-            && pair[1].as_slice() == [Ssd1677::UPDATE_CTRL_STAGED_GRAYSCALE | 0xC0]
+        pair[0].as_slice() == [Command::DISPLAY_UPDATE_CTRL2]
+            && pair[1].as_slice() == [Command::UPDATE_CTRL_STAGED_GRAYSCALE | 0xC0]
     }));
     assert!(writes
         .iter()
-        .any(|write| write.as_slice() == [Ssd1677::MASTER_ACTIVATION]));
+        .any(|write| write.as_slice() == [Command::MASTER_ACTIVATION]));
 }
 
 #[test]
@@ -490,17 +491,17 @@ fn staged_grayscale_cancels_on_strip_boundaries_without_activation() {
         assert_eq!(
             writes
                 .iter()
-                .filter(|write| write.as_slice() == [Ssd1677::WRITE_RAM])
+                .filter(|write| write.as_slice() == [Command::WRITE_RAM])
                 .count(),
             cancel_at
         );
         assert!(!writes.windows(2).any(|pair| {
-            pair[0].as_slice() == [Ssd1677::DISPLAY_UPDATE_CTRL2]
-                && pair[1].as_slice() == [Ssd1677::UPDATE_CTRL_STAGED_GRAYSCALE | 0xC0]
+            pair[0].as_slice() == [Command::DISPLAY_UPDATE_CTRL2]
+                && pair[1].as_slice() == [Command::UPDATE_CTRL_STAGED_GRAYSCALE | 0xC0]
         }));
         assert!(!writes
             .iter()
-            .any(|write| write.as_slice() == [Ssd1677::MASTER_ACTIVATION]));
+            .any(|write| write.as_slice() == [Command::MASTER_ACTIVATION]));
     }
 }
 
@@ -515,7 +516,7 @@ fn run_base_sync_with_cancel_at(
     )
     .unwrap();
     let writes = Rc::new(RefCell::new(Vec::new()));
-    let mut driver = Ssd1677Driver::new(
+    let mut driver = new_legacy_display(
         RecordingSpi {
             writes: Rc::clone(&writes),
         },
@@ -563,16 +564,16 @@ fn background_base_sync_is_cancellable_and_never_activates() {
         assert_eq!(
             writes
                 .iter()
-                .filter(|write| write.as_slice() == [Ssd1677::WRITE_RAM_RED])
+                .filter(|write| write.as_slice() == [Command::WRITE_RAM_RED])
                 .count(),
             expected_strips
         );
         assert!(!writes
             .iter()
-            .any(|write| write.as_slice() == [Ssd1677::WRITE_RAM]));
+            .any(|write| write.as_slice() == [Command::WRITE_RAM]));
         assert!(!writes
             .iter()
-            .any(|write| write.as_slice() == [Ssd1677::MASTER_ACTIVATION]));
+            .any(|write| write.as_slice() == [Command::MASTER_ACTIVATION]));
     }
 }
 
@@ -882,7 +883,7 @@ fn async_full_grayscale_reconstructs_absolute_planes_from_staged_slots() {
 fn async_corner_probe_streams_sixteen_bytes_per_128_pixel_window_row() {
     let writes = Rc::new(RefCell::new(Vec::new()));
     let delay_calls = Rc::new(RefCell::new(Vec::new()));
-    let mut driver = Ssd1677Driver::new(
+    let mut driver = new_legacy_display(
         RecordingSpi {
             writes: Rc::clone(&writes),
         },
