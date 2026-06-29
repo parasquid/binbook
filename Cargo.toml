@@ -1,0 +1,47 @@
+[workspace]
+members = [
+    "rust",
+    "cli",
+    "firmware/crates/binbook-diagnostic-protocol",
+    "firmware/crates/binbook-fw",
+    "firmware/crates/ssd1677-driver",
+    "firmware/crates/xteink-hal",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+repository = "https://github.com/parasquid/binbook"
+
+[workspace.dependencies]
+binbook = { path = "rust", default-features = false }
+binbook-diagnostic-protocol = { path = "firmware/crates/binbook-diagnostic-protocol" }
+clap = { version = "4", features = ["derive"] }
+embassy-executor = { version = "0.10.0", default-features = false }
+embassy-futures = "0.1.2"
+embassy-sync = { version = "0.8.0", default-features = false }
+embassy-time = { version = "0.5.1", default-features = false }
+embedded-storage = "0.3.1"
+esp-backtrace = "0.19.0"
+esp-bootloader-esp-idf = "0.5.0"
+esp-hal = "1.1.1"
+esp-println = { version = "0.17.0", default-features = false }
+esp-rtos = "0.3.0"
+esp-storage = "0.9.0"
+lz4_flex = { version = "0.13", default-features = false, features = ["safe-encode", "safe-decode"] }
+nb = "1.1.0"
+portable-atomic = { version = "1.13.1", default-features = false }
+serde_json = "1"
+serialport = { version = "4", default-features = false }
+ssd1677-driver = { path = "firmware/crates/ssd1677-driver" }
+static_cell = { version = "2.1.1", default-features = false }
+xteink-hal = { path = "firmware/crates/xteink-hal" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

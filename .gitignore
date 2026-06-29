@@ -13,6 +13,7 @@ tmp/
 rust/target/
 firmware/target/
 cli/target/
+/target/
 .omo
 HANDOFF.md
 AGENTS.local.md
