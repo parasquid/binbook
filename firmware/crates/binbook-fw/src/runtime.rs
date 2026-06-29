@@ -1,10 +1,13 @@
+#[cfg(feature = "diagnostic-console")]
+use core::cell::RefCell;
+use portable_atomic::{AtomicU32, Ordering};
 use embassy_executor::Spawner;
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
     channel::{Channel, Receiver, Sender},
 };
 #[cfg(feature = "diagnostic-console")]
-use core::cell::RefCell;
+use embedded_storage::ReadStorage;
 use esp_hal::{
     analog::adc::{Adc, AdcCalBasic, AdcConfig, Attenuation},
     delay::Delay as EspDelay,
@@ -15,56 +18,297 @@ use esp_hal::{
     },
     time::Rate,
 };
-#[cfg(feature = "diagnostic-console")]
-use embedded_storage::ReadStorage;
 
-use crate::{
-    BINBOOK_SCRATCH_BYTES, Delay, InputPin, OutputPin, PROBE_BOOK, Spi,
+use crate::{Delay, InputPin, OutputPin, Spi, BINBOOK_SCRATCH_BYTES, PROBE_BOOK};
+#[cfg(feature = "diagnostic-console")]
+use binbook_diagnostic_protocol::{encode_crash_response, CRASH_SUMMARY_BYTES};
+#[cfg(feature = "diagnostic-console")]
+use binbook_fw::async_refresh::DisplayProbeKind;
+#[cfg(feature = "diagnostic-console")]
+use binbook_fw::{
+    async_refresh::DISPLAY_COMPLETION_CAPACITY, runtime_engine::RuntimeCompletionStatus,
 };
 use binbook_fw::{
     async_refresh::{
-        DisplayCompletion, DisplayCompletionStatus, DisplayRequest, PostGrayStrategy,
-        RefreshAction, RefreshCoordinator, DISPLAY_COMPLETION_CAPACITY, INPUT_POLL_INTERVAL_MS,
-        PAGE_TURN_QUEUE_CAPACITY,
+        DisplayRequest, INPUT_POLL_INTERVAL_MS, PAGE_TURN_QUEUE_CAPACITY,
     },
-    display::PanelMode,
     input::{self, InputState},
+    runtime_engine::{DisplayBackend, DisplayEngine, EventSink, RuntimeEvent},
 };
 #[cfg(feature = "diagnostic-console")]
 use binbook_fw::{
     diag::{
-        complete_pending_command, dispatch_command, DiagnosticLoopState, DiagnosticSnapshot,
-        PendingAction, PendingCommand, SerialState, TransportError,
+        complete_pending_command, DiagnosticSnapshot, PendingAction, PendingCommand, SerialState,
     },
     diag_flash::CrashStore,
-    diag_log::{
-        DiagDeduper, DiagEvent, DiagLog, LEVEL_ERROR, LEVEL_INFO, SUB_DISPLAY, SUB_INPUT,
-        SUB_SERIAL, SUB_SYSTEM,
-    },
 };
-#[cfg(feature = "diagnostic-console")]
-use binbook_fw::async_refresh::DisplayProbeKind;
-#[cfg(feature = "diagnostic-console")]
-use binbook_diagnostic_protocol::{encode_crash_response, CRASH_SUMMARY_BYTES, Status};
 use ssd1677_driver::Ssd1677Driver;
 
 type RequestSender =
     Sender<'static, CriticalSectionRawMutex, DisplayRequest, { PAGE_TURN_QUEUE_CAPACITY }>;
 type RequestReceiver =
     Receiver<'static, CriticalSectionRawMutex, DisplayRequest, { PAGE_TURN_QUEUE_CAPACITY }>;
-type CompletionSender =
-    Sender<'static, CriticalSectionRawMutex, DisplayCompletion, { DISPLAY_COMPLETION_CAPACITY }>;
-type CompletionReceiver =
-    Receiver<'static, CriticalSectionRawMutex, DisplayCompletion, { DISPLAY_COMPLETION_CAPACITY }>;
 
-static REQUEST_CHANNEL: Channel<CriticalSectionRawMutex, DisplayRequest, { PAGE_TURN_QUEUE_CAPACITY }> =
-    Channel::new();
-static COMPLETION_CHANNEL: Channel<CriticalSectionRawMutex, DisplayCompletion, { DISPLAY_COMPLETION_CAPACITY }> =
-    Channel::new();
+static REQUEST_CHANNEL: Channel<
+    CriticalSectionRawMutex,
+    DisplayRequest,
+    { PAGE_TURN_QUEUE_CAPACITY },
+> = Channel::new();
+static RUNTIME_EVENT_CHANNEL: Channel<CriticalSectionRawMutex, RuntimeEvent, 32> = Channel::new();
+static REQUEST_EPOCH: AtomicU32 = AtomicU32::new(0);
 
-const POST_GRAY_STRATEGY: PostGrayStrategy =
-    binbook_fw::async_refresh::configured_post_gray_strategy();
+#[cfg(feature = "diagnostic-console")]
+type CommittedCompletion = binbook_fw::runtime_aggregator::CommittedCompletion;
+
+#[cfg(feature = "diagnostic-console")]
+#[derive(Clone, Copy)]
+enum AggregatorQuery {
+    Enqueue {
+        pending: PendingCommand,
+        request: DisplayRequest,
+    },
+    Status,
+    LogGet {
+        cursor: u32,
+        max_bytes: u16,
+    },
+    LogClear,
+    ProtocolErrors(u32),
+}
+
+#[cfg(feature = "diagnostic-console")]
+#[derive(Clone, Copy)]
+enum AggregatorResponse {
+    Reserve(Result<(), binbook_fw::runtime_aggregator::ReserveError>),
+    Status(DiagnosticSnapshot),
+    Log {
+        payload: [u8; binbook_diagnostic_protocol::MAX_PAYLOAD_BYTES],
+        len: usize,
+    },
+    Ack,
+}
+
+#[cfg(feature = "diagnostic-console")]
+static AGGREGATOR_QUERY_CHANNEL: Channel<CriticalSectionRawMutex, AggregatorQuery, 4> =
+    Channel::new();
+#[cfg(feature = "diagnostic-console")]
+static AGGREGATOR_RESPONSE_CHANNEL: Channel<CriticalSectionRawMutex, AggregatorResponse, 4> =
+    Channel::new();
+#[cfg(feature = "diagnostic-console")]
+static AGGREGATOR_COMPLETION_CHANNEL: Channel<
+    CriticalSectionRawMutex,
+    CommittedCompletion,
+    { DISPLAY_COMPLETION_CAPACITY },
+> = Channel::new();
+
+pub(crate) struct RuntimePeripherals {
+    pub(crate) adc1: esp_hal::peripherals::ADC1<'static>,
+    pub(crate) gpio1: esp_hal::peripherals::GPIO1<'static>,
+    pub(crate) gpio2: esp_hal::peripherals::GPIO2<'static>,
+    pub(crate) spi2: esp_hal::peripherals::SPI2<'static>,
+    pub(crate) gpio8: esp_hal::peripherals::GPIO8<'static>,
+    pub(crate) gpio10: esp_hal::peripherals::GPIO10<'static>,
+    pub(crate) gpio21: esp_hal::peripherals::GPIO21<'static>,
+    pub(crate) gpio4: esp_hal::peripherals::GPIO4<'static>,
+    pub(crate) gpio5: esp_hal::peripherals::GPIO5<'static>,
+    pub(crate) gpio6: esp_hal::peripherals::GPIO6<'static>,
+    #[cfg(feature = "diagnostic-console")]
+    pub(crate) usb_device: esp_hal::peripherals::USB_DEVICE<'static>,
+    #[cfg(feature = "diagnostic-console")]
+    pub(crate) flash: esp_hal::peripherals::FLASH<'static>,
+}
+
 const GRAY_POLL_INTERVAL_MS: u64 = 10;
+
+struct RuntimeEventSink {
+    sender: Sender<'static, CriticalSectionRawMutex, RuntimeEvent, 32>,
+    pending: [Option<RuntimeEvent>; 32],
+    head: usize,
+    len: usize,
+}
+
+impl RuntimeEventSink {
+    fn new(sender: Sender<'static, CriticalSectionRawMutex, RuntimeEvent, 32>) -> Self {
+        Self {
+            sender,
+            pending: [None; 32],
+            head: 0,
+            len: 0,
+        }
+    }
+
+    async fn flush(&mut self) {
+        while self.len > 0 {
+            let event = self.pending[self.head]
+                .take()
+                .expect("runtime event buffer entry must exist");
+            self.head = (self.head + 1) % self.pending.len();
+            self.len -= 1;
+            self.sender.send(event).await;
+        }
+    }
+
+    fn buffer(&mut self, event: RuntimeEvent) {
+        let index = (self.head + self.len) % self.pending.len();
+        assert!(
+            self.len < self.pending.len(),
+            "runtime event buffer overflow"
+        );
+        self.pending[index] = Some(event);
+        self.len += 1;
+    }
+}
+
+impl EventSink for RuntimeEventSink {
+    fn emit(&mut self, event: RuntimeEvent) {
+        if self.len > 0 {
+            self.buffer(event);
+            return;
+        }
+        if let Err(embassy_sync::channel::TrySendError::Full(event)) = self.sender.try_send(event) {
+            self.buffer(event);
+        }
+    }
+}
+
+struct HardwareDisplayBackend<'a, SPI, CS, DC, RST, BUSY> {
+    display: Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: binbook::BinBook<&'a [u8], &'a mut [u8; BINBOOK_SCRATCH_BYTES]>,
+    delay: Delay,
+}
+
+impl<'a, SPI, CS, DC, RST, BUSY> DisplayBackend
+    for HardwareDisplayBackend<'a, SPI, CS, DC, RST, BUSY>
+where
+    SPI: xteink_hal::Spi,
+    CS: xteink_hal::OutputPin,
+    DC: xteink_hal::OutputPin,
+    RST: xteink_hal::OutputPin,
+    BUSY: xteink_hal::InputPin,
+{
+    fn timestamp_ms(&self) -> Option<u64> {
+        Some(embassy_time::Instant::now().as_millis())
+    }
+
+    fn request_epoch(&self) -> u32 {
+        REQUEST_EPOCH.load(Ordering::Acquire)
+    }
+
+    async fn init_grayscale(&mut self) -> xteink_hal::HalResult<()> {
+        self.display.init_grayscale_async(&self.delay).await
+    }
+
+    async fn render_grayscale(
+        &mut self,
+        page: u32,
+        expected_epoch: u32,
+    ) -> xteink_hal::HalResult<binbook_fw::display::GrayRenderOutcome> {
+        binbook_fw::display::display_staged_grayscale_async(
+            &mut self.display,
+            &mut self.book,
+            PROBE_BOOK,
+            page,
+            expected_epoch,
+            || REQUEST_EPOCH.load(Ordering::Acquire),
+            || {
+                let timestamp_ms = embassy_time::Instant::now().as_millis();
+                let sender = RUNTIME_EVENT_CHANNEL.sender();
+                let _ = sender.try_send(RuntimeEvent {
+                    timestamp_ms,
+                    kind: binbook_fw::runtime_engine::RuntimeEventKind::WaveformSelected {
+                        waveform_hint: binbook::display_profile::WAVEFORM_SSD1677_STAGED_GRAY2,
+                        lut_revision: ssd1677_driver::STAGED_GRAY_LUT_REVISION,
+                    },
+                });
+                let _ = sender.try_send(RuntimeEvent {
+                    timestamp_ms,
+                    kind: binbook_fw::runtime_engine::RuntimeEventKind::GrayActivated { page },
+                });
+            },
+            &self.delay,
+        )
+        .await
+    }
+
+    async fn init_bw(&mut self) -> xteink_hal::HalResult<()> {
+        self.display.init_async(&self.delay).await
+    }
+
+    async fn render_bw(&mut self, from: u32, target: u32) -> xteink_hal::HalResult<()> {
+        binbook_fw::display::bw_differential_async(
+            &mut self.display,
+            &mut self.book,
+            PROBE_BOOK,
+            from,
+            target,
+            &self.delay,
+        )
+        .await
+    }
+
+    async fn sync_bw_base(
+        &mut self,
+        page: u32,
+        expected_epoch: u32,
+    ) -> xteink_hal::HalResult<binbook_fw::display::BaseSyncOutcome> {
+        binbook_fw::display::sync_bw_base_async(
+            &mut self.display,
+            &mut self.book,
+            PROBE_BOOK,
+            page,
+            expected_epoch,
+            || REQUEST_EPOCH.load(Ordering::Acquire),
+            &self.delay,
+        )
+        .await
+    }
+
+    async fn recover_bw(&mut self, page: u32) -> xteink_hal::HalResult<()> {
+        binbook_fw::display::recovery_seed_async(
+            &mut self.display,
+            &mut self.book,
+            PROBE_BOOK,
+            page,
+            &self.delay,
+        )
+        .await
+    }
+
+    async fn run_probe(
+        &mut self,
+        kind: binbook_fw::async_refresh::DisplayProbeKind,
+        page: u32,
+    ) -> xteink_hal::HalResult<()> {
+        #[cfg(feature = "diagnostic-console")]
+        {
+            match kind {
+                binbook_fw::async_refresh::DisplayProbeKind::FullRefreshCurrent => {
+                    binbook_fw::display::display_full_grayscale_async(
+                        &mut self.display,
+                        &mut self.book,
+                        PROBE_BOOK,
+                        page,
+                        &self.delay,
+                    )
+                    .await
+                }
+                binbook_fw::async_refresh::DisplayProbeKind::ClearWhite => {
+                    binbook_fw::display::clear_white_probe_async(&mut self.display, &self.delay)
+                        .await
+                }
+                binbook_fw::async_refresh::DisplayProbeKind::WindowCorners => {
+                    binbook_fw::display::window_corners_probe_async(&mut self.display, &self.delay)
+                        .await
+                }
+            }
+        }
+        #[cfg(not(feature = "diagnostic-console"))]
+        {
+            let _ = (kind, page);
+            Err(xteink_hal::HalError::InvalidParam)
+        }
+    }
+}
 
 #[cfg(feature = "diagnostic-console")]
 struct X4Flash(RefCell<esp_storage::FlashStorage<'static>>);
@@ -92,22 +336,6 @@ impl xteink_hal::Flash for X4Flash {
 
     fn size(&self) -> u32 {
         self.0.borrow().capacity() as u32
-    }
-}
-
-#[cfg(feature = "diagnostic-console")]
-fn panel_mode_code(mode: binbook_diagnostic_protocol::PanelModeCode) -> u8 {
-    mode as u8
-}
-
-#[cfg(feature = "diagnostic-console")]
-fn hal_error_code(error: xteink_hal::HalError) -> i32 {
-    match error {
-        xteink_hal::HalError::Spi => -1,
-        xteink_hal::HalError::Gpio => -2,
-        xteink_hal::HalError::Flash => -3,
-        xteink_hal::HalError::Timeout => -4,
-        xteink_hal::HalError::InvalidParam => -5,
     }
 }
 
@@ -149,10 +377,25 @@ async fn input_task(
         if let Some(event) = input_state.poll_raw(ch1, ch2, tick) {
             if let input::ButtonEvent::Press(button) = event {
                 if let Some(turn) = input::page_turn_for_button(button) {
-                    let _ = request_tx.try_send(DisplayRequest::Turn {
-                        turn,
-                        completion_sequence: None,
-                    });
+                    if request_tx
+                        .try_send(DisplayRequest::Turn {
+                            turn,
+                            completion_sequence: None,
+                        })
+                        .is_ok()
+                    {
+                        REQUEST_EPOCH.fetch_add(1, Ordering::AcqRel);
+                    } else {
+                        RUNTIME_EVENT_CHANNEL
+                            .sender()
+                            .send(RuntimeEvent {
+                                timestamp_ms: embassy_time::Instant::now().as_millis(),
+                                kind: binbook_fw::runtime_engine::RuntimeEventKind::TurnDropped {
+                                    turn,
+                                },
+                            })
+                            .await;
+                    }
                 }
             }
         }
@@ -169,8 +412,9 @@ async fn display_task(
     gpio5: esp_hal::peripherals::GPIO5<'static>,
     gpio6: esp_hal::peripherals::GPIO6<'static>,
     request_rx: RequestReceiver,
-    completion_tx: CompletionSender,
 ) {
+    use embassy_futures::select::{select, Either};
+
     let spi = EspSpi::new(
         spi2,
         SpiConfig::default()
@@ -185,221 +429,44 @@ async fn display_task(
     let dc = OutputPin(Output::new(gpio4, Level::Low, OutputConfig::default()));
     let rst = OutputPin(Output::new(gpio5, Level::High, OutputConfig::default()));
     let busy = InputPin(Input::new(gpio6, InputConfig::default()));
-    let mut display = Ssd1677Driver::new(Spi(spi), cs, dc, rst, busy);
-    let delay = Delay(EspDelay::new());
-
     let mut scratch = [0u8; BINBOOK_SCRATCH_BYTES];
-    let mut book =
+    let book =
         binbook::BinBook::open(PROBE_BOOK, &mut scratch).expect("failed to open embedded BinBook");
     let page_count = book.page_count();
-    let mut current_page: u32 = 0;
-    let mut panel_mode = PanelMode::Unknown;
-    let mut coordinator = RefreshCoordinator::new(page_count, POST_GRAY_STRATEGY);
+    let mut backend = HardwareDisplayBackend {
+        display: Ssd1677Driver::new(Spi(spi), cs, dc, rst, busy),
+        book,
+        delay: Delay(EspDelay::new()),
+    };
+    let mut engine = DisplayEngine::new(page_count);
+    let mut events = RuntimeEventSink::new(RUNTIME_EVENT_CHANNEL.sender());
 
-    if let RefreshAction::RenderGray { page } = coordinator.next_action() {
-        let _ = binbook_fw::display::display_full_grayscale_async(
-            &mut display,
-            &mut book,
-            PROBE_BOOK,
-            page,
-            &delay,
+    let _ = engine
+        .initialize(
+            &mut backend,
+            &mut events,
+            embassy_time::Instant::now().as_millis(),
         )
         .await;
-        let _ = coordinator.record_gray_complete();
-        let _ = binbook_fw::display::reseed_bw_silent_async(
-            &mut display,
-            &mut book,
-            PROBE_BOOK,
-            page,
-            &delay,
-        )
-        .await;
-        let _ = coordinator.record_reseed_complete();
-    }
+    events.flush().await;
 
     loop {
-        let request = request_rx.receive().await;
-        let (target_page, completion_sequence) = match request {
-            DisplayRequest::Turn {
-                turn,
-                completion_sequence,
-            } => (
-                input::apply_page_turn(current_page, page_count, turn),
-                completion_sequence,
-            ),
-            DisplayRequest::Goto {
-                page,
-                completion_sequence,
-            } => (page, Some(completion_sequence)),
-            DisplayRequest::Probe { .. } => continue,
-        };
-
-        if target_page == current_page {
-            if let Some(sequence) = completion_sequence {
-                let _ = completion_tx.try_send(DisplayCompletion {
-                    sequence,
-                    status: DisplayCompletionStatus::Ok,
-                    page: current_page,
-                });
+        let now_ms = embassy_time::Instant::now().as_millis();
+        match select(
+            request_rx.receive(),
+            embassy_time::Timer::after_millis(GRAY_POLL_INTERVAL_MS),
+        )
+        .await
+        {
+            Either::First(request) => {
+                let _ = engine
+                    .request(request, &mut backend, &mut events, now_ms)
+                    .await;
+                events.flush().await;
             }
-            continue;
-        }
-
-        let _ = coordinator.start_bw(target_page);
-        let prev_page = current_page;
-
-        if let RefreshAction::RenderBw { from, target } = coordinator.next_action() {
-            let _ = binbook_fw::display::bw_differential_async(
-                &mut display,
-                &mut book,
-                PROBE_BOOK,
-                from,
-                target,
-                &delay,
-            )
-            .await;
-            current_page = target;
-            let now_ms = embassy_time::Instant::now().as_millis();
-            let _ = coordinator.record_bw_complete(target, now_ms);
-        } else {
-            continue;
-        }
-
-        if let Some(sequence) = completion_sequence {
-            let _ = completion_tx.try_send(DisplayCompletion {
-                sequence,
-                status: DisplayCompletionStatus::Ok,
-                page: current_page,
-            });
-        }
-
-        loop {
-            match coordinator.next_action() {
-                RefreshAction::WaitUntil { deadline_ms } => {
-                    let now_ms = embassy_time::Instant::now().as_millis();
-                    if now_ms >= deadline_ms {
-                        let _ = coordinator.gray_deadline_elapsed(now_ms);
-                        break;
-                    }
-
-                    if let Ok(pending_request) = request_rx.try_receive() {
-                        let _ = coordinator.request_arrived();
-                        let request = pending_request;
-                        if matches!(request, DisplayRequest::Probe { .. }) {
-                            continue;
-                        }
-                        let (next_target, next_completion) = match request {
-                            DisplayRequest::Turn {
-                                turn,
-                                completion_sequence,
-                            } => (
-                                input::apply_page_turn(current_page, page_count, turn),
-                                completion_sequence,
-                            ),
-                            DisplayRequest::Goto {
-                                page,
-                                completion_sequence,
-                            } => (page, Some(completion_sequence)),
-                            DisplayRequest::Probe { .. } => continue,
-                        };
-
-                        if next_target == current_page {
-                            if let Some(sequence) = next_completion {
-                                let _ = completion_tx.try_send(DisplayCompletion {
-                                    sequence,
-                                    status: DisplayCompletionStatus::Ok,
-                                    page: current_page,
-                                });
-                            }
-                            break;
-                        }
-
-                        let _ = coordinator.start_bw(next_target);
-                        if let RefreshAction::RenderBw { from, target } = coordinator.next_action()
-                        {
-                            let _ = binbook_fw::display::bw_differential_async(
-                                &mut display,
-                                &mut book,
-                                PROBE_BOOK,
-                                from,
-                                target,
-                                &delay,
-                            )
-                            .await;
-                            current_page = target;
-                            let now_ms = embassy_time::Instant::now().as_millis();
-                            let _ = coordinator.record_bw_complete(target, now_ms);
-                            if let Some(sequence) = next_completion {
-                                let _ = completion_tx.try_send(DisplayCompletion {
-                                    sequence,
-                                    status: DisplayCompletionStatus::Ok,
-                                    page: current_page,
-                                });
-                            }
-                            continue;
-                        }
-                    }
-
-                    embassy_time::Timer::after_millis(GRAY_POLL_INTERVAL_MS).await;
-                }
-                RefreshAction::RenderGray { page } => {
-                    let _ = binbook_fw::display::display_full_grayscale_async(
-                        &mut display,
-                        &mut book,
-                        PROBE_BOOK,
-                        page,
-                        &delay,
-                    )
-                    .await;
-                    let _ = coordinator.record_gray_complete();
-                    let _ = binbook_fw::display::reseed_bw_silent_async(
-                        &mut display,
-                        &mut book,
-                        PROBE_BOOK,
-                        page,
-                        &delay,
-                    )
-                    .await;
-                    let _ = coordinator.record_reseed_complete();
-                    break;
-                }
-                RefreshAction::ReseedBw { page, visible } => {
-                    if visible {
-                        let _ = binbook_fw::display::reseed_bw_visible_async(
-                            &mut display,
-                            &mut book,
-                            PROBE_BOOK,
-                            page,
-                            &delay,
-                        )
-                        .await;
-                    } else {
-                        let _ = binbook_fw::display::reseed_bw_silent_async(
-                            &mut display,
-                            &mut book,
-                            PROBE_BOOK,
-                            page,
-                            &delay,
-                        )
-                        .await;
-                    }
-                    let _ = coordinator.record_reseed_complete();
-                    break;
-                }
-                RefreshAction::WaitForRequest | RefreshAction::None => break,
-                RefreshAction::RenderBw { .. } => break,
-                RefreshAction::RecoverBw { page } => {
-                    let _ = binbook_fw::display::recovery_seed_async(
-                        &mut display,
-                        &mut book,
-                        PROBE_BOOK,
-                        page,
-                        &delay,
-                    )
-                    .await;
-                    let _ = coordinator.record_recovery_complete(page, embassy_time::Instant::now().as_millis());
-                    break;
-                }
+            Either::Second(_) => {
+                let _ = engine.advance(&mut backend, &mut events, now_ms).await;
+                events.flush().await;
             }
         }
     }
@@ -407,63 +474,110 @@ async fn display_task(
 
 #[cfg(feature = "diagnostic-console")]
 #[embassy_executor::task]
+async fn runtime_event_aggregator_task() {
+    use binbook_diagnostic_protocol::{
+        encode_log_response_header, LogResponseHeader, MAX_PAYLOAD_BYTES,
+    };
+    use binbook_fw::{diag::resolve_log_get, runtime_aggregator::RuntimeAggregator};
+    use embassy_futures::select::{select, Either};
+
+    let mut scratch = [0u8; BINBOOK_SCRATCH_BYTES];
+    let book = binbook::BinBook::open(PROBE_BOOK, &mut scratch)
+        .expect("failed to open embedded BinBook for diagnostics");
+    let mut aggregator = RuntimeAggregator::<
+        { PAGE_TURN_QUEUE_CAPACITY },
+        { binbook_fw::diag_log::DEFAULT_LOG_CAPACITY },
+    >::new(DiagnosticSnapshot {
+        current_page: 0,
+        page_count: book.page_count(),
+        panel_mode: binbook_diagnostic_protocol::PanelModeCode::Unknown,
+        dropped_log_count: 0,
+        protocol_error_count: 0,
+        last_error: 0,
+    });
+    aggregator.commit(RuntimeEvent {
+        timestamp_ms: embassy_time::Instant::now().as_millis(),
+        kind: binbook_fw::runtime_engine::RuntimeEventKind::FirmwareStarted {
+            page_count: book.page_count(),
+        },
+    });
+    let event_rx = RUNTIME_EVENT_CHANNEL.receiver();
+    let query_rx = AGGREGATOR_QUERY_CHANNEL.receiver();
+    let response_tx = AGGREGATOR_RESPONSE_CHANNEL.sender();
+    let completion_tx = AGGREGATOR_COMPLETION_CHANNEL.sender();
+
+    loop {
+        match select(event_rx.receive(), query_rx.receive()).await {
+            Either::First(event) => {
+                if let Some(completion) = aggregator.commit(event) {
+                    completion_tx.send(completion).await;
+                }
+            }
+            Either::Second(query) => {
+                let response = match query {
+                    AggregatorQuery::Enqueue { pending, request } => {
+                        AggregatorResponse::Reserve(aggregator.reserve_and_enqueue(pending, || {
+                            if REQUEST_CHANNEL.sender().try_send(request).is_ok() {
+                                REQUEST_EPOCH.fetch_add(1, Ordering::AcqRel);
+                                true
+                            } else {
+                                false
+                            }
+                        }))
+                    }
+                    AggregatorQuery::Status => AggregatorResponse::Status(aggregator.snapshot()),
+                    AggregatorQuery::LogGet { cursor, max_bytes } => {
+                        let mut payload = [0u8; MAX_PAYLOAD_BYTES];
+                        let len =
+                            resolve_log_get(aggregator.log(), cursor, max_bytes, &mut payload);
+                        AggregatorResponse::Log { payload, len }
+                    }
+                    AggregatorQuery::LogClear => {
+                        let next_cursor = aggregator.clear_log();
+                        let mut payload = [0u8; MAX_PAYLOAD_BYTES];
+                        let len = encode_log_response_header(
+                            LogResponseHeader {
+                                next_cursor,
+                                dropped_log_count: 0,
+                                record_count: 0,
+                            },
+                            &mut payload,
+                        )
+                        .unwrap_or(0);
+                        AggregatorResponse::Log { payload, len }
+                    }
+                    AggregatorQuery::ProtocolErrors(count) => {
+                        aggregator.set_protocol_error_count(count);
+                        AggregatorResponse::Ack
+                    }
+                };
+                response_tx.send(response).await;
+            }
+        }
+    }
+}
+
+#[cfg(feature = "diagnostic-console")]
+async fn query_aggregator(query: AggregatorQuery) -> AggregatorResponse {
+    AGGREGATOR_QUERY_CHANNEL.sender().send(query).await;
+    AGGREGATOR_RESPONSE_CHANNEL.receiver().receive().await
+}
+
+#[cfg(feature = "diagnostic-console")]
+#[embassy_executor::task]
 async fn diagnostic_task(
     usb_device: esp_hal::peripherals::USB_DEVICE<'static>,
     flash: esp_hal::peripherals::FLASH<'static>,
-    request_tx: RequestSender,
-    completion_rx: CompletionReceiver,
 ) {
-    use binbook_diagnostic_protocol::{
-        decode_frame, decode_key_payload, decode_log_get_payload, decode_page_payload,
-        decode_probe_payload, encode_log_response_header, encode_page_response, encode_status_payload,
-        FrameKind, Opcode, RawFrameHeader, Status, StatusPayload, LOG_RESPONSE_HEADER_BYTES,
-        MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES,
-    };
-    use binbook_fw::diag::{resolve_log_clear, TransportError};
-    use binbook_fw::input::{apply_page_turn, page_turn_for_button, Button};
+    use binbook_diagnostic_protocol::Status;
+    use binbook_fw::diag::{poll_runtime_command, queue_runtime_response, RuntimeCommand};
     use esp_hal::usb_serial_jtag::UsbSerialJtag;
 
     let mut usb = UsbSerialJtag::new(usb_device);
     let (mut usb_rx, mut usb_tx) = usb.split();
     let mut diag_serial_state = SerialState::new();
-    let mut diag_log = DiagLog::<{ binbook_fw::diag_log::DEFAULT_LOG_CAPACITY }>::new();
-    let mut diag_deduper = DiagDeduper::new();
-    let mut crash_store = CrashStore::new(X4Flash(RefCell::new(esp_storage::FlashStorage::new(
-        flash,
-    ))));
-
-    let mut book_scratch = [0u8; BINBOOK_SCRATCH_BYTES];
-    let book = binbook::BinBook::open(PROBE_BOOK, &mut book_scratch)
-        .expect("failed to open embedded BinBook");
-    let page_count = book.page_count();
-    let mut snapshot = DiagnosticSnapshot {
-        current_page: 0,
-        page_count,
-        panel_mode: binbook_diagnostic_protocol::PanelModeCode::Unknown,
-        dropped_log_count: 0,
-        protocol_error_count: 0,
-        last_error: 0,
-    };
-    let mut loop_state =
-        DiagnosticLoopState::<{ PAGE_TURN_QUEUE_CAPACITY }, { binbook_fw::diag_log::DEFAULT_LOG_CAPACITY }>::new(
-            snapshot,
-            diag_log,
-        );
-    loop_state.log_mut().push_event(
-        DiagEvent {
-            level: LEVEL_INFO,
-            subsystem: SUB_SYSTEM,
-            event: binbook_fw::diag_log::EVT_FIRMWARE_STARTED,
-            arg0: page_count as i32,
-            arg1: 0,
-            arg2: 0,
-        },
-        0,
-    );
-
-    let mut pending_display: binbook_fw::diag::DiagnosticPendingQueue<{ PAGE_TURN_QUEUE_CAPACITY }> =
-        binbook_fw::diag::DiagnosticPendingQueue::new();
-    let mut tick: u64 = 0;
+    let mut crash_store =
+        CrashStore::new(X4Flash(RefCell::new(esp_storage::FlashStorage::new(flash))));
 
     loop {
         let mut usb_read_buf = [0u8; 64];
@@ -472,188 +586,175 @@ async fn diagnostic_task(
             diag_serial_state.feed_rx(&usb_read_buf[..n]);
         }
 
-        while let Ok(completion) = completion_rx.try_receive() {
-            if let Some(pending) = pending_display.pop() {
-                snapshot.current_page = completion.page;
-                snapshot.panel_mode = binbook_diagnostic_protocol::PanelModeCode::Bw;
-                loop_state.update_snapshot(snapshot);
-                loop_state.log_mut().push(
-                    tick as u32,
-                    DiagEvent {
-                        level: LEVEL_INFO,
-                        subsystem: SUB_DISPLAY,
-                        event: binbook_fw::diag_log::EVT_TURN_DEQUEUED,
-                        arg0: completion.sequence as i32,
-                        arg1: completion.page as i32,
-                        arg2: 0,
-                    },
-                );
-                let status = match completion.status {
-                    DisplayCompletionStatus::Ok => Status::Ok,
-                    DisplayCompletionStatus::Error => {
-                        snapshot.last_error = -4;
-                        loop_state.update_snapshot(snapshot);
-                        Status::Error
-                    }
-                };
-                let _ = complete_pending_command(
-                    &mut diag_serial_state,
-                    pending,
-                    status,
-                    completion.page,
-                    &[],
-                );
-            }
+        while let Ok(committed) = AGGREGATOR_COMPLETION_CHANNEL.receiver().try_receive() {
+            let status = match committed.completion.status {
+                RuntimeCompletionStatus::Ok => Status::Ok,
+                RuntimeCompletionStatus::Error => Status::Error,
+            };
+            let _ = complete_pending_command(
+                &mut diag_serial_state,
+                committed.pending,
+                status,
+                committed.completion.page,
+                &[],
+            );
         }
 
-        let pending = binbook_fw::diag::poll_pending_command(
-            &mut diag_serial_state,
-            snapshot.current_page,
-            snapshot.page_count,
-            snapshot.last_error,
-            panel_mode_code(snapshot.panel_mode),
-            loop_state.log_mut(),
-            tick as u32,
-        );
-
-        if let Some(pending) = pending {
-            let mut response_status = Status::Ok;
-            let mut response_payload = [0u8; 1 + CRASH_SUMMARY_BYTES];
-            let mut response_payload_len = 0usize;
-            match pending.action {
-                PendingAction::RenderTurn { turn } => {
-                    let _ = request_tx.try_send(DisplayRequest::Turn {
-                        turn,
-                        completion_sequence: Some(pending.header.sequence),
-                    })
-                    .map_err(|_| {
-                        response_status = Status::Error;
-                    });
-                    if response_status == Status::Ok {
-                        let _ = pending_display.try_push(pending);
-                        loop_state.log_mut().push(
-                            tick as u32,
-                            DiagEvent {
-                                level: LEVEL_INFO,
-                                subsystem: SUB_DISPLAY,
-                                event: binbook_fw::diag_log::EVT_TURN_QUEUED,
-                                arg0: turn as i32,
-                                arg1: pending.header.sequence as i32,
-                                arg2: 0,
-                            },
-                        );
-                    } else {
-                        loop_state.log_mut().push(
-                            tick as u32,
-                            DiagEvent {
-                                level: LEVEL_ERROR,
-                                subsystem: SUB_DISPLAY,
-                                event: binbook_fw::diag_log::EVT_TURN_DROPPED,
-                                arg0: turn as i32,
-                                arg1: pending.header.sequence as i32,
-                                arg2: 0,
-                            },
-                        );
-                        let _ = complete_pending_command(
-                            &mut diag_serial_state,
-                            pending,
-                            Status::Error,
-                            snapshot.current_page,
-                            &[],
-                        );
-                    }
-                }
-                PendingAction::RenderPage { target_page } => {
-                    let _ = request_tx.try_send(DisplayRequest::Goto {
-                        page: target_page,
-                        completion_sequence: pending.header.sequence,
-                    })
-                    .map_err(|_| {
-                        response_status = Status::Error;
-                    });
-                    if response_status == Status::Ok {
-                        let _ = pending_display.try_push(pending);
-                    } else {
-                        let _ = complete_pending_command(
-                            &mut diag_serial_state,
-                            pending,
-                            Status::Error,
-                            snapshot.current_page,
-                            &[],
-                        );
-                    }
-                }
-                PendingAction::DisplayProbe(probe) => {
-                    let kind = match probe {
-                        binbook_fw::diag::DisplayProbeKind::FullRefreshCurrent => {
-                            DisplayProbeKind::FullRefreshCurrent
-                        }
-                        binbook_fw::diag::DisplayProbeKind::ClearWhite => {
-                            DisplayProbeKind::ClearWhite
-                        }
-                        binbook_fw::diag::DisplayProbeKind::WindowCorners => {
-                            DisplayProbeKind::WindowCorners
-                        }
-                    };
-                    let _ = request_tx.try_send(DisplayRequest::Probe {
-                        kind,
-                        completion_sequence: pending.header.sequence,
-                    })
-                    .map_err(|_| {
-                        response_status = Status::Error;
-                    });
-                    if response_status == Status::Ok {
-                        let _ = pending_display.try_push(pending);
-                    } else {
-                        let _ = complete_pending_command(
-                            &mut diag_serial_state,
-                            pending,
-                            Status::Error,
-                            snapshot.current_page,
-                            &[],
-                        );
-                    }
-                }
-                PendingAction::CrashGet => match crash_store.read() {
-                    Ok(summary) => {
-                        response_payload_len = match summary {
-                            Some(summary) => {
-                                let mut encoded_summary = [0u8; CRASH_SUMMARY_BYTES];
-                                summary.encode(&mut encoded_summary);
-                                encode_crash_response(Some(&encoded_summary), &mut response_payload)
-                                    .unwrap_or(0)
-                            }
-                            None => encode_crash_response(None, &mut response_payload).unwrap_or(0),
-                        };
-                    }
-                    Err(_) => {
-                        response_status = Status::InternalError;
-                    }
-                },
-                PendingAction::CrashClear => match crash_store.clear().and_then(|_| {
-                    if crash_store.read()?.is_none() {
-                        Ok(())
-                    } else {
-                        Err(xteink_hal::HalError::Flash)
-                    }
-                }) {
-                    Ok(()) => {}
-                    Err(error) => {
-                        response_status = Status::InternalError;
-                        snapshot.last_error = hal_error_code(error);
-                        loop_state.update_snapshot(snapshot);
-                    }
-                },
-            }
-
-            if matches!(pending.action, PendingAction::CrashGet | PendingAction::CrashClear) {
-                let _ = complete_pending_command(
+        let snapshot = match query_aggregator(AggregatorQuery::Status).await {
+            AggregatorResponse::Status(snapshot) => snapshot,
+            _ => continue,
+        };
+        if let Some(command) = poll_runtime_command(&mut diag_serial_state, snapshot) {
+            let header = command.header();
+            RUNTIME_EVENT_CHANNEL
+                .sender()
+                .send(RuntimeEvent {
+                    timestamp_ms: embassy_time::Instant::now().as_millis(),
+                    kind: binbook_fw::runtime_engine::RuntimeEventKind::ProtocolCommand {
+                        opcode: header.opcode as u8,
+                        sequence: header.sequence,
+                    },
+                })
+                .await;
+            match command {
+                RuntimeCommand::Immediate {
+                    header,
+                    status,
+                    payload,
+                    payload_len,
+                } => queue_runtime_response(
                     &mut diag_serial_state,
-                    pending,
-                    response_status,
-                    snapshot.current_page,
-                    &response_payload[..response_payload_len],
-                );
+                    header,
+                    status,
+                    &payload[..payload_len],
+                ),
+                RuntimeCommand::LogGet {
+                    header,
+                    cursor,
+                    max_bytes,
+                } => {
+                    if let AggregatorResponse::Log { payload, len } =
+                        query_aggregator(AggregatorQuery::LogGet { cursor, max_bytes }).await
+                    {
+                        queue_runtime_response(
+                            &mut diag_serial_state,
+                            header,
+                            Status::Ok,
+                            &payload[..len],
+                        );
+                    }
+                }
+                RuntimeCommand::LogClear { header } => {
+                    if let AggregatorResponse::Log { payload, len } =
+                        query_aggregator(AggregatorQuery::LogClear).await
+                    {
+                        queue_runtime_response(
+                            &mut diag_serial_state,
+                            header,
+                            Status::Ok,
+                            &payload[..len],
+                        );
+                    }
+                }
+                RuntimeCommand::Hardware(pending)
+                    if matches!(
+                        pending.action,
+                        PendingAction::CrashGet | PendingAction::CrashClear
+                    ) =>
+                {
+                    let mut response_status = Status::Ok;
+                    let mut response_payload = [0u8; 1 + CRASH_SUMMARY_BYTES];
+                    let mut response_payload_len = 0usize;
+                    match pending.action {
+                        PendingAction::CrashGet => match crash_store.read() {
+                            Ok(summary) => {
+                                response_payload_len = match summary {
+                                    Some(summary) => {
+                                        let mut encoded_summary = [0u8; CRASH_SUMMARY_BYTES];
+                                        summary.encode(&mut encoded_summary);
+                                        encode_crash_response(
+                                            Some(&encoded_summary),
+                                            &mut response_payload,
+                                        )
+                                        .unwrap_or(0)
+                                    }
+                                    None => encode_crash_response(None, &mut response_payload)
+                                        .unwrap_or(0),
+                                };
+                            }
+                            Err(_) => {
+                                response_status = Status::InternalError;
+                            }
+                        },
+                        PendingAction::CrashClear => match crash_store.clear().and_then(|_| {
+                            if crash_store.read()?.is_none() {
+                                Ok(())
+                            } else {
+                                Err(xteink_hal::HalError::Flash)
+                            }
+                        }) {
+                            Ok(()) => {}
+                            Err(error) => {
+                                response_status = Status::InternalError;
+                                RUNTIME_EVENT_CHANNEL.sender().send(RuntimeEvent {
+                                    timestamp_ms: embassy_time::Instant::now().as_millis(),
+                                    kind: binbook_fw::runtime_engine::RuntimeEventKind::DisplayFailure {
+                                        error,
+                                        page: snapshot.current_page,
+                                    },
+                                }).await;
+                            }
+                        },
+                        _ => unreachable!(),
+                    }
+                    let _ = complete_pending_command(
+                        &mut diag_serial_state,
+                        pending,
+                        response_status,
+                        snapshot.current_page,
+                        &response_payload[..response_payload_len],
+                    );
+                }
+                RuntimeCommand::Hardware(pending) => {
+                    let request = match pending.action {
+                        PendingAction::RenderTurn { turn } => DisplayRequest::Turn {
+                            turn,
+                            completion_sequence: Some(pending.header.sequence),
+                        },
+                        PendingAction::RenderPage { target_page } => DisplayRequest::Goto {
+                            page: target_page,
+                            completion_sequence: pending.header.sequence,
+                        },
+                        PendingAction::DisplayProbe(probe) => DisplayRequest::Probe {
+                            kind: match probe {
+                                binbook_fw::diag::DisplayProbeKind::FullRefreshCurrent => {
+                                    DisplayProbeKind::FullRefreshCurrent
+                                }
+                                binbook_fw::diag::DisplayProbeKind::ClearWhite => {
+                                    DisplayProbeKind::ClearWhite
+                                }
+                                binbook_fw::diag::DisplayProbeKind::WindowCorners => {
+                                    DisplayProbeKind::WindowCorners
+                                }
+                            },
+                            completion_sequence: pending.header.sequence,
+                        },
+                        _ => unreachable!(),
+                    };
+                    let enqueued = matches!(
+                        query_aggregator(AggregatorQuery::Enqueue { pending, request }).await,
+                        AggregatorResponse::Reserve(Ok(()))
+                    );
+                    if !enqueued {
+                        let _ = complete_pending_command(
+                            &mut diag_serial_state,
+                            pending,
+                            Status::Error,
+                            snapshot.current_page,
+                            &[],
+                        );
+                    }
+                }
             }
         }
 
@@ -664,57 +765,44 @@ async fn diagnostic_task(
             }
         }
 
-        diag_deduper.push_idle_or_summary(loop_state.log_mut(), tick as u32);
-        loop_state.update_snapshot(snapshot);
-        snapshot.dropped_log_count = loop_state.log_mut().dropped_records();
-        snapshot.protocol_error_count = diag_serial_state.protocol_error_count();
-        loop_state.update_snapshot(snapshot);
-        tick = tick.saturating_add(1);
+        let _ = query_aggregator(AggregatorQuery::ProtocolErrors(
+            diag_serial_state.protocol_error_count(),
+        ))
+        .await;
         embassy_time::Timer::after_millis(GRAY_POLL_INTERVAL_MS).await;
     }
 }
 
-pub(crate) async fn run(spawner: Spawner) {
-    let peripherals = esp_hal::init(esp_hal::Config::default());
-
+pub(crate) async fn run(spawner: Spawner, peripherals: RuntimePeripherals) {
     let request_tx_input = REQUEST_CHANNEL.sender();
-    let request_tx_diag = REQUEST_CHANNEL.sender();
     let request_rx = REQUEST_CHANNEL.receiver();
-    let completion_tx = COMPLETION_CHANNEL.sender();
-    let completion_rx = COMPLETION_CHANNEL.receiver();
 
     spawner.spawn(
         input_task(
-            peripherals.ADC1,
-            peripherals.GPIO1,
-            peripherals.GPIO2,
+            peripherals.adc1,
+            peripherals.gpio1,
+            peripherals.gpio2,
             request_tx_input,
         )
         .unwrap(),
     );
     spawner.spawn(
         display_task(
-            peripherals.SPI2,
-            peripherals.GPIO8,
-            peripherals.GPIO10,
-            peripherals.GPIO21,
-            peripherals.GPIO4,
-            peripherals.GPIO5,
-            peripherals.GPIO6,
+            peripherals.spi2,
+            peripherals.gpio8,
+            peripherals.gpio10,
+            peripherals.gpio21,
+            peripherals.gpio4,
+            peripherals.gpio5,
+            peripherals.gpio6,
             request_rx,
-            completion_tx,
         )
         .unwrap(),
     );
 
     #[cfg(feature = "diagnostic-console")]
-    spawner.spawn(
-        diagnostic_task(
-            peripherals.USB_DEVICE,
-            peripherals.FLASH,
-            request_tx_diag,
-            completion_rx,
-        )
-        .unwrap(),
-    );
+    spawner.spawn(runtime_event_aggregator_task().unwrap());
+
+    #[cfg(feature = "diagnostic-console")]
+    spawner.spawn(diagnostic_task(peripherals.usb_device, peripherals.flash).unwrap());
 }

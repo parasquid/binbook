@@ -2,6 +2,7 @@ use crate::header::{read_le16, read_le32, read_le64};
 use crate::Error;
 
 pub const SECTION_STRING_TABLE: u16 = 1;
+pub const SECTION_DISPLAY_PROFILE: u16 = 10;
 pub const SECTION_PAGE_INDEX: u16 = 40;
 pub const SECTION_NAV_INDEX: u16 = 41;
 pub const SECTION_CHAPTER_INDEX: u16 = 43;
@@ -37,6 +38,7 @@ pub(crate) fn parse_section(bytes: &[u8]) -> Section {
 
 pub(crate) struct RequiredSections {
     pub string_table: Section,
+    pub display_profile: Section,
     pub page_index: Section,
     pub nav_index: Section,
     pub chapter_index: Section,
@@ -52,6 +54,7 @@ pub(crate) fn parse_sections_from_table(
     page_data_length: u64,
 ) -> Result<RequiredSections, Error> {
     let mut string_table = Section::default();
+    let mut display_profile = Section::default();
     let mut page_index = Section::default();
     let mut nav_index = Section::default();
     let mut chapter_index = Section::default();
@@ -68,6 +71,7 @@ pub(crate) fn parse_sections_from_table(
         let section = parse_section(&table_bytes[off..end]);
         match section.section_id {
             SECTION_STRING_TABLE => string_table = section,
+            SECTION_DISPLAY_PROFILE => display_profile = section,
             SECTION_PAGE_INDEX => page_index = section,
             SECTION_NAV_INDEX => nav_index = section,
             SECTION_CHAPTER_INDEX => chapter_index = section,
@@ -80,6 +84,9 @@ pub(crate) fn parse_sections_from_table(
 
     if string_table.section_id != SECTION_STRING_TABLE {
         return Err(Error::MissingSection(SECTION_STRING_TABLE));
+    }
+    if display_profile.section_id != SECTION_DISPLAY_PROFILE {
+        return Err(Error::MissingSection(SECTION_DISPLAY_PROFILE));
     }
     if page_index.section_id != SECTION_PAGE_INDEX {
         return Err(Error::MissingSection(SECTION_PAGE_INDEX));
@@ -111,6 +118,7 @@ pub(crate) fn parse_sections_from_table(
 
     Ok(RequiredSections {
         string_table,
+        display_profile,
         page_index,
         nav_index,
         chapter_index,

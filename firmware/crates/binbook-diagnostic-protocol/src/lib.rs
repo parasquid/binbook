@@ -761,6 +761,16 @@ pub const EVT_TURN_DROPPED: u16 = 0x0204;
 pub const EVT_RESEED_START: u16 = 0x0303;
 pub const EVT_RESEED_COMPLETE: u16 = 0x0304;
 pub const EVT_DISPLAY_RECOVERY: u16 = 0x0801;
+pub const EVT_GRAY_DELAY_CANCELLED: u16 = 0x0305;
+pub const EVT_GRAY_OVERLAY_START: u16 = 0x0306;
+pub const EVT_GRAY_OVERLAY_CANCELLED: u16 = 0x0307;
+pub const EVT_GRAY_OVERLAY_ACTIVATE: u16 = 0x0308;
+pub const EVT_GRAY_OVERLAY_COMPLETE: u16 = 0x0309;
+pub const EVT_BW_BASE_SYNC_START: u16 = 0x030A;
+pub const EVT_BW_BASE_SYNC_CANCELLED: u16 = 0x030B;
+pub const EVT_BW_BASE_SYNC_COMPLETE: u16 = 0x030C;
+pub const EVT_CONTROLLER_RAM_STATE: u16 = 0x0402;
+pub const EVT_WAVEFORM_SELECTED: u16 = 0x0403;
 
 pub fn crc16_ccitt_false(data: &[u8]) -> u16 {
     let mut crc: u16 = 0xFFFF;

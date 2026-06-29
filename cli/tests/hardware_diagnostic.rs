@@ -85,14 +85,22 @@ fn find_frame(data: &[u8]) -> Option<&[u8]> {
 }
 
 #[test]
-fn deferred_gray_exercise_uses_the_planned_transport_script() {
-    let reads = deferred_gray_responses();
+fn staged_gray_exercise_uses_the_planned_transport_script() {
+    let reads = staged_gray_responses();
     let mut io = ScriptedExerciseIo::new(reads);
 
-    let result = binbook_cli::exercise::run_deferred_gray_io(&mut io, PORT);
+    let result = binbook_cli::exercise::run_staged_gray_io(&mut io, PORT);
 
-    assert!(result.is_ok(), "deferred-gray exercise should run: {:?}", result);
-    assert_eq!(io.index, io.reads.len(), "exercise should consume all scripted reads");
+    assert!(
+        result.is_ok(),
+        "staged-gray exercise should run: {:?}",
+        result
+    );
+    assert_eq!(
+        io.index,
+        io.reads.len(),
+        "exercise should consume all scripted reads"
+    );
     assert_eq!(
         decoded_request_transcript(&io.written),
         expected_request_transcript(),
@@ -100,11 +108,264 @@ fn deferred_gray_exercise_uses_the_planned_transport_script() {
     );
 }
 
+fn valid_status() -> StatusPayload {
+    StatusPayload {
+        current_page: 3,
+        page_count: 4,
+        panel_mode: PanelModeCode::Bw,
+        dropped_log_count: 0,
+        protocol_error_count: 0,
+        last_error: 0,
+    }
+}
+
+fn evidence_record(
+    sequence: u32,
+    tick_ms: u32,
+    event: u16,
+    arg0: i32,
+    arg1: i32,
+) -> LogRecordPayload {
+    LogRecordPayload {
+        sequence,
+        tick_ms,
+        level: 1,
+        subsystem: 3,
+        event,
+        arg0,
+        arg1,
+        arg2: 0,
+    }
+}
+
+fn valid_evidence() -> Vec<LogRecordPayload> {
+    vec![
+        evidence_record(1, 100, binbook_diagnostic_protocol::EVT_TURN_DEQUEUED, 5, 1),
+        evidence_record(
+            2,
+            450,
+            binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_START,
+            1,
+            0,
+        ),
+        evidence_record(
+            3,
+            460,
+            binbook_diagnostic_protocol::EVT_WAVEFORM_SELECTED,
+            2,
+            1,
+        ),
+        evidence_record(
+            4,
+            461,
+            binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_ACTIVATE,
+            1,
+            0,
+        ),
+        evidence_record(
+            5,
+            500,
+            binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_COMPLETE,
+            1,
+            0,
+        ),
+        evidence_record(
+            6,
+            501,
+            binbook_diagnostic_protocol::EVT_BW_BASE_SYNC_START,
+            1,
+            0,
+        ),
+        evidence_record(
+            7,
+            510,
+            binbook_diagnostic_protocol::EVT_BW_BASE_SYNC_COMPLETE,
+            1,
+            0,
+        ),
+        evidence_record(8, 600, binbook_diagnostic_protocol::EVT_TURN_DEQUEUED, 7, 2),
+        evidence_record(
+            9,
+            950,
+            binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_START,
+            2,
+            0,
+        ),
+        evidence_record(
+            10,
+            960,
+            binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_CANCELLED,
+            2,
+            0,
+        ),
+        evidence_record(
+            11,
+            970,
+            binbook_diagnostic_protocol::EVT_TURN_DEQUEUED,
+            8,
+            3,
+        ),
+        evidence_record(
+            12,
+            980,
+            binbook_diagnostic_protocol::EVT_TURN_DEQUEUED,
+            9,
+            2,
+        ),
+        evidence_record(
+            13,
+            1_330,
+            binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_START,
+            2,
+            0,
+        ),
+        evidence_record(
+            14,
+            1_340,
+            binbook_diagnostic_protocol::EVT_WAVEFORM_SELECTED,
+            2,
+            1,
+        ),
+        evidence_record(
+            15,
+            1_341,
+            binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_ACTIVATE,
+            2,
+            0,
+        ),
+        evidence_record(
+            16,
+            1_380,
+            binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_COMPLETE,
+            2,
+            0,
+        ),
+        evidence_record(
+            17,
+            1_381,
+            binbook_diagnostic_protocol::EVT_BW_BASE_SYNC_START,
+            2,
+            0,
+        ),
+        evidence_record(
+            18,
+            1_390,
+            binbook_diagnostic_protocol::EVT_BW_BASE_SYNC_COMPLETE,
+            2,
+            0,
+        ),
+        evidence_record(
+            19,
+            1_450,
+            binbook_diagnostic_protocol::EVT_TURN_DEQUEUED,
+            11,
+            3,
+        ),
+    ]
+}
+
+#[test]
+fn staged_gray_script_rejects_premature_grayscale() {
+    let mut records = valid_evidence();
+    records[1].tick_ms = 449;
+    assert!(
+        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
+    );
+}
+
+#[test]
+fn staged_gray_script_rejects_false_sync_markers() {
+    let mut records = valid_evidence();
+    records[17].arg0 = 3;
+    assert!(
+        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
+    );
+}
+
+#[test]
+fn staged_gray_script_rejects_wrong_page_order() {
+    let mut records = valid_evidence();
+    records[10].arg1 = 2;
+    assert!(
+        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
+    );
+}
+
+#[test]
+fn staged_gray_script_rejects_dropped_turns() {
+    let mut records = valid_evidence();
+    records.push(evidence_record(
+        9,
+        1_010,
+        binbook_diagnostic_protocol::EVT_TURN_DROPPED,
+        1,
+        0,
+    ));
+    assert!(
+        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
+    );
+}
+
+#[test]
+fn staged_gray_script_rejects_mismatched_completion_sequences() {
+    let mut records = valid_evidence();
+    records[11].arg0 = 99;
+    assert!(
+        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
+    );
+}
+
+#[test]
+fn staged_gray_script_rejects_missing_waveform_revision() {
+    let mut records = valid_evidence();
+    records[2].arg1 = 2;
+    assert!(
+        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
+    );
+}
+
+#[test]
+fn staged_gray_script_rejects_absolute_refresh_activation() {
+    let mut records = valid_evidence();
+    records.push(evidence_record(
+        20,
+        1_451,
+        binbook_diagnostic_protocol::EVT_REFRESH_DECISION,
+        0xC7,
+        0,
+    ));
+    assert!(
+        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
+    );
+}
+
+#[test]
+fn staged_gray_script_rejects_completion_for_cancelled_attempt() {
+    let mut records = valid_evidence();
+    records.insert(
+        10,
+        evidence_record(
+            10,
+            965,
+            binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_COMPLETE,
+            2,
+            0,
+        ),
+    );
+    assert!(
+        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
+    );
+}
+
 #[test]
 #[ignore]
-fn hardware_deferred_gray_exercise() {
-    let result = binbook_cli::exercise::run_deferred_gray(PORT);
-    assert!(result.is_ok(), "hardware deferred-gray exercise should run: {:?}", result);
+fn hardware_staged_gray_exercise() {
+    let result = binbook_cli::exercise::run_staged_gray(PORT);
+    assert!(
+        result.is_ok(),
+        "hardware staged-gray exercise should run: {:?}",
+        result
+    );
 }
 
 fn decoded_request_transcript(bytes: &[u8]) -> Vec<(Opcode, u16)> {
@@ -124,25 +385,28 @@ fn decoded_request_transcript(bytes: &[u8]) -> Vec<(Opcode, u16)> {
 fn expected_request_transcript() -> Vec<(Opcode, u16)> {
     vec![
         (Opcode::Page, 1),
-        (Opcode::Status, 2),
-        (Opcode::LogClear, 3),
-        (Opcode::Key, 4),
-        (Opcode::LogGet, 5),
-        (Opcode::Key, 6),
+        (Opcode::Page, 2),
+        (Opcode::Status, 3),
+        (Opcode::LogClear, 4),
+        (Opcode::Key, 5),
+        (Opcode::LogGet, 6),
         (Opcode::Key, 7),
+        (Opcode::LogGet, 10),
         (Opcode::Key, 8),
-        (Opcode::LogGet, 9),
-        (Opcode::Key, 10),
-        (Opcode::Status, 11),
-        (Opcode::LogGet, 12),
+        (Opcode::Key, 9),
+        (Opcode::LogGet, 10),
+        (Opcode::Key, 11),
+        (Opcode::Status, 12),
+        (Opcode::LogGet, 13),
     ]
 }
 
-fn deferred_gray_responses() -> Vec<Vec<u8>> {
+fn staged_gray_responses() -> Vec<Vec<u8>> {
     let mut reads = Vec::new();
-    reads.extend(fragment(page_response(1, 0)));
+    reads.extend(fragment(page_response(1, 3)));
+    reads.extend(fragment(page_response(2, 0)));
     reads.extend(fragment(status_response(
-        2,
+        3,
         StatusPayload {
             current_page: 0,
             page_count: 4,
@@ -152,35 +416,180 @@ fn deferred_gray_responses() -> Vec<Vec<u8>> {
             last_error: 0,
         },
     )));
-    reads.extend(fragment(log_response(Opcode::LogClear, 3, 4, 0, &[])));
-    reads.extend(fragment(ack(4, Opcode::Key)));
+    reads.extend(fragment(log_response(Opcode::LogClear, 4, 4, 0, &[])));
+    reads.extend(fragment(ack(5, Opcode::Key)));
     reads.extend(fragment(log_response(
         Opcode::LogGet,
-        5,
         6,
+        11,
         0,
-        &[log_record(4, 1, binbook_diagnostic_protocol::EVT_REFRESH_PHASE, 0, 0, 0)],
+        &[
+            log_record(
+                4,
+                100,
+                binbook_diagnostic_protocol::EVT_TURN_DEQUEUED,
+                5,
+                1,
+                0,
+            ),
+            log_record(
+                5,
+                450,
+                binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_START,
+                1,
+                0,
+                0,
+            ),
+            log_record(
+                6,
+                460,
+                binbook_diagnostic_protocol::EVT_WAVEFORM_SELECTED,
+                2,
+                1,
+                0,
+            ),
+            log_record(
+                7,
+                461,
+                binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_ACTIVATE,
+                1,
+                0,
+                0,
+            ),
+            log_record(
+                8,
+                500,
+                binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_COMPLETE,
+                1,
+                0,
+                0,
+            ),
+            log_record(
+                9,
+                501,
+                binbook_diagnostic_protocol::EVT_BW_BASE_SYNC_START,
+                1,
+                0,
+                0,
+            ),
+            log_record(
+                10,
+                510,
+                binbook_diagnostic_protocol::EVT_BW_BASE_SYNC_COMPLETE,
+                1,
+                0,
+                0,
+            ),
+        ],
     )));
-    reads.extend(fragment(ack(6, Opcode::Key)));
     reads.extend(fragment(ack(7, Opcode::Key)));
-    reads.extend(fragment(ack(8, Opcode::Key)));
     reads.extend(fragment(log_response(
         Opcode::LogGet,
-        9,
         10,
+        12,
         0,
         &[log_record(
-            5,
+            11,
+            600,
+            binbook_diagnostic_protocol::EVT_TURN_DEQUEUED,
+            7,
             2,
-            binbook_diagnostic_protocol::EVT_RESEED_COMPLETE,
-            2,
-            0,
             0,
         )],
     )));
-    reads.extend(fragment(ack(10, Opcode::Key)));
+    reads.extend(fragment(ack(8, Opcode::Key)));
+    reads.extend(fragment(ack(9, Opcode::Key)));
+    reads.extend(fragment(log_response(
+        Opcode::LogGet,
+        10,
+        22,
+        0,
+        &[
+            log_record(
+                12,
+                950,
+                binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_START,
+                2,
+                0,
+                0,
+            ),
+            log_record(
+                13,
+                960,
+                binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_CANCELLED,
+                2,
+                0,
+                0,
+            ),
+            log_record(
+                14,
+                970,
+                binbook_diagnostic_protocol::EVT_TURN_DEQUEUED,
+                8,
+                3,
+                0,
+            ),
+            log_record(
+                15,
+                980,
+                binbook_diagnostic_protocol::EVT_TURN_DEQUEUED,
+                9,
+                2,
+                0,
+            ),
+            log_record(
+                16,
+                1_330,
+                binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_START,
+                2,
+                0,
+                0,
+            ),
+            log_record(
+                17,
+                1_340,
+                binbook_diagnostic_protocol::EVT_WAVEFORM_SELECTED,
+                2,
+                1,
+                0,
+            ),
+            log_record(
+                18,
+                1_341,
+                binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_ACTIVATE,
+                2,
+                0,
+                0,
+            ),
+            log_record(
+                19,
+                1_380,
+                binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_COMPLETE,
+                2,
+                0,
+                0,
+            ),
+            log_record(
+                20,
+                1_381,
+                binbook_diagnostic_protocol::EVT_BW_BASE_SYNC_START,
+                2,
+                0,
+                0,
+            ),
+            log_record(
+                21,
+                1_390,
+                binbook_diagnostic_protocol::EVT_BW_BASE_SYNC_COMPLETE,
+                2,
+                0,
+                0,
+            ),
+        ],
+    )));
+    reads.extend(fragment(ack(11, Opcode::Key)));
     reads.extend(fragment(status_response(
-        11,
+        12,
         StatusPayload {
             current_page: 3,
             page_count: 4,
@@ -192,41 +601,22 @@ fn deferred_gray_responses() -> Vec<Vec<u8>> {
     )));
     reads.extend(fragment(log_response(
         Opcode::LogGet,
-        12,
         13,
+        23,
         0,
-        &[
-            log_record(6, 3, binbook_diagnostic_protocol::EVT_TURN_QUEUED, 1, 0, 0),
-            log_record(7, 4, binbook_diagnostic_protocol::EVT_TURN_DEQUEUED, 1, 2, 0),
-            log_record(
-                8,
-                5,
-                binbook_diagnostic_protocol::EVT_RESEED_START,
-                2,
-                0,
-                0,
-            ),
-            log_record(
-                9,
-                6,
-                binbook_diagnostic_protocol::EVT_RESEED_COMPLETE,
-                2,
-                0,
-                0,
-            ),
-        ],
+        &[log_record(
+            22,
+            1_450,
+            binbook_diagnostic_protocol::EVT_TURN_DEQUEUED,
+            11,
+            3,
+            0,
+        )],
     )));
     reads
 }
 
-fn log_record(
-    sequence: u32,
-    tick_ms: u32,
-    event: u16,
-    arg0: i32,
-    arg1: i32,
-    arg2: i32,
-) -> Vec<u8> {
+fn log_record(sequence: u32, tick_ms: u32, event: u16, arg0: i32, arg1: i32, arg2: i32) -> Vec<u8> {
     let mut buf = [0u8; 24];
     encode_log_record(
         LogRecordPayload {

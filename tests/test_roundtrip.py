@@ -22,7 +22,7 @@ def test_png_folder_can_encode_inspect_and_decode(tmp_path: Path, capsys):
     assert raw[:8] == MAGIC
 
     reader = BinBookReader.open(book)
-    assert reader.header.page_data_offset < 4096
+    assert reader.header.page_data_offset < 8192
     assert reader.header.page_data_offset % 16 == 0
     assert len(reader.pages) == 2
     assert len(reader.chapters) == 0

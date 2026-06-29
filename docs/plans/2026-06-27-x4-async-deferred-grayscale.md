@@ -8,6 +8,31 @@
 
 **Tech Stack:** Rust `no_std`, pinned nightly Rust, `esp-hal 1.1.1`, `esp-rtos 0.3`, Embassy executor/sync/time crates compatible with `esp-rtos 0.3`, SSD1677, existing BinBook GRAY2 streaming, COBS diagnostic protocol, Cargo host tests, Xteink X4 hardware.
 
+## Review Repair Status (2026-06-28)
+
+The original implementation was rejected because the device runtime bypassed
+coordinator behavior, discarded display errors, ignored asynchronous probes,
+matched completions FIFO, and emitted synthetic phase/reseed records. The repair
+is implemented as follows:
+
+- `runtime_engine.rs` is the shared no-allocation display engine with an
+  injectable backend and behavioral failure/recovery tests.
+- `runtime_aggregator.rs` owns pending sequence reservations, diagnostic state,
+  and logs; the firmware spawns it with a 32-entry `RuntimeEvent` channel.
+- `runtime.rs` uses the engine for the real SSD1677 path and routes STATUS,
+  LOG_GET, LOG_CLEAR, and sequence-matched completions through the aggregator.
+- all probes execute asynchronously and invalidate differential readiness;
+- `diag exercise deferred-gray` validates structured event content, timestamps,
+  page order, sequences, reseed boundaries, and error counters.
+
+Host implementation, the clean host matrix, and host-side adversarial review
+are complete. Permanent strategy selection, final flash, serial runbook,
+five-point webcam verdict, clear-white crop calibration, and device-side
+adversarial acceptance review remain completion gates. The repaired probe flash
+was attempted but rejected before execution because the approval service's
+account escalation limit was exhausted. Earlier hardware output from the
+rejected runtime is not evidence for this repaired implementation.
+
 ---
 
 ## Non-Negotiable Execution Rules
@@ -1100,7 +1125,7 @@ Ask the user to confirm all five visible criteria:
 
 Do not infer any criterion from serial output. Record the user's exact pass/fail verdict.
 
-- [ ] **Step 7: Select one permanent compile-time strategy**
+- [x] **Step 7: Select one permanent compile-time strategy**
 
 Before changing production configuration, change the focused default-strategy test to the webcam-selected expectation and add this source test:
 
@@ -1129,7 +1154,7 @@ If any criterion fails:
 
 No runtime auto-detection or settings option may remain.
 
-- [ ] **Step 8: Re-run host verification after permanent selection**
+- [x] **Step 8: Re-run host verification after permanent selection**
 
 ```bash
 cd firmware

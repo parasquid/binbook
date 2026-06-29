@@ -136,6 +136,11 @@ def _clear_native_bit(row: bytearray, physical_x: int) -> None:
     row[ram_x // 8] &= ~(0x80 >> (ram_x % 8)) & 0xFF
 
 
+def _set_native_bit(row: bytearray, physical_x: int) -> None:
+    ram_x = X4_PHYSICAL_WIDTH - 1 - physical_x
+    row[ram_x // 8] |= 0x80 >> (ram_x % 8)
+
+
 def gray2_packed_to_x4_native_planes(
     data: bytes, storage_width: int, storage_height: int
 ) -> tuple[bytes, bytes, bytes]:
@@ -145,24 +150,26 @@ def gray2_packed_to_x4_native_planes(
             f"storage data, got {storage_width}x{storage_height}"
         )
     pixels = unpack_gray2(data, storage_width, storage_height)
-    msb_rows = [bytearray([0xFF] * X4_ROW_BYTES) for _ in range(X4_PHYSICAL_HEIGHT)]
-    lsb_rows = [bytearray([0xFF] * X4_ROW_BYTES) for _ in range(X4_PHYSICAL_HEIGHT)]
-    bw_rows = [bytearray([0xFF] * X4_ROW_BYTES) for _ in range(X4_PHYSICAL_HEIGHT)]
+    overlay_msb_rows = [bytearray(X4_ROW_BYTES) for _ in range(X4_PHYSICAL_HEIGHT)]
+    overlay_lsb_rows = [bytearray(X4_ROW_BYTES) for _ in range(X4_PHYSICAL_HEIGHT)]
+    fast_base_rows = [
+        bytearray([0xFF] * X4_ROW_BYTES) for _ in range(X4_PHYSICAL_HEIGHT)
+    ]
 
     for storage_y in range(storage_height):
         for storage_x in range(storage_width):
             gray = pixels[storage_y * storage_width + storage_x]
-            if gray in (0, 1):
-                _clear_native_bit(msb_rows[storage_y], storage_x)
-            if gray in (0, 2):
-                _clear_native_bit(lsb_rows[storage_y], storage_x)
-            if gray < 2:
-                _clear_native_bit(bw_rows[storage_y], storage_x)
+            if gray in (1, 2):
+                _set_native_bit(overlay_msb_rows[storage_y], storage_x)
+            if gray == 1:
+                _set_native_bit(overlay_lsb_rows[storage_y], storage_x)
+            if gray != 3:
+                _clear_native_bit(fast_base_rows[storage_y], storage_x)
 
     return (
-        b"".join(msb_rows),
-        b"".join(lsb_rows),
-        b"".join(bw_rows),
+        b"".join(overlay_msb_rows),
+        b"".join(overlay_lsb_rows),
+        b"".join(fast_base_rows),
     )
 
 

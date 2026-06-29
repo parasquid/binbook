@@ -4,6 +4,12 @@ use binbook_diagnostic_protocol::{
     PageAction as ProtoPageAction, Status,
 };
 use clap::Parser;
+use std::time::Duration;
+
+#[test]
+fn display_probe_timeout_covers_firmware_busy_bound_and_streaming() {
+    assert_eq!(binbook_cli::DISPLAY_PROBE_TIMEOUT, Duration::from_secs(70));
+}
 
 #[test]
 fn formats_serial_protocol_commands() {
@@ -479,18 +485,18 @@ fn diag_status_subcommand_parses() {
 }
 
 #[test]
-fn deferred_gray_exercise_subcommand_parses() {
+fn staged_gray_exercise_subcommand_parses() {
     let cli = binbook_cli::Cli::try_parse_from([
         "binbook-cli",
         "diag",
         "exercise",
-        "deferred-gray",
+        "staged-gray",
         "--port",
         "/dev/ttyACM0",
     ]);
     assert!(
         cli.is_ok(),
-        "diag exercise deferred-gray should parse: {:?}",
+        "diag exercise staged-gray should parse: {:?}",
         cli.err()
     );
 }

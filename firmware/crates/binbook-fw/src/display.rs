@@ -10,6 +10,18 @@ pub enum PanelMode {
     Bw,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GrayRenderOutcome {
+    Completed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaseSyncOutcome {
+    Completed,
+    Cancelled,
+}
+
 fn ensure_grayscale_mode<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
     delay: &dyn xteink_hal::Delay,
@@ -171,47 +183,79 @@ where
     BUSY: InputPin,
     D: AsyncDelay + ?Sized,
 {
+    validate_x4_native_page(book, target_page)?;
     let open = book.open_info();
     let pd = &book
         .page_info(target_page)
         .map_err(|_| HalError::InvalidParam)?
         .plane_dir;
 
-    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
-    stream_plane_chunks_strips_async(display, book_bytes, open.page_data_offset, pd, 0, true, true, delay)
-        .await?;
-    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
-    stream_plane_chunks_strips_async(display, book_bytes, open.page_data_offset, pd, 1, false, false, delay)
-        .await?;
+    let msb = compressed_native_plane(book_bytes, open.page_data_offset, pd, 0)?;
+    let lsb = compressed_native_plane(book_bytes, open.page_data_offset, pd, 1)?;
+    let base = compressed_native_plane(book_bytes, open.page_data_offset, pd, 2)?;
+    let strip_count = DISPLAY_HEIGHT / X4_CHUNK_ROWS;
+
+    let mut msb_decoder = PackBitsStream::new(msb);
+    let mut lsb_decoder = PackBitsStream::new(lsb);
+    let mut base_decoder = PackBitsStream::new(base);
+    let mut msb_row = [0u8; DISPLAY_ROW_BYTES];
+    let mut lsb_row = [0u8; DISPLAY_ROW_BYTES];
+    let mut base_row = [0u8; DISPLAY_ROW_BYTES];
+    for strip in 0..strip_count {
+        display.set_window(0, strip * X4_CHUNK_ROWS, DISPLAY_WIDTH, X4_CHUNK_ROWS)?;
+        display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(X4_CHUNK_ROWS, |_, row| {
+            msb_decoder.fill(&mut msb_row);
+            lsb_decoder.fill(&mut lsb_row);
+            base_decoder.fill(&mut base_row);
+            for index in 0..DISPLAY_ROW_BYTES {
+                row[index] = !(base_row[index] | (msb_row[index] & !lsb_row[index]));
+            }
+        })?;
+        delay.ms(0).await;
+    }
+
+    let mut lsb_decoder = PackBitsStream::new(lsb);
+    let mut base_decoder = PackBitsStream::new(base);
+    for strip in 0..strip_count {
+        display.set_window(0, strip * X4_CHUNK_ROWS, DISPLAY_WIDTH, X4_CHUNK_ROWS)?;
+        display.write_frame_rows::<DISPLAY_ROW_BYTES>(X4_CHUNK_ROWS, |_, row| {
+            lsb_decoder.fill(&mut lsb_row);
+            base_decoder.fill(&mut base_row);
+            for index in 0..DISPLAY_ROW_BYTES {
+                row[index] = !(base_row[index] | lsb_row[index]);
+            }
+        })?;
+        if strip + 1 < strip_count {
+            delay.ms(0).await;
+        }
+    }
     display.refresh_async(RefreshMode::Grayscale, delay).await
 }
 
-pub async fn reseed_bw_silent_async<SPI, CS, DC, RST, BUSY, D>(
-    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
-    book_bytes: &[u8],
-    target_page: u32,
-    delay: &D,
-) -> HalResult<()>
-where
-    SPI: Spi,
-    CS: OutputPin,
-    DC: OutputPin,
-    RST: OutputPin,
-    BUSY: InputPin,
-    D: AsyncDelay + ?Sized,
-{
-    display.init_async(delay).await?;
-    reseed_bw_async(display, book, book_bytes, target_page, false, delay).await
+fn compressed_native_plane<'a>(
+    book_bytes: &'a [u8],
+    page_data_offset: u64,
+    pd: &binbook::page_index::PlaneDir,
+    slot: usize,
+) -> HalResult<&'a [u8]> {
+    let start = usize::try_from(page_data_offset + pd.offsets[slot] as u64)
+        .map_err(|_| HalError::InvalidParam)?;
+    let end = start
+        .checked_add(pd.sizes[slot] as usize)
+        .ok_or(HalError::InvalidParam)?;
+    book_bytes.get(start..end).ok_or(HalError::InvalidParam)
 }
 
-pub async fn reseed_bw_visible_async<SPI, CS, DC, RST, BUSY, D>(
+pub async fn display_staged_grayscale_async<SPI, CS, DC, RST, BUSY, D, E, A>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
     book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
     book_bytes: &[u8],
     target_page: u32,
+    expected_epoch: u32,
+    mut request_epoch: E,
+    mut on_activate: A,
     delay: &D,
-) -> HalResult<()>
+) -> HalResult<GrayRenderOutcome>
 where
     SPI: Spi,
     CS: OutputPin,
@@ -219,9 +263,91 @@ where
     RST: OutputPin,
     BUSY: InputPin,
     D: AsyncDelay + ?Sized,
+    E: FnMut() -> u32,
+    A: FnMut(),
 {
-    display.init_async(delay).await?;
-    reseed_bw_async(display, book, book_bytes, target_page, true, delay).await
+    let page = validate_x4_native_page(book, target_page)?;
+    let page_data_offset = book.open_info().page_data_offset;
+
+    if !stream_plane_chunks_cancellable_async(
+        display,
+        book_bytes,
+        page_data_offset,
+        &page.plane_dir,
+        1,
+        false,
+        expected_epoch,
+        &mut request_epoch,
+        delay,
+    )
+    .await?
+    {
+        return Ok(GrayRenderOutcome::Cancelled);
+    }
+    if !stream_plane_chunks_cancellable_async(
+        display,
+        book_bytes,
+        page_data_offset,
+        &page.plane_dir,
+        0,
+        true,
+        expected_epoch,
+        &mut request_epoch,
+        delay,
+    )
+    .await?
+    {
+        return Ok(GrayRenderOutcome::Cancelled);
+    }
+    if request_epoch() != expected_epoch {
+        return Ok(GrayRenderOutcome::Cancelled);
+    }
+    display.load_staged_grayscale_lut()?;
+    if request_epoch() != expected_epoch {
+        return Ok(GrayRenderOutcome::Cancelled);
+    }
+    on_activate();
+    display.activate_staged_grayscale_async(delay).await?;
+    Ok(GrayRenderOutcome::Completed)
+}
+
+pub async fn sync_bw_base_async<SPI, CS, DC, RST, BUSY, D, E>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book_bytes: &[u8],
+    target_page: u32,
+    expected_epoch: u32,
+    mut request_epoch: E,
+    delay: &D,
+) -> HalResult<BaseSyncOutcome>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: AsyncDelay + ?Sized,
+    E: FnMut() -> u32,
+{
+    let page = validate_x4_native_page(book, target_page)?;
+    let page_data_offset = book.open_info().page_data_offset;
+    let completed = stream_plane_chunks_cancellable_async(
+        display,
+        book_bytes,
+        page_data_offset,
+        &page.plane_dir,
+        2,
+        true,
+        expected_epoch,
+        &mut request_epoch,
+        delay,
+    )
+    .await?;
+    Ok(if completed {
+        BaseSyncOutcome::Completed
+    } else {
+        BaseSyncOutcome::Cancelled
+    })
 }
 
 pub async fn bw_differential_async<SPI, CS, DC, RST, BUSY, D>(
@@ -240,6 +366,8 @@ where
     BUSY: InputPin,
     D: AsyncDelay + ?Sized,
 {
+    validate_x4_native_page(book, prev_page)?;
+    validate_x4_native_page(book, target_page)?;
     let open = book.open_info();
     let prev_pd = &book
         .page_info(prev_page)
@@ -292,6 +420,7 @@ where
     BUSY: InputPin,
     D: AsyncDelay + ?Sized,
 {
+    validate_x4_native_page(book, target_page)?;
     let open = book.open_info();
     let pd = &book
         .page_info(target_page)
@@ -322,6 +451,52 @@ where
         delay,
     )
     .await?;
+    display.refresh_async(RefreshMode::Full, delay).await
+}
+
+#[cfg(feature = "diagnostic-console")]
+pub async fn clear_white_probe_async<SPI, CS, DC, RST, BUSY, D>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    delay: &D,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: AsyncDelay + ?Sized,
+{
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    display.write_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |_, row| row.fill(0xFF))?;
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |_, row| row.fill(0xFF))?;
+    display.refresh_async(RefreshMode::Full, delay).await
+}
+
+#[cfg(feature = "diagnostic-console")]
+pub async fn window_corners_probe_async<SPI, CS, DC, RST, BUSY, D>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    delay: &D,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: AsyncDelay + ?Sized,
+{
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    display.write_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |_, row| row.fill(0xFF))?;
+    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |_, row| row.fill(0xFF))?;
+    for &(x, y, width, height) in &smoke_probe_windows() {
+        display.write_solid_window(x, y, width, height, 0x00)?;
+    }
+    for &(x, y, width, height) in &smoke_probe_windows() {
+        display.write_red_solid_window(x, y, width, height, 0x00)?;
+    }
     display.refresh_async(RefreshMode::Full, delay).await
 }
 
@@ -412,6 +587,48 @@ where
     Ok(())
 }
 
+async fn stream_native_plane_strips_async<SPI, CS, DC, RST, BUSY, D>(
+    display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
+    compressed_data: &[u8],
+    red_plane: bool,
+    yield_after_last_strip: bool,
+    delay: &D,
+) -> HalResult<()>
+where
+    SPI: Spi,
+    CS: OutputPin,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: AsyncDelay + ?Sized,
+{
+    let mut decoder = PackBitsStream::new(compressed_data);
+    let strip_count = DISPLAY_HEIGHT / X4_CHUNK_ROWS;
+
+    for strip in 0..strip_count {
+        let y = strip * X4_CHUNK_ROWS;
+        display.set_window(0, y, DISPLAY_WIDTH, X4_CHUNK_ROWS)?;
+
+        if red_plane {
+            display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(X4_CHUNK_ROWS, |_, row_buf| {
+                row_buf.fill(0xFF);
+                decoder.fill(row_buf);
+            })?;
+        } else {
+            display.write_frame_rows::<DISPLAY_ROW_BYTES>(X4_CHUNK_ROWS, |_, row_buf| {
+                row_buf.fill(0xFF);
+                decoder.fill(row_buf);
+            })?;
+        }
+
+        if strip + 1 < strip_count || yield_after_last_strip {
+            delay.ms(0).await;
+        }
+    }
+
+    Ok(())
+}
+
 async fn stream_plane_chunks_strips_async<SPI, CS, DC, RST, BUSY, D>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
     book_bytes: &[u8],
@@ -439,17 +656,27 @@ where
         return Err(HalError::InvalidParam);
     }
     let compressed = &book_bytes[start..end];
-    stream_gray2_plane_strips_async(display, compressed, red_plane, yield_after_last_strip, delay).await
+    stream_native_plane_strips_async(
+        display,
+        compressed,
+        red_plane,
+        yield_after_last_strip,
+        delay,
+    )
+    .await
 }
 
-async fn reseed_bw_async<SPI, CS, DC, RST, BUSY, D>(
+async fn stream_plane_chunks_cancellable_async<SPI, CS, DC, RST, BUSY, D, E>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
     book_bytes: &[u8],
-    target_page: u32,
-    visible: bool,
+    page_data_offset: u64,
+    pd: &binbook::page_index::PlaneDir,
+    plane_slot: usize,
+    red_plane: bool,
+    expected_epoch: u32,
+    request_epoch: &mut E,
     delay: &D,
-) -> HalResult<()>
+) -> HalResult<bool>
 where
     SPI: Spi,
     CS: OutputPin,
@@ -457,25 +684,40 @@ where
     RST: OutputPin,
     BUSY: InputPin,
     D: AsyncDelay + ?Sized,
+    E: FnMut() -> u32,
 {
-    let open = book.open_info();
-    let pd = &book
-        .page_info(target_page)
-        .map_err(|_| HalError::InvalidParam)?
-        .plane_dir;
-
-    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
-    stream_plane_chunks_strips_async(display, book_bytes, open.page_data_offset, pd, 2, true, true, delay)
-        .await?;
-    display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
-    stream_plane_chunks_strips_async(display, book_bytes, open.page_data_offset, pd, 2, false, false, delay)
-        .await?;
-
-    if visible {
-        display.refresh_async(RefreshMode::Full, delay).await?;
+    let slot_offset = pd.offsets[plane_slot];
+    let slot_size = pd.sizes[plane_slot];
+    let start = (page_data_offset + slot_offset as u64) as usize;
+    let end = start
+        .checked_add(slot_size as usize)
+        .ok_or(HalError::InvalidParam)?;
+    if end > book_bytes.len() {
+        return Err(HalError::InvalidParam);
     }
+    let mut decoder = PackBitsStream::new(&book_bytes[start..end]);
+    let strip_count = DISPLAY_HEIGHT / X4_CHUNK_ROWS;
 
-    Ok(())
+    for strip in 0..strip_count {
+        if request_epoch() != expected_epoch {
+            return Ok(false);
+        }
+        let y = strip * X4_CHUNK_ROWS;
+        display.set_window(0, y, DISPLAY_WIDTH, X4_CHUNK_ROWS)?;
+        if red_plane {
+            display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(X4_CHUNK_ROWS, |_, row_buf| {
+                row_buf.fill(0xFF);
+                decoder.fill(row_buf);
+            })?;
+        } else {
+            display.write_frame_rows::<DISPLAY_ROW_BYTES>(X4_CHUNK_ROWS, |_, row_buf| {
+                row_buf.fill(0xFF);
+                decoder.fill(row_buf);
+            })?;
+        }
+        delay.ms(0).await;
+    }
+    Ok(true)
 }
 
 pub fn stream_gray1_rows<E>(
@@ -517,8 +759,8 @@ pub fn gray2_row_to_ssd1677_planes(
     red_row: &mut [u8; DISPLAY_ROW_BYTES],
     black_row: &mut [u8; DISPLAY_ROW_BYTES],
 ) {
-    red_row.fill(0xFF);
-    black_row.fill(0xFF);
+    red_row.fill(0x00);
+    black_row.fill(0x00);
 
     for (byte_index, packed) in gray2_row.iter().copied().enumerate() {
         let physical_x = (byte_index * 4) as u16;
@@ -527,10 +769,10 @@ pub fn gray2_row_to_ssd1677_planes(
             let xth = gray2_to_xteink_value(gray);
             let x = physical_x + pixel as u16;
             if xth & 0x02 != 0 {
-                clear_ssd1677_pixel(red_row, x);
+                set_ssd1677_pixel(red_row, x);
             }
             if xth & 0x01 != 0 {
-                clear_ssd1677_pixel(black_row, x);
+                set_ssd1677_pixel(black_row, x);
             }
         }
     }
@@ -545,12 +787,12 @@ fn gray2_to_xteink_value(gray: u8) -> u8 {
     }
 }
 
-fn clear_ssd1677_pixel(row: &mut [u8; DISPLAY_ROW_BYTES], physical_x: u16) {
+fn set_ssd1677_pixel(row: &mut [u8; DISPLAY_ROW_BYTES], physical_x: u16) {
     if physical_x >= DISPLAY_WIDTH {
         return;
     }
     let ram_x = DISPLAY_WIDTH - 1 - physical_x;
-    row[usize::from(ram_x / 8)] &= !(0x80 >> (ram_x % 8));
+    row[usize::from(ram_x / 8)] |= 0x80 >> (ram_x % 8);
 }
 
 pub fn decompress_row(input: &[u8], output: &mut [u8]) -> usize {
@@ -595,12 +837,32 @@ pub fn is_supported_embedded_gray2_page(page: &binbook::PageInfo) -> bool {
         && page.plane_dir.bitmap == 0x01
 }
 
-pub fn is_supported_x4_native_gray2_page(page: &binbook::PageInfo) -> bool {
-    page.pixel_format == binbook::page_index::PIXEL_FORMAT_GRAY2_PACKED
+pub fn is_supported_x4_native_gray2_page(
+    profile: &binbook::DisplayProfileInfo,
+    page: &binbook::PageInfo,
+) -> bool {
+    profile.physical_width == DISPLAY_WIDTH
+        && profile.physical_height == DISPLAY_HEIGHT
+        && profile.waveform_hint == binbook::display_profile::WAVEFORM_SSD1677_STAGED_GRAY2
+        && page.pixel_format == binbook::page_index::PIXEL_FORMAT_GRAY2_PACKED
         && page.compression_method == binbook::page_index::COMPRESSION_RLE_PACKBITS
         && page.stored_width == DISPLAY_WIDTH
         && page.stored_height == DISPLAY_HEIGHT
-        && (page.plane_dir.bitmap & 0x07) == 0x07
+        && page.plane_dir.bitmap == 0x07
+}
+
+fn validate_x4_native_page(
+    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    page_number: u32,
+) -> HalResult<binbook::PageInfo> {
+    let profile = book.display_profile().map_err(|_| HalError::InvalidParam)?;
+    let page = book
+        .page_info(page_number)
+        .map_err(|_| HalError::InvalidParam)?;
+    if !is_supported_x4_native_gray2_page(&profile, &page) {
+        return Err(HalError::InvalidParam);
+    }
+    Ok(page)
 }
 
 pub fn embedded_page_slice<'a>(
@@ -729,12 +991,7 @@ where
     RST: OutputPin,
     BUSY: InputPin,
 {
-    let page_info = book
-        .page_info(target_page)
-        .map_err(|_| HalError::InvalidParam)?;
-    if !is_supported_x4_native_gray2_page(&page_info) {
-        return Err(HalError::InvalidParam);
-    }
+    validate_x4_native_page(book, target_page)?;
 
     let transition_mask = find_transition_mask(book, refresh_state.previous_page(), target_page);
     let decision = refresh_state.decide_with_policy(target_page, transition_mask, refresh_policy);
@@ -787,6 +1044,7 @@ where
     RST: OutputPin,
     BUSY: InputPin,
 {
+    validate_x4_native_page(book, target_page)?;
     let open = book.open_info();
     let pd = &book
         .page_info(target_page)
@@ -1244,16 +1502,10 @@ where
 
     let corners = smoke_probe_windows();
     for &(x, y, w, h) in &corners {
-        display.set_window(x, y, w, h)?;
-        display.write_frame_rows::<DISPLAY_ROW_BYTES>(h, |_, row_buf| {
-            row_buf.fill(0x00);
-        })?;
+        display.write_solid_window(x, y, w, h, 0x00)?;
     }
     for &(x, y, w, h) in &corners {
-        display.set_window(x, y, w, h)?;
-        display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(h, |_, row_buf| {
-            row_buf.fill(0x00);
-        })?;
+        display.write_red_solid_window(x, y, w, h, 0x00)?;
     }
 
     display.refresh_with_delay(RefreshMode::Full, delay)

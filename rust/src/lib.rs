@@ -3,6 +3,7 @@
 pub mod chapter_index;
 pub mod chunk_index;
 pub mod decompress;
+pub mod display_profile;
 pub mod error;
 mod header;
 #[cfg(feature = "lz4")]
@@ -18,6 +19,7 @@ pub mod transition_index;
 pub use chapter_index::ChapterEntry;
 pub use chunk_index::PageChunkEntry;
 pub use decompress::decompress_page;
+pub use display_profile::DisplayProfileInfo;
 pub use error::Error;
 pub use nav_index::NavEntry;
 pub use page_index::PageInfo;
@@ -73,6 +75,8 @@ pub struct BinBook<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> {
     scratch: S,
     string_table_offset: u64,
     string_table_length: u32,
+    display_profile_offset: u64,
+    display_profile_length: u32,
     page_index_offset: u64,
     page_index_entry_size: u16,
     nav_index_offset: u64,
@@ -136,6 +140,8 @@ impl<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> BinBook<R, S> {
             scratch,
             string_table_offset: sections.string_table.offset,
             string_table_length: sections.string_table.length as u32,
+            display_profile_offset: sections.display_profile.offset,
+            display_profile_length: sections.display_profile.length as u32,
             page_index_offset: sections.page_index.offset,
             page_index_entry_size: sections.page_index.entry_size as u16,
             nav_index_offset: sections.nav_index.offset,
@@ -197,6 +203,20 @@ impl<R: Reader, S: AsRef<[u8]> + AsMut<[u8]>> BinBook<R, S> {
             nav_count: self.nav_count,
             chapter_count: self.chapter_count,
         }
+    }
+
+    pub fn display_profile(&mut self) -> Result<DisplayProfileInfo, Error> {
+        let required = display_profile::DISPLAY_PROFILE_REQUIRED_BYTES;
+        if (self.display_profile_length as usize) < required
+            || self.scratch.as_ref().len() < required
+        {
+            return Err(Error::InvalidDisplayProfile);
+        }
+        self.reader.read_at(
+            self.display_profile_offset,
+            &mut self.scratch.as_mut()[..required],
+        )?;
+        display_profile::parse_display_profile(&self.scratch.as_ref()[..required])
     }
 
     pub fn info(&self) -> Result<Info<'_>, Error> {

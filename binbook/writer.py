@@ -109,8 +109,15 @@ def encode_png_folder(
     pages: list[EncodedPage] = []
     for path in pngs:
         packed = png_to_packed(path, profile, dither=dither)
-        compressed = encode_packbits(packed)
-        pages.append(EncodedPage(compressed, len(packed), crc32(compressed)))
+        if profile.storage_pixel_format == PixelFormat.GRAY2_PACKED:
+            # Local import avoids a module cycle: page_compiler owns the
+            # staged X4 plane construction while importing these data types.
+            from .page_compiler import encoded_page
+
+            pages.append(encoded_page(packed, PageKind.IMAGE, UINT32_MAX))
+        else:
+            compressed = encode_packbits(packed)
+            pages.append(EncodedPage(compressed, len(packed), crc32(compressed)))
 
     dither_method = DitherMethod.FLOYD_STEINBERG if dither else DitherMethod.NONE
     output.write_bytes(

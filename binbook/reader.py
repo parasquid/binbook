@@ -11,6 +11,7 @@ from .constants import (
     PixelFormat,
     PixelFormatFlag,
     SectionId,
+    WaveformHint,
 )
 from .images import packed_to_png
 from .rle import decode_packbits
@@ -116,6 +117,10 @@ class BinBookReader:
         required_storage_formats = ReaderRequirementsSection.unpack(
             self._section_data(SectionId.READER_REQUIREMENTS)
         ).required_storage_pixel_format_flags
+        display = DisplayProfileSection.unpack(
+            self._section_data(SectionId.DISPLAY_PROFILE)
+        )
+        is_x4 = (display.physical_width, display.physical_height) == (800, 480)
         previous_progress = 0
         for page in self.pages:
             if page.page_kind == PageKind.MIXED_RESERVED:
@@ -128,6 +133,14 @@ class BinBookReader:
                 raise ValueError(f"unsupported page pixel format: {page.pixel_format}")
             if not required_storage_formats & page_format_flag:
                 raise ValueError("page pixel format does not match reader requirements")
+            if (
+                is_x4
+                and page.pixel_format == PixelFormat.GRAY2_PACKED
+                and page.plane_dir.bitmap != 0x07
+            ):
+                raise ValueError(
+                    "X4 staged GRAY2 pages require plane bitmap 0x07"
+                )
             if page.compression_method != CompressionMethod.RLE_PACKBITS:
                 raise ValueError("unsupported page compression method")
             for slot in range(4):
@@ -219,6 +232,12 @@ class BinBookReader:
             )
         if display.native_grayscale_levels < 2:
             errors.append("display profile must use at least 2 grayscale levels")
+        if (
+            (display.physical_width, display.physical_height) == (800, 480)
+            and display.default_storage_pixel_format == PixelFormat.GRAY2_PACKED
+            and display.waveform_hint != WaveformHint.SSD1677_STAGED_GRAY2
+        ):
+            errors.append("unsupported X4 waveform hint")
         if (layout.full_width, layout.full_height) != (
             display.logical_width,
             display.logical_height,
@@ -315,35 +334,34 @@ class BinBookReader:
             absolute = self.header.page_data_offset + pd.offsets[slot]
             compressed = self.data[absolute : absolute + pd.sizes[slot]]
             planes_data.append(decode_packbits(compressed))
-        msb_rows = planes_data[0]
-        lsb_rows = planes_data[1]
-        logical_width = 480
-        logical_height = 800
-        pixels = [3] * (logical_width * logical_height)
+        overlay_msb_rows = planes_data[0]
+        overlay_lsb_rows = planes_data[1]
+        fast_base_rows = planes_data[2]
+        pixels = [3] * (X4_PHYSICAL_WIDTH * X4_PHYSICAL_HEIGHT)
         for physical_y in range(X4_PHYSICAL_HEIGHT):
             for physical_x in range(X4_PHYSICAL_WIDTH):
                 ram_x = X4_PHYSICAL_WIDTH - 1 - physical_x
                 byte_idx = ram_x // 8
                 bit_mask = 0x80 >> (ram_x % 8)
                 msb_set = (
-                    msb_rows[physical_y * X4_ROW_BYTES + byte_idx] & bit_mask
+                    overlay_msb_rows[physical_y * X4_ROW_BYTES + byte_idx] & bit_mask
                 ) != 0
                 lsb_set = (
-                    lsb_rows[physical_y * X4_ROW_BYTES + byte_idx] & bit_mask
+                    overlay_lsb_rows[physical_y * X4_ROW_BYTES + byte_idx] & bit_mask
                 ) != 0
-                if msb_set and lsb_set:
+                base_set = (
+                    fast_base_rows[physical_y * X4_ROW_BYTES + byte_idx] & bit_mask
+                ) != 0
+                if base_set:
                     gray = 3
-                elif msb_set and not lsb_set:
-                    gray = 2
-                elif not msb_set and lsb_set:
+                elif not msb_set:
+                    gray = 0
+                elif lsb_set:
                     gray = 1
                 else:
-                    gray = 0
-                logical_x = physical_y
-                logical_y = X4_PHYSICAL_WIDTH - 1 - physical_x
-                if 0 <= logical_x < logical_width and 0 <= logical_y < logical_height:
-                    pixels[logical_y * logical_width + logical_x] = gray
-        packed = pack_gray2(pixels, logical_width, logical_height)
+                    gray = 2
+                pixels[physical_y * X4_PHYSICAL_WIDTH + physical_x] = gray
+        packed = pack_gray2(pixels, X4_PHYSICAL_WIDTH, X4_PHYSICAL_HEIGHT)
         return packed, page
 
     def decode_page_to_png(self, page_number: int, output: Path | str) -> None:

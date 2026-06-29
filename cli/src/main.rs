@@ -10,8 +10,8 @@ fn run_diag(cmd: DiagCommand) {
 
     if let DiagCommand::Exercise { exercise } = &cmd {
         match exercise {
-            ExerciseCommand::DeferredGray { port } => {
-                if let Err(error) = binbook_cli::exercise::run_deferred_gray(port) {
+            ExerciseCommand::StagedGray { port } => {
+                if let Err(error) = binbook_cli::exercise::run_staged_gray(port) {
                     eprintln!("Communication error: {error}");
                     std::process::exit(1);
                 }
@@ -122,7 +122,7 @@ fn run_diag(cmd: DiagCommand) {
                 port.clone(),
                 diag_protocol::display_probe_request(1, choice),
                 Opcode::DisplayProbe,
-                Duration::from_secs(60),
+                binbook_cli::DISPLAY_PROBE_TIMEOUT,
             )
         }
         DiagCommand::Exercise { .. } => unreachable!("exercise handled above"),

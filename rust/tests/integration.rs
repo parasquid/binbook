@@ -1,5 +1,17 @@
 use binbook::BinBook;
 
+const NAV_PROBE: &[u8] =
+    include_bytes!("../../firmware/crates/binbook-fw/fixtures/nav_probe.binbook");
+
+fn display_profile_entry_offset(data: &[u8]) -> usize {
+    let table_offset = u64::from_le_bytes(data[24..32].try_into().unwrap()) as usize;
+    let section_count = u16::from_le_bytes(data[38..40].try_into().unwrap()) as usize;
+    (0..section_count)
+        .map(|index| table_offset + index * 40)
+        .find(|offset| u16::from_le_bytes(data[*offset..*offset + 2].try_into().unwrap()) == 10)
+        .expect("DISPLAY_PROFILE entry")
+}
+
 fn open_fixture() -> BinBook<&'static [u8], [u8; 4096]> {
     let data: &[u8] = include_bytes!("fixtures/sample.binbook");
     let scratch = [0u8; 4096];
@@ -12,6 +24,48 @@ fn opens_valid_fixture() {
     assert_eq!(book.page_count(), 2);
     assert_eq!(book.nav_count(), 2);
     assert_eq!(book.chapter_count(), 2);
+}
+
+#[test]
+fn reads_staged_x4_display_profile() {
+    let mut book = BinBook::open(NAV_PROBE, [0u8; 4096]).unwrap();
+
+    let profile = book.display_profile().unwrap();
+
+    assert_eq!(profile.physical_width, 800);
+    assert_eq!(profile.physical_height, 480);
+    assert_eq!(
+        profile.waveform_hint,
+        binbook::display_profile::WAVEFORM_SSD1677_STAGED_GRAY2
+    );
+}
+
+#[test]
+fn rejects_too_short_display_profile_section() {
+    let mut data = NAV_PROBE.to_vec();
+    let entry = display_profile_entry_offset(&data);
+    data[entry + 12..entry + 20].copy_from_slice(&53u64.to_le_bytes());
+    let mut book = BinBook::open(data.as_slice(), [0u8; 4096]).unwrap();
+
+    assert_eq!(
+        book.display_profile(),
+        Err(binbook::Error::InvalidDisplayProfile)
+    );
+}
+
+#[test]
+fn rejects_unknown_display_profile_waveform_hint() {
+    let mut data = NAV_PROBE.to_vec();
+    let entry = display_profile_entry_offset(&data);
+    let section_offset =
+        u64::from_le_bytes(data[entry + 4..entry + 12].try_into().unwrap()) as usize;
+    data[section_offset + 53] = 99;
+    let mut book = BinBook::open(data.as_slice(), [0u8; 4096]).unwrap();
+
+    assert_eq!(
+        book.display_profile(),
+        Err(binbook::Error::UnsupportedWaveformHint(99))
+    );
 }
 
 #[test]

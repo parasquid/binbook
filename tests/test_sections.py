@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from binbook.constants import PixelFormatFlag, SectionId
+from binbook.constants import PixelFormatFlag, SectionId, WaveformHint
 from binbook.profiles import XTEINK_X4_PORTRAIT
 from binbook.sections import (
     SECTION_STRING_REF_OFFSETS,
@@ -31,6 +31,8 @@ def test_profile_sections_roundtrip_named_fields():
         PixelFormatFlag.GRAY1_PACKED | PixelFormatFlag.GRAY2_PACKED
     )
     assert parsed_display.native_grayscale_levels == 4
+    assert WaveformHint.SSD1677_STAGED_GRAY2 == 2
+    assert parsed_display.waveform_hint == WaveformHint.SSD1677_STAGED_GRAY2
 
     layout = LayoutProfileSection.from_profile(XTEINK_X4_PORTRAIT)
     parsed_layout = LayoutProfileSection.unpack(layout.pack())

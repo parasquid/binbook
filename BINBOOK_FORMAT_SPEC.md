@@ -270,8 +270,8 @@ struct DisplayProfile {
     u16  native_grayscale_levels;       // e.g., 4 for X4 grayscale update path
     u16  panel_grayscale_levels;        // e.g., 4 for X4 grayscale update path
     u8   framebuffer_bits_per_pixel;    // e.g., 2 for GRAY2 default
-    u16  output_gray_mapping;           // 1=linear_black_to_white, 2=linear_white_to_black
-    u8   reserved_u8;
+    u16  waveform_hint;                 // 2=SSD1677_STAGED_GRAY2 for X4 GRAY2
+    u8   dither_mode;                   // 0=none
 
     u8   display_profile_hash[32];      // SHA-256 of this section (hash field zeroed during computation)
     u8   reserved[32];
@@ -727,7 +727,7 @@ chunks, so each page has 90 chunk records.
 ```c
 struct PageChunkIndexEntry {
     u32 page_number;        // PAGE_INDEX page_number
-    u8  plane_slot;         // 0=MSB/red, 1=LSB/black, 2=BW, 3=future
+    u8  plane_slot;         // X4: 0=overlay MSB, 1=overlay LSB, 2=fast base
     u8  chunk_index;        // 0-based chunk index within the plane
     u16 row_start;          // First physical row in this chunk
     u16 row_count;          // Number of physical rows in this chunk
@@ -982,9 +982,9 @@ The firmware computes decompressed plane sizes from `pixel_format`,
 | GRAY1_PACKED | 0 (MSB) | `stored_width / 8 * stored_height` |
 | GRAY1_PACKED | 1 (LSB) | `stored_width / 8 * stored_height` |
 | GRAY1_PACKED | 2 (BW)  | `stored_width / 8 * stored_height` |
-| GRAY2_PACKED | 0 (MSB) | `stored_width / 8 * stored_height` |
-| GRAY2_PACKED | 1 (LSB) | `stored_width / 8 * stored_height` |
-| GRAY2_PACKED | 2 (BW)  | `stored_width / 8 * stored_height` |
+| GRAY2_PACKED | 0 (overlay MSB) | `stored_width / 8 * stored_height` |
+| GRAY2_PACKED | 1 (overlay LSB) | `stored_width / 8 * stored_height` |
+| GRAY2_PACKED | 2 (fast base)  | `stored_width / 8 * stored_height` |
 | GRAY4_PACKED | 0 (MSB) | `stored_width / 4 * stored_height` |
 | GRAY4_PACKED | 1 (LSB) | `stored_width / 4 * stored_height` |
 | GRAY4_PACKED | 2 (BW)  | `stored_width / 4 * stored_height` |
@@ -1008,9 +1008,9 @@ each slot means depends on `pixel_format`:
 
 | Bit | Value | Plane | Description |
 |-----|-------|-------|-------------|
-| 0   | 0x01  | 0     | MSB plane |
-| 1   | 0x02  | 1     | LSB plane |
-| 2   | 0x04  | 2     | BW plane (1-bit dithered) |
+| 0   | 0x01  | 0     | X4 staged overlay MSB |
+| 1   | 0x02  | 1     | X4 staged overlay LSB |
+| 2   | 0x04  | 2     | X4 non-dithered fast black base |
 | 3   | 0x08  | 3     | Delta plane (future) |
 
 **RGB565 / RGB888 / RGBA8888 (color LCD/OLED):**
@@ -1200,6 +1200,7 @@ While the section table is authoritative (readers must use it), the recommended 
 | Native plane row size | 100 bytes (800 / 8) |
 | Native chunk size | 16 rows = 1,600 bytes decompressed |
 | Compression | RLE_PACKBITS |
+| `waveform_hint` | `SSD1677_STAGED_GRAY2 = 2` |
 
 **Logical-to-physical rotation mapping for 270 degrees clockwise**:
 ```
@@ -1216,9 +1217,9 @@ Required GRAY2 planes for X4:
 
 | Plane slot | Bitmap | Contents | SSD1677 RAM |
 |------------|--------|----------|-------------|
-| 0 | 0x01 | MSB/red grayscale plane | secondary/red RAM (`0x26`) |
-| 1 | 0x02 | LSB/black grayscale plane | black RAM (`0x24`) |
-| 2 | 0x04 | BW fast-refresh plane | black RAM for current page, red RAM for previous page |
+| 0 | 0x01 | Staged overlay MSB mask | secondary/red RAM (`0x26`) |
+| 1 | 0x02 | Staged overlay LSB mask | black RAM (`0x24`) |
+| 2 | 0x04 | Non-dithered fast black base | black RAM for current page, red RAM for previous page |
 
 Each plane is divided into 30 independently compressed 16-row chunks. Chunk
 metadata is stored in `PAGE_CHUNK_INDEX`.
@@ -1233,25 +1234,34 @@ metadata is stored in `PAGE_CHUNK_INDEX`.
 - `0 = black`
 - `1 = white`
 
-These canonical values define rendering input. For X4 output, the writer
-converts them to native SSD1677 plane polarity. White bits remain set; active
-pigment bits are cleared.
+These canonical values define rendering input. X4 staged planes use this exact
+mapping:
+
+| GRAY2 | Fast base | Overlay MSB | Overlay LSB |
+|---:|---:|---:|---:|
+| 0 black | 0 | 0 | 0 |
+| 1 dark gray | 0 | 1 | 1 |
+| 2 light gray | 0 | 1 | 0 |
+| 3 white | 1 | 0 | 0 |
+
+This is not dithering. The fast turn displays every non-white pixel as black.
+After 350 ms of idle time, a short differential waveform selectively lightens
+the gray pixels while black and white remain stable. X4 GRAY2 readers must
+reject a waveform hint other than `2` or a plane bitmap other than `0x07`.
 
 **Default refresh behavior**:
 
-- First render or cleanup cadence: stream plane 0 to red RAM, plane 1 to black
-  RAM, then trigger grayscale refresh. This makes the visible page clean; BW
-  differential readiness is a separate firmware-policy concern.
-- Deferred grayscale post-processing: when the firmware's gray delay expires and
-  no queued turn has arrived, it may render grayscale and then either reseed BW
-  silently or reseed BW visibly, depending on the selected build strategy.
-- BW seed after grayscale: before the next partial differential page turn, the
-  firmware must ensure both red RAM and black RAM contain the current page's BW
-  plane.
-- Clean default fast page turn: after BW seed is valid, stream the full previous
-  BW plane to red RAM and the full current BW plane to black RAM, then trigger
-  partial refresh. Firmware may stream this as 16-row chunks to keep RAM
-  bounded.
+- Cold start or recovery safely streams slot 2 to both controller RAM planes
+  and performs one full BW seed.
+- A fast page turn streams the complete old slot-2 base to red/previous RAM and
+  the complete target slot-2 base to black/current RAM, then performs a BW
+  differential update.
+- After 350 ms, firmware streams slot 1 to black RAM and slot 0 to red RAM,
+  loads firmware-owned staged LUT revision 1, and activates custom fast control
+  `0x0C`. Normal refinement does not reset the controller and never uses `0xC7`.
+- Firmware may then synchronize slot 2 to red/previous RAM without activation.
+  This background optimization is cancellable; the next turn may instead
+  overwrite both complete BW inputs immediately.
 - Chunk-dirty adjacent page turn: firmware may stream only transition-marked
   chunks only when hardware verification has proven that the SSD1677 partial
   refresh is clean for that windowed update mode and BW seed state is valid.

@@ -5,12 +5,12 @@ import struct
 from pathlib import Path
 
 from binbook.cli import main
-from binbook.constants import SectionId
+from binbook.constants import PageKind, SectionId
+from binbook.page_compiler import encoded_page
 from binbook.profiles import XTEINK_X4_PORTRAIT
 from binbook.reader import BinBookReader
-from binbook.rle import encode_packbits
 from binbook.structs import HEADER_SIZE, SECTION_ENTRY_SIZE, BinBookHeader, SectionEntry
-from binbook.writer import EncodedPage, build_binbook
+from binbook.writer import build_binbook
 
 
 def test_inspect_json_outputs_structural_summary(tmp_path: Path, capsys):
@@ -66,10 +66,7 @@ def test_reader_open_can_skip_validation_for_inspection(tmp_path: Path):
 
 def _book_bytes() -> bytes:
     packed_white_page = bytes([0xFF]) * 96_000
-    compressed = encode_packbits(packed_white_page)
-    page = EncodedPage(
-        compressed=compressed, uncompressed_size=len(packed_white_page), page_crc32=0
-    )
+    page = encoded_page(packed_white_page, PageKind.IMAGE, 0)
     return build_binbook([page], XTEINK_X4_PORTRAIT, source_name="inspect")
 
 

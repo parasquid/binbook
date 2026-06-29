@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from binbook.constants import PixelFormat, SectionId
+from binbook.constants import PageKind, PixelFormat, SectionId, WaveformHint
+from binbook.page_compiler import encoded_page
 from binbook.profiles import XTEINK_X4_PORTRAIT
 from binbook.reader import BinBookReader
-from binbook.rle import encode_packbits
 from binbook.structs import HEADER_SIZE, SECTION_ENTRY_SIZE, BinBookHeader, SectionEntry
-from binbook.writer import EncodedPage, build_binbook
+from binbook.writer import build_binbook
 
 
 def test_rejects_unsupported_required_reader_feature(tmp_path: Path):
@@ -111,12 +111,41 @@ def test_rejects_bad_chapter_index_entry_size(tmp_path: Path):
         BinBookReader.open(path)
 
 
+@pytest.mark.parametrize(
+    "waveform_hint",
+    [WaveformHint.UNKNOWN, WaveformHint.SSD1677_ABSOLUTE_GRAY2, 99],
+)
+def test_rejects_non_staged_x4_waveform_hint(
+    tmp_path: Path, waveform_hint: int
+):
+    book = bytearray(_book_bytes())
+    section = _section(book, SectionId.DISPLAY_PROFILE)
+    book[section.offset + 53] = waveform_hint
+    _patch_section_crc(book, SectionId.DISPLAY_PROFILE, 0)
+
+    path = _write(tmp_path, book)
+
+    with pytest.raises(ValueError, match="unsupported X4 waveform hint"):
+        BinBookReader.open(path)
+
+
+def test_rejects_x4_gray2_page_without_all_staged_planes(tmp_path: Path):
+    book = bytearray(_book_bytes())
+    section = _section(book, SectionId.PAGE_INDEX)
+    book[section.offset + 44] = 0x03
+    _patch_section_crc(book, SectionId.PAGE_INDEX, 0)
+
+    path = _write(tmp_path, book)
+
+    with pytest.raises(
+        ValueError, match="X4 staged GRAY2 pages require plane bitmap 0x07"
+    ):
+        BinBookReader.open(path)
+
+
 def _book_bytes() -> bytes:
     packed_white_page = bytes([0xFF]) * 96_000
-    compressed = encode_packbits(packed_white_page)
-    page = EncodedPage(
-        compressed=compressed, uncompressed_size=len(packed_white_page), page_crc32=0
-    )
+    page = encoded_page(packed_white_page, PageKind.TEXT, 0)
     return build_binbook([page], XTEINK_X4_PORTRAIT, source_name="validation")
 
 

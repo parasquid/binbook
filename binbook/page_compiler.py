@@ -79,10 +79,12 @@ def text_pages(
 
 
 def encoded_page(packed: bytes, kind: int, spine_index: int) -> EncodedPage:
-    msb, lsb, bw = gray2_packed_to_x4_native_planes(packed, 800, 480)
+    overlay_msb, overlay_lsb, fast_base = gray2_packed_to_x4_native_planes(
+        packed, 800, 480
+    )
     planes: list[EncodedPlane] = []
     crc_parts: list[bytes] = []
-    for slot, plane in enumerate((msb, lsb, bw)):
+    for slot, plane in enumerate((overlay_msb, overlay_lsb, fast_base)):
         chunks = tuple(encode_packbits(chunk) for chunk in split_x4_plane_chunks(plane))
         encoded = EncodedPlane(slot=slot, chunks=chunks, uncompressed_size=len(plane))
         planes.append(encoded)

@@ -148,6 +148,11 @@ The verified Rust GRAY2 plane mapping for the Xteink X4 grayscale LUT is:
 | 2 | light gray | inactive | active |
 | 3 | white | inactive | inactive |
 
+For this absolute four-gray LUT, `active` is encoded as RAM bit `1` and
+`inactive` as RAM bit `0`. The staged native slots use different differential
+semantics. `full-refresh-current` reconstructs absolute planes while streaming:
+`red = !(base | (msb & !lsb))` and `black = !(base | lsb)`.
+
 ## Driver details captured from bring-up
 
 The Rust SSD1677 driver must match SquidScript's working SSD1677 path:
@@ -163,20 +168,28 @@ The Rust SSD1677 driver must match SquidScript's working SSD1677 path:
 - Full refresh sequence: `0x22 = [0xF7]`, then `0x20`.
 - Partial refresh sequence: `0x21 = [0x00, 0x00]`, `0x22 = [0xFC]`, then `0x20`.
 - Grayscale init additionally writes the SquidScript four-gray LUT with command `0x32`, gate voltage `0x03`, source voltage `0x04`, and VCOM voltage `0x2C`.
-- Grayscale refresh sequence: `0x21 = [0x00, 0x00]`, `0x22 = [0xC7]`, then `0x20`.
+- Staged grayscale refinement loads the pinned 105-byte CrossPoint differential
+  LUT plus firmware-owned voltage bytes, sends `0x21 = [0x00]`, then uses
+  `0x22 = [0x0C]` when the controller is already powered or `0x22 = [0xCC]`
+  after a powered-down full seed, followed by `0x20` and a BUSY wait. It
+  performs no reset.
+- Absolute `0xC7` grayscale remains an explicit full-probe mechanism only; it
+  is not used for normal page refinement.
 
 Do not convert X coordinates to byte addresses for these commands. A prior Rust version sent `0x44 = [0x00, 0x63]` and `0x4E = [0x00]`, which produced malformed multi-stripe output even though the panel refreshed.
 
-## Deferred-gray probe build
+## Staged-grayscale diagnostic build
 
-To build the temporary deferred-gray probe firmware for hardware verification:
+Build the staged-grayscale diagnostic firmware with:
 
 ```bash
-cd firmware && RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,debug-log,deferred-gray-probe --target riscv32imc-unknown-none-elf --release
+cd firmware && RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console --target riscv32imc-unknown-none-elf --release
 ```
 
-This build logs the deferred-gray exercise phases and uses silent reseed for the
-hardware probe instead of the conservative visible reseed default.
+The removed `deferred-gray-probe` feature must not be used. BinBook carries
+waveform hint `2`; LUT revision `1` and voltage bytes remain firmware-owned.
+Structured overlay, activation, controller-state, and base-sync evidence is
+retrieved through the diagnostic protocol.
 
 ## Diagnostic console build
 

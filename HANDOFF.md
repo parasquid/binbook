@@ -1,112 +1,135 @@
-# Handoff: Xteink X4 Async Deferred-Grayscale Refresh
+# Handoff: X4 Staged-Grayscale Implementation
 
-Date: 2026-06-28
+Date: 2026-06-29
 
 ## Current State
 
-Task 8 is complete on the host and ready to commit. Tasks 1 through 7 are complete and verified on host tests and target builds.
+All implementation and agent-verifiable acceptance tasks in
+[`docs/plans/2026-06-29-x4-staged-grayscale.md`](docs/plans/2026-06-29-x4-staged-grayscale.md)
+have passed. The attached X4 is running the permanent
+`firmware-bin,diagnostic-console` image on page 0 in grayscale mode. The only
+outstanding acceptance input is the user's explicit verdict on the final webcam
+artifacts.
 
-The current doc set now describes the queued-turn deferred-gray model and the
-temporary `deferred-gray-probe` build. Silent reseed remains an unverified
-hardware hypothesis until Task 9 records the webcam verdict.
+The runtime uses BinBook waveform hint `SSD1677_STAGED_GRAY2 = 2`: slot 0 is
+overlay MSB, slot 1 overlay LSB, and slot 2 the non-dithered BW base. Page turns
+are differential BW, refinement starts after 350 ms, request epochs cancel
+pre-activation streaming, and completed overlays perform cancellable background
+base sync.
 
-Implemented so far:
+SSD1677 staged activation is power-state aware: `0x0C` when clock/analog power
+is already on and `0xCC` after a full seed powers down. Explicit
+`full-refresh-current` reconstructs absolute LUT planes without a framebuffer:
+`red = !(base | (msb & !lsb))`, `black = !(base | lsb)`. The CLI permits 70
+seconds for probes, covering firmware's 60-second BUSY bound plus streaming.
 
-- `firmware/crates/xteink-hal/src/lib.rs`
-  - Added `AsyncDelay` for executor-driven firmware timing.
-- `firmware/crates/ssd1677-driver/src/lib.rs`
-  - Added `Ssd1677Driver::is_busy`.
-  - Added `Ssd1677Driver::trigger_refresh`.
-  - Added async wrappers: `wait_ready_async`, `init_async`, `init_grayscale_async`, and `refresh_async`.
-  - Split the init command sequences into private helpers so blocking and async paths share the same command layout.
-  - Changed `refresh_with_delay` to compose `trigger_refresh` plus `wait_ready_with_delay`.
-- `firmware/crates/binbook-fw/src/lib.rs`
-  - Re-exported the new `async_refresh` module.
-- `firmware/crates/binbook-fw/src/async_refresh.rs`
-  - Added the coordinator constants, enums, request/completion types, and the minimal state machine needed for startup, BW refresh completion, gray delay, reseed, and recovery transitions.
-  - Added `configured_post_gray_strategy()` so the default build uses visible reseed and the temporary `deferred-gray-probe` feature switches to silent reseed.
-- `firmware/crates/binbook-fw/Cargo.toml`
-  - Added the temporary `deferred-gray-probe` feature gate.
-- `firmware/crates/binbook-fw/src/runtime.rs`
-  - Routed the runtime coordinator through the compile-time selector while keeping the non-diagnostic firmware build working.
-- `firmware/crates/binbook-fw/src/display.rs`
-  - Added async strip-streaming helpers for grayscale rendering, BW reseeding, BW differential, and recovery.
-  - The async helpers keep the PackBits decoder alive across 16-row strips and yield between strips as required.
-- `firmware/crates/binbook-fw/src/runtime.rs`
-  - Added an Embassy task runtime module that owns bounded request/completion channels and spawns async input, display, and diagnostic tasks behind `firmware-bin`.
-  - Input presses queue while gray refresh is deferred, and the display task yields between strips and during gray delay checks.
-  - The diagnostic task keeps STATUS and LOG_GET responsive while render completions are pending and returns queue-full errors without evicting older requests.
-- `firmware/crates/binbook-fw/src/main.rs`
-  - Added the `firmware-bin` async entrypoint hook and kept the old blocking entrypoint behind `not(feature = "firmware-bin")`.
-  - Added the approved 20 MHz SPI constant string required by the runtime regression test.
-- `firmware/crates/binbook-fw/src/diag.rs`
-  - KEY requests now preserve `PageTurn` through `PendingAction::RenderTurn` instead of resolving to a target page too early.
-  - Added `DiagnosticSnapshot` and `DiagnosticPendingQueue` as the host-testable seams for committed STATUS reads and bounded deferred command queuing.
-- `firmware/crates/binbook-fw/src/diag_log.rs`
-  - Re-exported the new deferred-gray event codes for turns, reseed, refresh phase, and display recovery.
-- `firmware/crates/binbook-diagnostic-protocol/src/lib.rs`
-  - Added stable nonzero event codes for deferred-gray diagnostics.
-- `cli/src/lib.rs`
-  - Added CLI event-name formatting for the new deferred-gray diagnostic events.
-  - Added `diag exercise deferred-gray` parsing and the deferred-gray exercise runner that keeps one serial session open, validates page/status/log responses, and uses batched key transport for the queued turns.
-- `cli/src/main.rs`
-  - Routed `diag exercise deferred-gray` to the new exercise runner.
-- `cli/tests/protocol.rs`
-  - Added parser coverage for the deferred-gray exercise subcommand.
-- `cli/tests/hardware_diagnostic.rs`
-  - Added a scripted fake-serial exercise harness and an ignored live-hardware wrapper for the deferred-gray flow.
-- `docs/specs/2026-06-27-x4-async-deferred-grayscale-design.md`
-  - Records the current async deferred-gray architecture, fixed constants, task ownership, phase model, probe build, and hardware-verdict gate.
-- `docs/reference/squidscript-and-xteink-reference.md`
-  - Notes that the current BinBook firmware queues page turns and defers grayscale work without blocking input.
-- `docs/reference/xteink-x4-agent-device-verification.md`
-  - Adds the deferred-gray hardware runbook section with flash, boot capture, exercise, webcam criteria, strategy branch, and reflash requirements.
-- `docs/reference/xteink-x4-firmware-flashing.md`
-  - Renames the probe build to `deferred-gray-probe`.
-- `docs/specs/2026-06-25-xteink-navigation-probe-design.md`
-  - Rewords page-turn behavior so it no longer claims the grayscale work blocks input handling.
-- `docs/specs/2026-06-26-x4-bw-seed-refresh-design.md`
-  - Marks the BW-seed hypothesis as a precursor record.
-- `docs/specs/2026-06-26-x4-clean-differential-refresh-design.md`
-  - Marks the clean-differential policy as a precursor record.
-- `docs/specs/2026-06-26-x4-native-chunked-refresh-design.md`
-  - Marks the runtime refresh policy portion as superseded by the new async design.
-- `BINBOOK_FORMAT_SPEC.md`
-  - Clarifies that grayscale refresh does not by itself establish BW differential readiness and that the post-gray reseed strategy is a firmware policy.
+## Host Verification
 
-Host verification:
+Final clean matrix:
 
-- `cargo test --offline -p binbook-fw --test firmware_logic firmware_runtime_uses_approved_async_configuration -- --exact`
-- `cargo test --offline -p binbook-fw --test async_refresh display_request_channel_is_fifo_and_rejects_the_seventeenth_request -- --exact`
-- `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo check --offline -p binbook-fw --features firmware-bin --target riscv32imc-unknown-none-elf`
-- `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin --target riscv32imc-unknown-none-elf --release`
-- `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,debug-log --target riscv32imc-unknown-none-elf --release`
-- `cargo test -p binbook-diagnostic-protocol deferred_gray_event_codes_are_stable_and_nonzero -- --exact`
-- `cargo test -p binbook-cli cli_logs_formats_event_names_and_sequences -- --exact`
-- `cargo test --offline -p binbook-fw --features diagnostic-console --test firmware_logic batched_key_presses_are_resolved_when_dequeued -- --exact`
-- `cargo test --offline -p binbook-fw --features diagnostic-console --test firmware_logic diagnostic_pending_queue_rejects_the_seventeenth_command_without_evicting_old_requests -- --exact`
-- `cargo test -p binbook-diagnostic-protocol`
-- `cargo test -p binbook-fw --features diagnostic-console --test firmware_logic`
-- `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo check --offline -p binbook-fw --features firmware-bin,diagnostic-console --target riscv32imc-unknown-none-elf`
-- `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console --target riscv32imc-unknown-none-elf --release`
-- `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console,debug-log --target riscv32imc-unknown-none-elf --release`
-- `CARGO_HOME=/tmp/binbook-cargo-home cargo test -p binbook-fw --test async_refresh normal_build_uses_visible_reseed_until_hardware_approval -- --exact`
-- `CARGO_HOME=/tmp/binbook-cargo-home cargo test -p binbook-fw --features deferred-gray-probe --test async_refresh probe_build_uses_silent_reseed -- --exact`
-- `CARGO_HOME=/tmp/binbook-cargo-home cargo test --workspace --features diagnostic-console`
-- `CARGO_HOME=/tmp/binbook-cargo-home cargo test --workspace`
-- `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin --target riscv32imc-unknown-none-elf --release`
-- `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console --target riscv32imc-unknown-none-elf --release`
-- `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,debug-log --target riscv32imc-unknown-none-elf --release`
-- `CARGO_HOME=/tmp/binbook-cargo-home RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console,deferred-gray-probe --target riscv32imc-unknown-none-elf --release`
-- `CARGO_HOME=/tmp/binbook-cargo-home cargo test --features serial-device deferred_gray_exercise -- --nocapture`
-- `CARGO_HOME=/tmp/binbook-cargo-home cargo test --features serial-device --test hardware_diagnostic -- --list`
-- `CARGO_HOME=/tmp/binbook-cargo-home cargo test`
-- `CARGO_HOME=/tmp/binbook-cargo-home cargo test --features serial-device`
+- `cargo clean`: removed 2,768 files / 526.0 MiB;
+- firmware diagnostic workspace: 209 passed;
+- firmware default workspace: 127 passed;
+- pinned-nightly RISC-V release builds passed for `firmware-bin`,
+  `firmware-bin,diagnostic-console`, and
+  `firmware-bin,diagnostic-console,debug-log`;
+- CLI default: 32 passed;
+- CLI `serial-device`: 51 passed, 4 live tests ignored;
+- Python: 93 passed, 26 skipped in 9.72 seconds;
+- `git diff --check`: required after this documentation update.
 
-The temp `CARGO_HOME` was required so Cargo could unpack cached crates into a writable registry src directory. All verification commands passed.
+Key regressions include power-state-safe `0xCC/0x0C` activation, absolute-plane
+reconstruction from staged slots, canonical four-gray RAM polarity, true
+black/white checker generation, deterministic overlay cancellation, and the
+70-second display-probe timeout.
 
-No hardware flashing, serial capture, or webcam verification has been run yet. That work is still reserved for Task 9.
+## Firmware And Boot Evidence
 
-## Next Work
+Final flash command:
 
-Proceed with Task 9: flash the deferred-gray probe image, capture boot and serial evidence, run the autonomous exercise, collect the webcam verdict, select the permanent reseed strategy, and reflash the final diagnostic image.
+```bash
+FW_FEATURES="firmware-bin,diagnostic-console" \
+  firmware/scripts/flash-xteink-x4-nav-probe.sh
+```
+
+Flash succeeded on ESP32-C3 revision v0.4, 40 MHz crystal, 16 MB flash, MAC
+`38:44:be:98:72:dc`; final application size is 263,328 bytes (1.61%). The
+15-second boot record at `/tmp/x4-staged-gray-boot.txt` contains ESP-IDF v5.5.1,
+the factory partition at `0x10000`, segment loads, and application load.
+
+HELLO decodes as protocol 1, maximum frame 512, firmware `binbook-fw`, target
+`xteink-x4`, and capabilities `KEY,PAGE,STATUS,LOG,CRASH,DISPLAY_PROBE`.
+Immediate post-flash HELLO sometimes times out during USB re-enumeration; the
+single runbook-authorized retry succeeds. Combined
+`diagnostic-console,debug-log` also returns HELLO, proving packet transport owns
+USB. The normal diagnostic image was reflashed afterward and HELLO reconfirmed.
+
+## Staged Exercise Evidence
+
+Final post-probe-fix exercise:
+`/tmp/x4-staged-gray-post-probe-fix-exercise.txt`. Every validator phase passed
+in 5.604 seconds. Earlier independently paginated logs established:
+
+- page-1 BW completion→overlay start: 131604→131956 ms (352 ms);
+- waveform hint 2 / LUT revision 1;
+- page-2 overlay cancellation: 133049→133083 ms;
+- FIFO completions exactly page `2,3,2`;
+- page-2 and final page-3 overlay/base-sync completion;
+- no dropped turns, display errors, or protocol errors.
+
+After the final restore:
+
+```text
+current_page=0 page_count=4 panel_mode=Grayscale dropped_log_count=0 protocol_error_count=0 last_error=0
+```
+
+## General Device Runbook
+
+- KEY shared navigation: independently verified `0→1→0`.
+- PAGE: `goto 3`, `goto 0`, `next`, `previous`, `last`, `first`, and `current`
+  returned `3,0,1,0,3,0,0`; STATUS confirmed discriminating states.
+- LOG: a nonempty ring cleared at cursor 269; only the new retrieval receipt
+  remained. A subsequent render produced fresh origin-timestamped phase,
+  panel, controller-state, page-turn, and completion events from cursor 270.
+- CRASH: clear returned `ok`; independent get returned `crash=empty`.
+- Fragmented status, two-frame batch, and malformed-frame recovery tests passed
+  individually with one test thread. Malformed tests intentionally raised
+  `protocol_error_count` to 10 while valid STATUS still completed; reflashing
+  reset it to zero.
+- Full-refresh probe returned `ok`; isolated logs contained `RENDER_START`,
+  `RENDER_SUCCESS`, sequence-matched completion, and zero-error STATUS.
+
+## Webcam Evidence
+
+Confirmed crop is `crop=440:770:770:250`; it includes the black device bezel,
+which is not rendered content.
+
+- staged exercise video: `/tmp/x4-staged-gray-final-panel.mp4`;
+- four-corner probe: `/tmp/x4-probe-window-corners-panel.jpg`;
+- clear-white probe: `/tmp/x4-probe-clear-white-panel.jpg`;
+- corrected absolute full-refresh page 0:
+  `/tmp/x4-probe-full-refresh-page0-polarity-panel.jpg`;
+- final staged page 0: `/tmp/x4-final-page0-panel.jpg`.
+
+Agent inspection confirms full active-panel coverage, correct orientation,
+four corner rectangles, uniform white, four distinct grayscale swatches,
+stable black/white regions, no full navigation refresh, pre-activation
+cancellation, and artifact-free final content. The user still needs to provide
+an explicit verdict on these final artifacts if required for sign-off.
+
+## Acceptance Matrix
+
+| Requirement | Automated evidence | Device / visual evidence | State |
+|---|---|---|---|
+| Staged planes and hint 2 | Python truth-table, parser, fixture tests | Waveform event `2/1` | Verified |
+| Power-state-safe short LUT | Driver `0xCC/0x0C` tests | 143 ms boot overlay, no timeout | Verified |
+| BW turn and ≥350 ms delay | Coordinator/engine tests | 352 ms measured | Verified |
+| Pre-activation cancellation | Strip/epoch and CLI tests | 34 ms start→cancel | Verified |
+| FIFO and base sync | Engine/CLI tests | Pages `2,3,2`; sync events | Verified |
+| Stable full-panel base | True checker fixture test | Checker webcam sequence | Verified by agent |
+| Four gray levels, no navigation full refresh | Reconstruction tests | Staged video and final still | Verified by agent |
+| Explicit full-refresh probe | Absolute-plane and timeout tests | `ok`, `RENDER_SUCCESS`, corrected still | Verified |
+| KEY/PAGE/LOG/CRASH/stream handling | Host and live console tests | Independent state queries | Verified |
+| Combined-feature USB ownership | Feature builds | Combined-image HELLO | Verified |
+| Permanent final image | Release build | Normal image, page 0, clean STATUS | Verified |
+| User visual verdict | N/A | Final artifacts listed above | Pending user input |

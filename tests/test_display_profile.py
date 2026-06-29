@@ -2,19 +2,16 @@ from __future__ import annotations
 
 import struct
 
-from binbook.constants import PixelFormat, PixelFormatFlag, SectionId
+from binbook.constants import PageKind, PixelFormat, PixelFormatFlag, SectionId
+from binbook.page_compiler import encoded_page
 from binbook.profiles import XTEINK_X4_PORTRAIT, get_profile
 from binbook.reader import BinBookReader
-from binbook.rle import encode_packbits
-from binbook.writer import EncodedPage, build_binbook
+from binbook.writer import build_binbook
 
 
 def test_x4_profile_metadata_is_gray2_portrait_with_explicit_rotation(tmp_path):
     packed_white_page = bytes([0xFF]) * 96_000
-    compressed = encode_packbits(packed_white_page)
-    page = EncodedPage(
-        compressed=compressed, uncompressed_size=len(packed_white_page), page_crc32=0
-    )
+    page = encoded_page(packed_white_page, PageKind.IMAGE, 0)
     path = tmp_path / "x4.binbook"
     path.write_bytes(build_binbook([page], XTEINK_X4_PORTRAIT, source_name="x4"))
 

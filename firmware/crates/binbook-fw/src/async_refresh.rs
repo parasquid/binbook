@@ -46,29 +46,12 @@ pub struct DisplayCompletion {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PostGrayStrategy {
-    SilentReseed,
-    VisibleReseed,
-}
-
-pub const fn configured_post_gray_strategy() -> PostGrayStrategy {
-    #[cfg(feature = "deferred-gray-probe")]
-    {
-        PostGrayStrategy::SilentReseed
-    }
-    #[cfg(not(feature = "deferred-gray-probe"))]
-    {
-        PostGrayStrategy::VisibleReseed
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshPhase {
     BwReady,
     BwRefreshing,
     GrayDelay,
     GrayRefreshing,
-    BwReseeding,
+    BaseSync,
     Recovering,
     Fault,
 }
@@ -77,7 +60,7 @@ pub enum RefreshPhase {
 pub enum RefreshAction {
     RenderBw { from: u32, target: u32 },
     RenderGray { page: u32 },
-    ReseedBw { page: u32, visible: bool },
+    SyncBwBase { page: u32 },
     RecoverBw { page: u32 },
     WaitForRequest,
     WaitUntil { deadline_ms: u64 },
@@ -87,7 +70,6 @@ pub enum RefreshAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RefreshCoordinator {
     page_count: u32,
-    strategy: PostGrayStrategy,
     displayed_page: u32,
     active_target: Option<u32>,
     gray_deadline_ms: Option<u64>,
@@ -96,15 +78,14 @@ pub struct RefreshCoordinator {
 }
 
 impl RefreshCoordinator {
-    pub fn new(page_count: u32, strategy: PostGrayStrategy) -> Self {
+    pub fn new(page_count: u32) -> Self {
         Self {
             page_count,
-            strategy,
             displayed_page: 0,
             active_target: None,
             gray_deadline_ms: None,
-            phase: RefreshPhase::GrayRefreshing,
-            next_action: RefreshAction::RenderGray { page: 0 },
+            phase: RefreshPhase::Recovering,
+            next_action: RefreshAction::RecoverBw { page: 0 },
         }
     }
 
@@ -180,52 +161,87 @@ impl RefreshCoordinator {
             return self.next_action;
         }
 
-        let visible = matches!(self.strategy, PostGrayStrategy::VisibleReseed);
-        self.phase = RefreshPhase::BwReseeding;
-        self.next_action = RefreshAction::ReseedBw {
+        self.phase = RefreshPhase::BaseSync;
+        self.next_action = RefreshAction::SyncBwBase {
             page: self.displayed_page,
-            visible,
         };
         self.next_action
     }
 
-    pub fn record_reseed_complete(&mut self) -> RefreshAction {
-        if self.phase != RefreshPhase::BwReseeding {
+    pub fn record_gray_cancelled(&mut self) -> RefreshAction {
+        if self.phase != RefreshPhase::GrayRefreshing {
             self.next_action = RefreshAction::None;
             return self.next_action;
         }
-
         self.phase = RefreshPhase::BwReady;
         self.next_action = RefreshAction::WaitForRequest;
         self.next_action
     }
 
+    pub fn record_base_sync_complete(&mut self) -> RefreshAction {
+        if self.phase != RefreshPhase::BaseSync {
+            self.next_action = RefreshAction::None;
+            return self.next_action;
+        }
+        self.phase = RefreshPhase::BwReady;
+        self.next_action = RefreshAction::WaitForRequest;
+        self.next_action
+    }
+
+    pub fn skip_base_sync(&mut self) -> RefreshAction {
+        self.record_base_sync_complete()
+    }
+
     pub fn request_arrived(&mut self) -> RefreshAction {
+        if self.phase == RefreshPhase::GrayDelay {
+            self.gray_deadline_ms = None;
+            self.phase = RefreshPhase::BwReady;
+        }
         self.next_action = RefreshAction::None;
+        self.next_action
+    }
+
+    pub fn record_seed_complete(&mut self, page: u32, now_ms: u64) -> RefreshAction {
+        self.displayed_page = page;
+        self.active_target = None;
+        self.gray_deadline_ms = Some(now_ms + GRAY_SETTLE_DELAY_MS);
+        self.phase = RefreshPhase::GrayDelay;
+        self.next_action = RefreshAction::WaitUntil {
+            deadline_ms: now_ms + GRAY_SETTLE_DELAY_MS,
+        };
         self.next_action
     }
 
     pub fn record_failure(&mut self) -> RefreshAction {
         match self.phase {
-            RefreshPhase::BwRefreshing => {
-                let Some(page) = self.active_target else {
-                    self.next_action = RefreshAction::None;
-                    return self.next_action;
-                };
-                self.phase = RefreshPhase::Recovering;
-                self.next_action = RefreshAction::RecoverBw { page };
-                self.next_action
-            }
             RefreshPhase::Recovering => {
                 self.phase = RefreshPhase::Fault;
                 self.next_action = RefreshAction::None;
                 self.next_action
             }
-            _ => {
+            RefreshPhase::Fault => {
                 self.next_action = RefreshAction::None;
                 self.next_action
             }
+            _ => {
+                let page = self.active_target.unwrap_or(self.displayed_page);
+                self.active_target = Some(page);
+                self.phase = RefreshPhase::Recovering;
+                self.next_action = RefreshAction::RecoverBw { page };
+                self.next_action
+            }
         }
+    }
+
+    pub fn begin_recovery(&mut self, page: u32) -> RefreshAction {
+        if page >= self.page_count || self.phase == RefreshPhase::Fault {
+            self.next_action = RefreshAction::None;
+            return self.next_action;
+        }
+        self.active_target = Some(page);
+        self.phase = RefreshPhase::Recovering;
+        self.next_action = RefreshAction::RecoverBw { page };
+        self.next_action
     }
 
     pub fn record_recovery_complete(&mut self, page: u32, _now_ms: u64) -> RefreshAction {

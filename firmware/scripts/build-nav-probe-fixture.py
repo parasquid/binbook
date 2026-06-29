@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build a deterministic four-page navigation probe fixture for Xteink X4 firmware testing.
 
-Page 0: gray-band page rendered from source
+Page 0: full-panel orientation and grayscale diagnostic target
 Page 1: checkerboard pattern (160px cells)
 Page 2: four-tone vertical stripes
 Page 3: lorem ipsum text rendered through Pillow
@@ -20,20 +20,21 @@ from PIL import Image, ImageDraw, ImageFont
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from binbook.constants import CompressionMethod, PixelFormat
+from binbook.constants import PixelFormat
 from binbook.images import pil_image_to_packed
 from binbook.page_compiler import encoded_page
 from binbook.profiles import get_profile
 from binbook.reader import BinBookReader
-from binbook.rle import decode_packbits
-from binbook.writer import BookInfo, NavEntry, build_binbook
+from binbook.writer import build_binbook
 
 FIXTURE_DIR = REPO_ROOT / "firmware" / "crates" / "binbook-fw" / "fixtures"
-SOURCE_FIXTURE = FIXTURE_DIR / "gray2_probe.binbook"
 OUTPUT_FIXTURE = FIXTURE_DIR / "nav_probe.binbook"
 
 PROFILE_NAME = "xteink-x4-portrait"
 CHECKER_CELL = 160  # logical pixels per checker cell
+LOREM_FONT_SIZE = 64
+LOREM_LINE_HEIGHT = 82
+ORIENTATION_FONT_SIZE = 64
 LOREM_TEXT = (
     "Lorem ipsum dolor sit amet, consectetur adipiscing elit. "
     "Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. "
@@ -86,15 +87,92 @@ LOREM_TEXT = (
 )
 
 
-def _page_data_slice(reader: BinBookReader, page_index: int) -> bytes:
-    """Return the raw compressed page-data bytes for all planes of a page."""
-    page = reader.pages[page_index]
-    pd = page.plane_dir
-    total = sum(pd.sizes[slot] for slot in range(4) if pd.bitmap & (1 << slot))
-    offset = reader.header.page_data_offset + min(
-        pd.offsets[slot] for slot in range(4) if pd.bitmap & (1 << slot)
+def _centered_text(draw, y: int, text: str, font, *, fill: int = 0) -> None:
+    bbox = draw.textbbox((0, 0), text, font=font, stroke_width=2)
+    width = bbox[2] - bbox[0]
+    draw.text(
+        ((480 - width) // 2, y),
+        text,
+        fill=fill,
+        font=font,
+        stroke_width=2,
+        stroke_fill=fill,
     )
-    return reader.data[offset : offset + total]
+
+
+def _rotated_edge_label(image: Image.Image, text: str, x: int, y: int, font) -> None:
+    bbox = font.getbbox(text, stroke_width=2)
+    mask = Image.new("L", (bbox[2] - bbox[0] + 8, bbox[3] - bbox[1] + 8), 0)
+    mask_draw = ImageDraw.Draw(mask)
+    mask_draw.text(
+        (4 - bbox[0], 4 - bbox[1]),
+        text,
+        fill=255,
+        font=font,
+        stroke_width=2,
+        stroke_fill=255,
+    )
+    mask = mask.rotate(90, expand=True)
+    image.paste(0, (x, y), mask)
+
+
+def _make_orientation_target(profile) -> Image.Image:
+    """Create a full-panel target with unambiguous orientation and coverage."""
+    width, height = profile.logical_width, profile.logical_height
+    assert (width, height) == (480, 800)
+    image = Image.new("L", (width, height), 255)
+    draw = ImageDraw.Draw(image)
+    font_path = REPO_ROOT / "binbook" / "assets" / "fonts" / "Literata" / "Literata.ttf"
+    label_font = ImageFont.truetype(str(font_path), ORIENTATION_FONT_SIZE)
+    info_font = ImageFont.truetype(str(font_path), 32)
+    swatch_font = ImageFont.truetype(str(font_path), 24)
+
+    for x in range(50, width, 50):
+        draw.line((x, 10, x, height - 11), fill=170, width=1)
+    for y in range(50, height, 50):
+        draw.line((10, y, width - 11, y), fill=170, width=1)
+
+    draw.line((240, 10, 240, 789), fill=0, width=3)
+    draw.line((10, 400, 469, 400), fill=0, width=3)
+    for offset in range(50, 480, 50):
+        tick = 24 if offset % 100 == 0 else 15
+        draw.line((offset, 10, offset, 10 + tick), fill=0, width=3)
+        draw.line((offset, 789 - tick, offset, 789), fill=0, width=3)
+    for offset in range(50, 800, 50):
+        tick = 24 if offset % 100 == 0 else 15
+        draw.line((10, offset, 10 + tick, offset), fill=0, width=3)
+        draw.line((469 - tick, offset, 469, offset), fill=0, width=3)
+
+    draw.polygon(((18, 55), (55, 18), (55, 55)), fill=0)
+    draw.ellipse((425, 18, 461, 54), fill=0)
+    draw.rectangle((18, 745, 54, 781), fill=0)
+    draw.polygon(((443, 744), (462, 763), (443, 782), (424, 763)), fill=0)
+
+    draw.text((65, 18), "TL", fill=0, font=label_font, stroke_width=2, stroke_fill=0)
+    draw.text((330, 18), "TR", fill=0, font=label_font, stroke_width=2, stroke_fill=0)
+    draw.text((65, 704), "BL", fill=0, font=label_font, stroke_width=2, stroke_fill=0)
+    draw.text((326, 704), "BR", fill=0, font=label_font, stroke_width=2, stroke_fill=0)
+    _centered_text(draw, 88, "TOP", label_font)
+    _centered_text(draw, 622, "BOTTOM", label_font)
+    _rotated_edge_label(image, "LEFT", 20, 275, label_font)
+    _rotated_edge_label(image, "RIGHT", 390, 260, label_font)
+
+    _centered_text(draw, 198, "PAGE 0", info_font)
+    _centered_text(draw, 242, "PORTRAIT 480x800", info_font)
+
+    swatches = (
+        (110, 500, 170, 560, 0, "B"),
+        (175, 500, 235, 560, 85, "D"),
+        (240, 500, 300, 560, 170, "L"),
+        (305, 500, 365, 560, 255, "W"),
+    )
+    for x0, y0, x1, y1, level, label in swatches:
+        draw.rectangle((x0, y0, x1, y1), fill=level, outline=0, width=2)
+        bbox = draw.textbbox((0, 0), label, font=swatch_font)
+        draw.text(((x0 + x1 - (bbox[2] - bbox[0])) // 2, 565), label, fill=0, font=swatch_font)
+
+    draw.rectangle((0, 0, width - 1, height - 1), outline=0, width=10)
+    return image
 
 
 def _make_checkerboard(profile) -> Image.Image:
@@ -102,12 +180,11 @@ def _make_checkerboard(profile) -> Image.Image:
     width, height = profile.logical_width, profile.logical_height
     img = Image.new("L", (width, height), 255)
     pixels = img.load()
-    levels = [0, 85, 170, 255]  # black, dark gray, light gray, white
     for y in range(height):
         for x in range(width):
             cx = (x // CHECKER_CELL) % 2
             cy = (y // CHECKER_CELL) % 2
-            level = levels[(cx + cy) % 2 * 2]  # alternating black/white
+            level = (0, 255)[(cx + cy) % 2]
             pixels[x, y] = level
     return img
 
@@ -133,11 +210,11 @@ def _make_lorem_ipsum(profile) -> Image.Image:
     draw = ImageDraw.Draw(img)
 
     font_path = REPO_ROOT / "binbook" / "assets" / "fonts" / "Literata" / "Literata.ttf"
-    font = ImageFont.truetype(str(font_path), 14)
+    font = ImageFont.truetype(str(font_path), LOREM_FONT_SIZE)
 
     margin = 20
     y = margin
-    line_height = 18
+    line_height = LOREM_LINE_HEIGHT
     words = LOREM_TEXT.split()
     line = ""
     for word in words:
@@ -158,19 +235,12 @@ def _make_lorem_ipsum(profile) -> Image.Image:
 
 
 def main() -> None:
-    if not SOURCE_FIXTURE.exists():
-        print(f"Source fixture not found: {SOURCE_FIXTURE}", file=sys.stderr)
-        sys.exit(1)
-
-    original = BinBookReader.open(SOURCE_FIXTURE, validate=False)
     profile = get_profile(PROFILE_NAME)
 
-    # Page 0: gray-band page (decode compressed source, then re-encode as X4 native)
-    compressed_source = _page_data_slice(original, 0)
-    page0_packed = decode_packbits(compressed_source)
-    page0 = encoded_page(
-        page0_packed, original.pages[0].page_kind, original.pages[0].source_spine_index
-    )
+    # Page 0: full-panel orientation and grayscale target.
+    orientation_img = _make_orientation_target(profile)
+    orientation_packed = pil_image_to_packed(orientation_img, profile, dither=False)
+    page0 = encoded_page(orientation_packed, 0, 0)
 
     # Page 1: checkerboard
     checker_img = _make_checkerboard(profile)

@@ -564,6 +564,150 @@ pub struct PendingCommand {
     pub action: PendingAction,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeCommand {
+    Hardware(PendingCommand),
+    LogGet {
+        header: FrameHeader,
+        cursor: u32,
+        max_bytes: u16,
+    },
+    LogClear {
+        header: FrameHeader,
+    },
+    Immediate {
+        header: FrameHeader,
+        status: Status,
+        payload: [u8; MAX_PAYLOAD_BYTES],
+        payload_len: usize,
+    },
+}
+
+impl RuntimeCommand {
+    pub fn header(&self) -> FrameHeader {
+        match *self {
+            RuntimeCommand::Hardware(pending) => pending.header,
+            RuntimeCommand::LogGet { header, .. }
+            | RuntimeCommand::LogClear { header }
+            | RuntimeCommand::Immediate { header, .. } => header,
+        }
+    }
+}
+
+/// Parse one request without reading or mutating diagnostic snapshot/log state.
+/// The runtime aggregator supplies the committed snapshot and services log queries.
+pub fn poll_runtime_command(
+    serial: &mut SerialState,
+    snapshot: DiagnosticSnapshot,
+) -> Option<RuntimeCommand> {
+    let mut frame_buf = [0u8; MAX_FRAME_BYTES];
+    let frame_len = serial.next_frame(&mut frame_buf)?;
+    let mut request_payload = [0u8; MAX_PAYLOAD_BYTES];
+    let (header, payload_len) = match decode_frame(&frame_buf[..frame_len], &mut request_payload) {
+        Ok(value) => value,
+        Err(binbook_diagnostic_protocol::ProtocolError::UnknownOpcode) => {
+            if let Ok((raw, _)) = decode_raw_frame(&frame_buf[..frame_len], &mut request_payload) {
+                if raw.kind == FrameKind::Request as u8 {
+                    let response = RawFrameHeader {
+                        kind: FrameKind::Response as u8,
+                        opcode: raw.opcode,
+                        status: Status::BadRequest as u8,
+                        sequence: raw.sequence,
+                        payload_len: 0,
+                    };
+                    let mut encoded = [0u8; MAX_FRAME_BYTES];
+                    if let Ok(len) = encode_raw_frame(&response, &[], &mut encoded) {
+                        let _ = serial.queue_tx(&encoded[..len]);
+                    }
+                }
+            }
+            serial.protocol_errors = serial.protocol_errors.saturating_add(1);
+            return None;
+        }
+        Err(_) => {
+            serial.protocol_errors = serial.protocol_errors.saturating_add(1);
+            return None;
+        }
+    };
+
+    let mut context = CommandContext::new(
+        snapshot.current_page,
+        snapshot.page_count,
+        snapshot.last_error,
+        snapshot.panel_mode as u8,
+    );
+    context.protocol_errors = serial.protocol_error_count();
+    context.dropped_records = snapshot.dropped_log_count;
+    let mut response_payload = [0u8; MAX_PAYLOAD_BYTES];
+    let result = dispatch_command(
+        header,
+        &request_payload[..payload_len],
+        &mut context,
+        &mut response_payload,
+    );
+    match result {
+        DispatchResult::RenderTurn { turn } => Some(RuntimeCommand::Hardware(PendingCommand {
+            header,
+            action: PendingAction::RenderTurn { turn },
+        })),
+        DispatchResult::RenderPage { target_page } => {
+            Some(RuntimeCommand::Hardware(PendingCommand {
+                header,
+                action: PendingAction::RenderPage { target_page },
+            }))
+        }
+        DispatchResult::DisplayProbe(probe) => Some(RuntimeCommand::Hardware(PendingCommand {
+            header,
+            action: PendingAction::DisplayProbe(probe),
+        })),
+        DispatchResult::CrashGet => Some(RuntimeCommand::Hardware(PendingCommand {
+            header,
+            action: PendingAction::CrashGet,
+        })),
+        DispatchResult::CrashClear => Some(RuntimeCommand::Hardware(PendingCommand {
+            header,
+            action: PendingAction::CrashClear,
+        })),
+        DispatchResult::LogGet { cursor, max_bytes } => Some(RuntimeCommand::LogGet {
+            header,
+            cursor,
+            max_bytes,
+        }),
+        DispatchResult::LogClear => Some(RuntimeCommand::LogClear { header }),
+        DispatchResult::NoAction => {
+            let payload_len = if header.opcode == Opcode::Page {
+                encode_page_response(snapshot.current_page, &mut response_payload).unwrap_or(0)
+            } else {
+                0
+            };
+            Some(RuntimeCommand::Immediate {
+                header,
+                status: Status::Ok,
+                payload: response_payload,
+                payload_len,
+            })
+        }
+        DispatchResult::Response {
+            status,
+            payload_len,
+        } => Some(RuntimeCommand::Immediate {
+            header,
+            status,
+            payload: response_payload,
+            payload_len,
+        }),
+    }
+}
+
+pub fn queue_runtime_response(
+    serial: &mut SerialState,
+    header: FrameHeader,
+    status: Status,
+    payload: &[u8],
+) {
+    build_response_frame(&header, status, payload, serial);
+}
+
 /// Parse one complete request. Immediate commands queue their response here;
 /// hardware-backed commands return a token and intentionally queue nothing.
 pub fn poll_pending_command<const N: usize>(

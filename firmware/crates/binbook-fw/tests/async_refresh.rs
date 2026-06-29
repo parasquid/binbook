@@ -1,19 +1,20 @@
 use binbook_fw::async_refresh::{
-    PostGrayStrategy, RefreshAction, RefreshCoordinator, RefreshPhase, DISPLAY_BUSY_TIMEOUT_MS,
+    RefreshAction, RefreshCoordinator, RefreshPhase, DISPLAY_BUSY_TIMEOUT_MS,
     DISPLAY_COMPLETION_CAPACITY, DISPLAY_STREAM_STRIP_ROWS, GRAY_SETTLE_DELAY_MS,
     INPUT_POLL_INTERVAL_MS, PAGE_TURN_QUEUE_CAPACITY,
 };
 use binbook_fw::display;
 use ssd1677_driver::{Ssd1677, Ssd1677Driver};
-use xteink_hal::RefreshMode;
-use xteink_hal::{AsyncDelay, HalResult, InputPin, OutputPin, Spi};
 use std::boxed::Box;
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 use std::vec::Vec;
+use xteink_hal::RefreshMode;
+use xteink_hal::{AsyncDelay, HalError, HalResult, InputPin, OutputPin, Spi};
 
 const PAGE_1: u32 = 1;
 const PAGE_2: u32 = 2;
@@ -129,10 +130,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
     }
 }
 
-fn parse_gray_render_trace(
-    writes: &[Vec<u8>],
-    zero_yield_count: usize,
-) -> AsyncGrayTrace {
+fn parse_gray_render_trace(writes: &[Vec<u8>], zero_yield_count: usize) -> AsyncGrayTrace {
     let mut trace = AsyncGrayTrace {
         yields_between_strips: zero_yield_count,
         ..AsyncGrayTrace::default()
@@ -155,16 +153,18 @@ fn parse_gray_render_trace(
             }
             [cmd] if *cmd == Ssd1677::WRITE_RAM_RED => {
                 trace.red_windows += 1;
-                trace
-                    .red_window_heights
-                    .push(pending_window_height.expect("window height must be set before red plane write"));
+                trace.red_window_heights.push(
+                    pending_window_height
+                        .expect("window height must be set before red plane write"),
+                );
                 pending_window_height = None;
             }
             [cmd] if *cmd == Ssd1677::WRITE_RAM => {
                 trace.black_windows += 1;
-                trace
-                    .black_window_heights
-                    .push(pending_window_height.expect("window height must be set before black plane write"));
+                trace.black_window_heights.push(
+                    pending_window_height
+                        .expect("window height must be set before black plane write"),
+                );
                 pending_window_height = None;
             }
             [cmd] if *cmd == Ssd1677::DISPLAY_UPDATE_CTRL2 => {
@@ -196,14 +196,15 @@ fn parse_gray_render_trace(
     trace
 }
 
-fn run_async_gray_render(page: u32) -> AsyncGrayTrace {
+fn run_async_gray_render_with_writes(page: u32) -> (AsyncGrayTrace, Vec<Vec<u8>>) {
     let book_bytes = include_bytes!("../fixtures/nav_probe.binbook");
     let mut scratch = [0u8; 8192];
     let mut book =
         binbook::BinBook::open(&book_bytes[..], &mut scratch).expect("open nav probe book");
+    let profile = book.display_profile().expect("display profile");
     let page_info = book.page_info(page).expect("page must exist");
     assert!(
-        display::is_supported_x4_native_gray2_page(&page_info),
+        display::is_supported_x4_native_gray2_page(&profile, &page_info),
         "page must be x4-native gray2"
     );
 
@@ -229,63 +230,15 @@ fn run_async_gray_render(page: u32) -> AsyncGrayTrace {
         page,
         &delay,
     ))
-        .expect("async gray render should succeed");
+    .expect("async gray render should succeed");
 
-    let parsed = parse_gray_render_trace(&writes.borrow(), delay.zero_yield_count());
-    parsed
+    let captured = writes.borrow().clone();
+    let parsed = parse_gray_render_trace(&captured, delay.zero_yield_count());
+    (parsed, captured)
 }
 
-fn run_async_reseed(page: u32, visible: bool) -> AsyncReseedTrace {
-    let book_bytes = include_bytes!("../fixtures/nav_probe.binbook");
-    let mut scratch = [0u8; 8192];
-    let mut book =
-        binbook::BinBook::open(&book_bytes[..], &mut scratch).expect("open nav probe book");
-    let page_info = book.page_info(page).expect("page must exist");
-    assert!(
-        display::is_supported_x4_native_gray2_page(&page_info),
-        "page must be x4-native gray2"
-    );
-
-    let writes = Rc::new(RefCell::new(Vec::new()));
-    let delay_calls = Rc::new(RefCell::new(Vec::new()));
-    let mut driver = Ssd1677Driver::new(
-        RecordingSpi {
-            writes: Rc::clone(&writes),
-        },
-        NoopOutputPin,
-        NoopOutputPin,
-        NoopOutputPin,
-        LowBusyPin,
-    );
-    let delay = RecordingYieldDelay {
-        calls: Rc::clone(&delay_calls),
-    };
-
-    let result = if visible {
-        block_on(display::reseed_bw_visible_async(
-            &mut driver,
-            &mut book,
-            &book_bytes[..],
-            page,
-            &delay,
-        ))
-    } else {
-        block_on(display::reseed_bw_silent_async(
-            &mut driver,
-            &mut book,
-            &book_bytes[..],
-            page,
-            &delay,
-        ))
-    };
-    result.expect("async reseed should succeed");
-
-    let parsed = parse_gray_render_trace(&writes.borrow(), delay.zero_yield_count());
-    AsyncReseedTrace {
-        red_plane_slots: vec![2],
-        black_plane_slots: vec![2],
-        refreshes: parsed.refreshes,
-    }
+fn run_async_gray_render(page: u32) -> AsyncGrayTrace {
+    run_async_gray_render_with_writes(page).0
 }
 
 fn run_async_bw_differential(prev_page: u32, target_page: u32) -> AsyncReseedTrace {
@@ -293,14 +246,15 @@ fn run_async_bw_differential(prev_page: u32, target_page: u32) -> AsyncReseedTra
     let mut scratch = [0u8; 8192];
     let mut book =
         binbook::BinBook::open(&book_bytes[..], &mut scratch).expect("open nav probe book");
+    let profile = book.display_profile().expect("display profile");
     let prev_info = book.page_info(prev_page).expect("previous page must exist");
     let target_info = book.page_info(target_page).expect("target page must exist");
     assert!(
-        display::is_supported_x4_native_gray2_page(&prev_info),
+        display::is_supported_x4_native_gray2_page(&profile, &prev_info),
         "previous page must be x4-native gray2"
     );
     assert!(
-        display::is_supported_x4_native_gray2_page(&target_info),
+        display::is_supported_x4_native_gray2_page(&profile, &target_info),
         "target page must be x4-native gray2"
     );
 
@@ -342,9 +296,10 @@ fn run_async_recovery(page: u32) -> AsyncReseedTrace {
     let mut scratch = [0u8; 8192];
     let mut book =
         binbook::BinBook::open(&book_bytes[..], &mut scratch).expect("open nav probe book");
+    let profile = book.display_profile().expect("display profile");
     let page_info = book.page_info(page).expect("page must exist");
     assert!(
-        display::is_supported_x4_native_gray2_page(&page_info),
+        display::is_supported_x4_native_gray2_page(&profile, &page_info),
         "page must be x4-native gray2"
     );
 
@@ -381,6 +336,212 @@ fn run_async_recovery(page: u32) -> AsyncReseedTrace {
 }
 
 #[test]
+fn mismatched_waveform_is_rejected_before_controller_writes() {
+    let mut book_bytes = include_bytes!("../fixtures/nav_probe.binbook").to_vec();
+    let table_offset = u64::from_le_bytes(book_bytes[24..32].try_into().unwrap()) as usize;
+    let section_count = u16::from_le_bytes(book_bytes[38..40].try_into().unwrap()) as usize;
+    let profile_entry = (0..section_count)
+        .map(|index| table_offset + index * 40)
+        .find(|offset| {
+            u16::from_le_bytes(book_bytes[*offset..*offset + 2].try_into().unwrap()) == 10
+        })
+        .unwrap();
+    let profile_offset = u64::from_le_bytes(
+        book_bytes[profile_entry + 4..profile_entry + 12]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    book_bytes[profile_offset + 53..profile_offset + 55].copy_from_slice(&1u16.to_le_bytes());
+
+    let mut scratch = [0u8; 8192];
+    let mut book = binbook::BinBook::open(&book_bytes[..], &mut scratch).unwrap();
+    let writes = Rc::new(RefCell::new(Vec::new()));
+    let mut driver = Ssd1677Driver::new(
+        RecordingSpi {
+            writes: Rc::clone(&writes),
+        },
+        NoopOutputPin,
+        NoopOutputPin,
+        NoopOutputPin,
+        LowBusyPin,
+    );
+    let delay = RecordingYieldDelay::default();
+
+    let result = block_on(display::display_full_grayscale_async(
+        &mut driver,
+        &mut book,
+        &book_bytes,
+        0,
+        &delay,
+    ));
+
+    assert_eq!(result, Err(HalError::InvalidParam));
+    assert!(writes.borrow().is_empty());
+}
+
+fn run_staged_gray_with_cancel_at(
+    cancel_at_check: usize,
+) -> (display::GrayRenderOutcome, Vec<Vec<u8>>) {
+    let book_bytes = include_bytes!("../fixtures/nav_probe.binbook");
+    let mut scratch = [0u8; 8192];
+    let mut book = binbook::BinBook::open(&book_bytes[..], &mut scratch).unwrap();
+    let writes = Rc::new(RefCell::new(Vec::new()));
+    let mut driver = Ssd1677Driver::new(
+        RecordingSpi {
+            writes: Rc::clone(&writes),
+        },
+        NoopOutputPin,
+        NoopOutputPin,
+        NoopOutputPin,
+        LowBusyPin,
+    );
+    let delay = RecordingYieldDelay::default();
+    let checks = Cell::new(0usize);
+    let outcome = block_on(display::display_staged_grayscale_async(
+        &mut driver,
+        &mut book,
+        &book_bytes[..],
+        0,
+        7,
+        || {
+            let check = checks.get();
+            checks.set(check + 1);
+            if check >= cancel_at_check {
+                8
+            } else {
+                7
+            }
+        },
+        || {},
+        &delay,
+    ))
+    .unwrap();
+    let captured = writes.borrow().clone();
+    (outcome, captured)
+}
+
+#[test]
+fn staged_grayscale_streams_overlay_planes_then_activates() {
+    let (outcome, writes) = run_staged_gray_with_cancel_at(usize::MAX);
+
+    assert_eq!(outcome, display::GrayRenderOutcome::Completed);
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|write| write.as_slice() == [Ssd1677::WRITE_RAM])
+            .count(),
+        30
+    );
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|write| write.as_slice() == [Ssd1677::WRITE_RAM_RED])
+            .count(),
+        30
+    );
+    assert!(writes.windows(2).any(|pair| {
+        pair[0].as_slice() == [Ssd1677::DISPLAY_UPDATE_CTRL2]
+            && pair[1].as_slice()
+                == [Ssd1677::UPDATE_CTRL_STAGED_GRAYSCALE | 0xC0]
+    }));
+    assert!(writes
+        .iter()
+        .any(|write| write.as_slice() == [Ssd1677::MASTER_ACTIVATION]));
+}
+
+#[test]
+fn staged_grayscale_cancels_on_strip_boundaries_without_activation() {
+    for cancel_at in [0usize, 1, 15, 29] {
+        let (outcome, writes) = run_staged_gray_with_cancel_at(cancel_at);
+
+        assert_eq!(outcome, display::GrayRenderOutcome::Cancelled);
+        assert_eq!(
+            writes
+                .iter()
+                .filter(|write| write.as_slice() == [Ssd1677::WRITE_RAM])
+                .count(),
+            cancel_at
+        );
+        assert!(!writes.windows(2).any(|pair| {
+            pair[0].as_slice() == [Ssd1677::DISPLAY_UPDATE_CTRL2]
+                && pair[1].as_slice()
+                    == [Ssd1677::UPDATE_CTRL_STAGED_GRAYSCALE | 0xC0]
+        }));
+        assert!(!writes
+            .iter()
+            .any(|write| write.as_slice() == [Ssd1677::MASTER_ACTIVATION]));
+    }
+}
+
+fn run_base_sync_with_cancel_at(
+    cancel_at_check: usize,
+) -> (display::BaseSyncOutcome, Vec<Vec<u8>>) {
+    let book_bytes = include_bytes!("../fixtures/nav_probe.binbook");
+    let mut scratch = [0u8; 8192];
+    let mut book = binbook::BinBook::open(&book_bytes[..], &mut scratch).unwrap();
+    let writes = Rc::new(RefCell::new(Vec::new()));
+    let mut driver = Ssd1677Driver::new(
+        RecordingSpi {
+            writes: Rc::clone(&writes),
+        },
+        NoopOutputPin,
+        NoopOutputPin,
+        NoopOutputPin,
+        LowBusyPin,
+    );
+    let delay = RecordingYieldDelay::default();
+    let checks = Cell::new(0usize);
+    let outcome = block_on(display::sync_bw_base_async(
+        &mut driver,
+        &mut book,
+        &book_bytes[..],
+        0,
+        11,
+        || {
+            let check = checks.get();
+            checks.set(check + 1);
+            if check >= cancel_at_check {
+                12
+            } else {
+                11
+            }
+        },
+        &delay,
+    ))
+    .unwrap();
+    let captured = writes.borrow().clone();
+    (outcome, captured)
+}
+
+#[test]
+fn background_base_sync_is_cancellable_and_never_activates() {
+    for cancel_at in [0usize, 1, 15, 29, usize::MAX] {
+        let (outcome, writes) = run_base_sync_with_cancel_at(cancel_at);
+        let expected_strips = cancel_at.min(30);
+        let expected_outcome = if cancel_at == usize::MAX {
+            display::BaseSyncOutcome::Completed
+        } else {
+            display::BaseSyncOutcome::Cancelled
+        };
+
+        assert_eq!(outcome, expected_outcome);
+        assert_eq!(
+            writes
+                .iter()
+                .filter(|write| write.as_slice() == [Ssd1677::WRITE_RAM_RED])
+                .count(),
+            expected_strips
+        );
+        assert!(!writes
+            .iter()
+            .any(|write| write.as_slice() == [Ssd1677::WRITE_RAM]));
+        assert!(!writes
+            .iter()
+            .any(|write| write.as_slice() == [Ssd1677::MASTER_ACTIVATION]));
+    }
+}
+
+#[test]
 fn coordinator_uses_the_approved_fixed_configuration() {
     assert_eq!(PAGE_TURN_QUEUE_CAPACITY, 16);
     assert_eq!(DISPLAY_COMPLETION_CAPACITY, 16);
@@ -391,43 +552,28 @@ fn coordinator_uses_the_approved_fixed_configuration() {
 }
 
 #[test]
-fn normal_build_uses_visible_reseed_until_hardware_approval() {
-    assert_eq!(
-        binbook_fw::async_refresh::configured_post_gray_strategy(),
-        PostGrayStrategy::VisibleReseed
-    );
-}
-
-#[cfg(feature = "deferred-gray-probe")]
-#[test]
-fn probe_build_uses_silent_reseed() {
-    assert_eq!(
-        binbook_fw::async_refresh::configured_post_gray_strategy(),
-        PostGrayStrategy::SilentReseed
-    );
+fn permanent_build_has_no_deferred_gray_probe_feature() {
+    let cargo = include_str!("../Cargo.toml");
+    assert!(!cargo.contains("deferred-gray-probe"));
 }
 
 #[test]
-fn startup_requests_grayscale_for_page_zero() {
-    let coordinator = RefreshCoordinator::new(4, PostGrayStrategy::SilentReseed);
+fn startup_requests_safe_bw_seed_for_page_zero() {
+    let coordinator = RefreshCoordinator::new(4);
 
-    assert_eq!(coordinator.phase(), RefreshPhase::GrayRefreshing);
-    assert_eq!(coordinator.next_action(), RefreshAction::RenderGray { page: 0 });
+    assert_eq!(coordinator.phase(), RefreshPhase::Recovering);
+    assert_eq!(
+        coordinator.next_action(),
+        RefreshAction::RecoverBw { page: 0 }
+    );
 }
 
 fn coordinator_ready_on_page_one() -> RefreshCoordinator {
-    let mut coordinator = RefreshCoordinator::new(4, PostGrayStrategy::SilentReseed);
+    let mut coordinator = RefreshCoordinator::new(4);
 
     assert_eq!(
-        coordinator.record_gray_complete(),
-        RefreshAction::ReseedBw {
-            page: 0,
-            visible: false,
-        }
-    );
-    assert_eq!(
-        coordinator.record_reseed_complete(),
-        RefreshAction::WaitForRequest
+        coordinator.record_seed_complete(0, 0),
+        RefreshAction::WaitUntil { deadline_ms: 350 }
     );
     assert_eq!(
         coordinator.start_bw(1),
@@ -435,9 +581,7 @@ fn coordinator_ready_on_page_one() -> RefreshCoordinator {
     );
     assert_eq!(
         coordinator.record_bw_complete(1, 1_000),
-        RefreshAction::WaitUntil {
-            deadline_ms: 1_350,
-        }
+        RefreshAction::WaitUntil { deadline_ms: 1_350 }
     );
     assert_eq!(
         coordinator.gray_deadline_elapsed(1_350),
@@ -445,70 +589,22 @@ fn coordinator_ready_on_page_one() -> RefreshCoordinator {
     );
     assert_eq!(
         coordinator.record_gray_complete(),
-        RefreshAction::ReseedBw {
-            page: 1,
-            visible: false,
-        }
+        RefreshAction::SyncBwBase { page: 1 }
     );
     assert_eq!(
-        coordinator.record_reseed_complete(),
+        coordinator.record_base_sync_complete(),
         RefreshAction::WaitForRequest
-    );
-
-    coordinator
-}
-
-fn coordinator_in_gray_refresh_on_page_one_with_strategy(
-    strategy: PostGrayStrategy,
-) -> RefreshCoordinator {
-    let mut coordinator = RefreshCoordinator::new(4, strategy);
-
-    assert_eq!(
-        coordinator.record_gray_complete(),
-        RefreshAction::ReseedBw {
-            page: 0,
-            visible: matches!(strategy, PostGrayStrategy::VisibleReseed),
-        }
-    );
-    assert_eq!(
-        coordinator.record_reseed_complete(),
-        RefreshAction::WaitForRequest
-    );
-    assert_eq!(
-        coordinator.start_bw(1),
-        RefreshAction::RenderBw { from: 0, target: 1 }
-    );
-    assert_eq!(
-        coordinator.record_bw_complete(1, 1_000),
-        RefreshAction::WaitUntil {
-            deadline_ms: 1_350,
-        }
-    );
-    assert_eq!(
-        coordinator.gray_deadline_elapsed(1_350),
-        RefreshAction::RenderGray { page: 1 }
     );
 
     coordinator
 }
 
 fn coordinator_in_gray_refresh_on_page_one() -> RefreshCoordinator {
-    coordinator_in_gray_refresh_on_page_one_with_strategy(PostGrayStrategy::SilentReseed)
-}
-
-fn coordinator_in_gray_delay_on_page_one() -> RefreshCoordinator {
-    let mut coordinator = RefreshCoordinator::new(4, PostGrayStrategy::SilentReseed);
+    let mut coordinator = RefreshCoordinator::new(4);
 
     assert_eq!(
-        coordinator.record_gray_complete(),
-        RefreshAction::ReseedBw {
-            page: 0,
-            visible: false,
-        }
-    );
-    assert_eq!(
-        coordinator.record_reseed_complete(),
-        RefreshAction::WaitForRequest
+        coordinator.record_seed_complete(0, 0),
+        RefreshAction::WaitUntil { deadline_ms: 350 }
     );
     assert_eq!(
         coordinator.start_bw(1),
@@ -516,9 +612,29 @@ fn coordinator_in_gray_delay_on_page_one() -> RefreshCoordinator {
     );
     assert_eq!(
         coordinator.record_bw_complete(1, 1_000),
-        RefreshAction::WaitUntil {
-            deadline_ms: 1_350,
-        }
+        RefreshAction::WaitUntil { deadline_ms: 1_350 }
+    );
+    assert_eq!(
+        coordinator.gray_deadline_elapsed(1_350),
+        RefreshAction::RenderGray { page: 1 }
+    );
+    coordinator
+}
+
+fn coordinator_in_gray_delay_on_page_one() -> RefreshCoordinator {
+    let mut coordinator = RefreshCoordinator::new(4);
+
+    assert_eq!(
+        coordinator.record_seed_complete(0, 0),
+        RefreshAction::WaitUntil { deadline_ms: 350 }
+    );
+    assert_eq!(
+        coordinator.start_bw(1),
+        RefreshAction::RenderBw { from: 0, target: 1 }
+    );
+    assert_eq!(
+        coordinator.record_bw_complete(1, 1_000),
+        RefreshAction::WaitUntil { deadline_ms: 1_350 }
     );
 
     coordinator
@@ -548,9 +664,7 @@ fn bw_completion_starts_gray_delay_at_completion_time() {
     assert_eq!(coordinator.displayed_page(), 1);
     assert_eq!(
         coordinator.record_bw_complete(2, 1_000),
-        RefreshAction::WaitUntil {
-            deadline_ms: 1_350,
-        }
+        RefreshAction::WaitUntil { deadline_ms: 1_350 }
     );
     assert_eq!(coordinator.displayed_page(), 2);
     assert_eq!(coordinator.phase(), RefreshPhase::GrayDelay);
@@ -566,12 +680,15 @@ fn displayed_page_changes_only_after_refresh_completion() {
         RefreshAction::RenderBw { from: 1, target: 2 }
     );
     assert_eq!(coordinator.displayed_page(), 1);
-    assert_eq!(coordinator.record_bw_complete(2, 1_000), RefreshAction::WaitUntil { deadline_ms: 1_350 });
+    assert_eq!(
+        coordinator.record_bw_complete(2, 1_000),
+        RefreshAction::WaitUntil { deadline_ms: 1_350 }
+    );
     assert_eq!(coordinator.displayed_page(), 2);
 }
 
 #[test]
-fn request_during_gray_refresh_waits_for_reseed() {
+fn request_during_gray_refresh_is_observed_by_epoch_streaming() {
     let mut coordinator = coordinator_in_gray_refresh_on_page_one();
 
     assert_eq!(coordinator.request_arrived(), RefreshAction::None);
@@ -596,47 +713,37 @@ fn request_during_gray_delay_cancels_gray_and_starts_bw() {
 }
 
 #[test]
-fn silent_strategy_reseeds_without_visible_activation() {
+fn successful_overlay_starts_background_base_sync() {
     let mut coordinator = coordinator_in_gray_refresh_on_page_one();
 
     assert_eq!(
         coordinator.record_gray_complete(),
-        RefreshAction::ReseedBw {
-            page: 1,
-            visible: false,
-        }
+        RefreshAction::SyncBwBase { page: 1 }
     );
-    assert_eq!(coordinator.phase(), RefreshPhase::BwReseeding);
+    assert_eq!(coordinator.phase(), RefreshPhase::BaseSync);
 }
 
 #[test]
-fn fallback_strategy_reseeds_with_visible_activation() {
-    let mut coordinator =
-        coordinator_in_gray_refresh_on_page_one_with_strategy(PostGrayStrategy::VisibleReseed);
+fn cancelled_overlay_returns_to_request_waiting_without_sync() {
+    let mut coordinator = coordinator_in_gray_refresh_on_page_one();
 
     assert_eq!(
-        coordinator.record_gray_complete(),
-        RefreshAction::ReseedBw {
-            page: 1,
-            visible: true,
-        }
+        coordinator.record_gray_cancelled(),
+        RefreshAction::WaitForRequest
     );
-    assert_eq!(coordinator.phase(), RefreshPhase::BwReseeding);
+    assert_eq!(coordinator.phase(), RefreshPhase::BwReady);
 }
 
 #[test]
-fn successful_reseed_restores_bw_ready_state() {
+fn successful_base_sync_restores_bw_ready_state() {
     let mut coordinator = coordinator_in_gray_refresh_on_page_one();
 
     assert_eq!(
         coordinator.record_gray_complete(),
-        RefreshAction::ReseedBw {
-            page: 1,
-            visible: false,
-        }
+        RefreshAction::SyncBwBase { page: 1 }
     );
     assert_eq!(
-        coordinator.record_reseed_complete(),
+        coordinator.record_base_sync_complete(),
         RefreshAction::WaitForRequest
     );
     assert_eq!(coordinator.phase(), RefreshPhase::BwReady);
@@ -681,21 +788,85 @@ fn async_grayscale_streams_each_plane_in_sixteen_row_strips() {
 }
 
 #[test]
-fn silent_reseed_writes_bw_plane_to_both_ram_planes_without_activation() {
-    let trace = run_async_reseed(2, false);
+fn async_full_grayscale_reconstructs_absolute_planes_from_staged_slots() {
+    let book_bytes = include_bytes!("../fixtures/nav_probe.binbook");
+    let mut scratch = [0u8; 8192];
+    let mut book =
+        binbook::BinBook::open(&book_bytes[..], &mut scratch).expect("open nav probe book");
+    let open = book.open_info();
+    let page = book.page_info(0).expect("orientation page must exist");
+    let decompress_slot = |slot: usize| {
+        let offset = open.page_data_offset as usize + page.plane_dir.offsets[slot] as usize;
+        let end = offset + page.plane_dir.sizes[slot] as usize;
+        let mut plane = vec![0u8; 100 * 480];
+        binbook::decompress::decompress_bytes(
+            binbook::page_index::COMPRESSION_RLE_PACKBITS,
+            &book_bytes[offset..end],
+            &mut plane,
+            100 * 480,
+        )
+        .expect("decompress native plane");
+        plane
+    };
+    let msb = decompress_slot(0);
+    let lsb = decompress_slot(1);
+    let base = decompress_slot(2);
+    let mut expected = Vec::with_capacity(100 * 480 * 2);
+    expected.extend(
+        base.iter()
+            .zip(&msb)
+            .zip(&lsb)
+            .map(|((&base, &msb), &lsb)| !(base | (msb & !lsb))),
+    );
+    expected.extend(base.iter().zip(&lsb).map(|(&base, &lsb)| !(base | lsb)));
 
-    assert_eq!(trace.red_plane_slots, vec![2]);
-    assert_eq!(trace.black_plane_slots, vec![2]);
-    assert!(trace.refreshes.is_empty());
+    let (_, writes) = run_async_gray_render_with_writes(0);
+    let actual: Vec<u8> = writes
+        .iter()
+        .filter(|write| write.len() == 100)
+        .take(960)
+        .flatten()
+        .copied()
+        .collect();
+
+    assert_eq!(actual.len(), expected.len());
+    let mismatch = actual
+        .iter()
+        .zip(&expected)
+        .position(|(actual, expected)| actual != expected);
+    assert_eq!(
+        mismatch, None,
+        "absolute grayscale byte stream differs at offset {mismatch:?}"
+    );
 }
 
+#[cfg(feature = "diagnostic-console")]
 #[test]
-fn visible_reseed_adds_exactly_one_full_refresh() {
-    let trace = run_async_reseed(2, true);
+fn async_corner_probe_streams_sixteen_bytes_per_128_pixel_window_row() {
+    let writes = Rc::new(RefCell::new(Vec::new()));
+    let delay_calls = Rc::new(RefCell::new(Vec::new()));
+    let mut driver = Ssd1677Driver::new(
+        RecordingSpi {
+            writes: Rc::clone(&writes),
+        },
+        NoopOutputPin,
+        NoopOutputPin,
+        NoopOutputPin,
+        LowBusyPin,
+    );
+    let delay = RecordingYieldDelay {
+        calls: Rc::clone(&delay_calls),
+    };
 
-    assert_eq!(trace.red_plane_slots, vec![2]);
-    assert_eq!(trace.black_plane_slots, vec![2]);
-    assert_eq!(trace.refreshes, vec![RefreshMode::Full]);
+    block_on(display::window_corners_probe_async(&mut driver, &delay))
+        .expect("corner probe should succeed");
+
+    let sixteen_byte_rows = writes
+        .borrow()
+        .iter()
+        .filter(|write| write.len() == 128 / 8)
+        .count();
+    assert_eq!(sixteen_byte_rows, 4 * 2 * 96);
 }
 
 #[test]

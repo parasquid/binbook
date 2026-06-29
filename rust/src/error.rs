@@ -8,12 +8,14 @@ pub enum Error {
     InvalidPageIndex,
     InvalidNavIndex,
     InvalidChapterIndex,
+    InvalidDisplayProfile,
     InvalidStringRef,
     PageOutOfRange,
     NavOutOfRange,
     ChapterOutOfRange,
     UnsupportedPixelFormat(u16),
     UnsupportedCompression(u16),
+    UnsupportedWaveformHint(u16),
     DecompressFailed,
     OutputBufferTooSmall,
 }
@@ -29,12 +31,16 @@ impl core::fmt::Display for Error {
             Self::InvalidPageIndex => write!(f, "invalid page index"),
             Self::InvalidNavIndex => write!(f, "invalid nav index"),
             Self::InvalidChapterIndex => write!(f, "invalid chapter index"),
+            Self::InvalidDisplayProfile => write!(f, "invalid display profile"),
             Self::InvalidStringRef => write!(f, "invalid string reference"),
             Self::PageOutOfRange => write!(f, "page index out of range"),
             Self::NavOutOfRange => write!(f, "nav index out of range"),
             Self::ChapterOutOfRange => write!(f, "chapter index out of range"),
             Self::UnsupportedPixelFormat(pf) => write!(f, "unsupported pixel format {pf}"),
             Self::UnsupportedCompression(cm) => write!(f, "unsupported compression method {cm}"),
+            Self::UnsupportedWaveformHint(hint) => {
+                write!(f, "unsupported waveform hint {hint}")
+            }
             Self::DecompressFailed => write!(f, "decompression failed"),
             Self::OutputBufferTooSmall => write!(f, "output buffer too small"),
         }

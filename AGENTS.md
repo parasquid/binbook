@@ -1,5 +1,10 @@
 # Agent Instructions
 
+## Local Overlay
+
+- If present, also apply [`AGENTS.local.md`](AGENTS.local.md) after this file.
+- Treat `AGENTS.local.md` as a host-local, gitignored overlay for machine-specific paths, device notes, and capture coordinates.
+
 ## Project Context
 
 - Treat [`BINBOOK_FORMAT_SPEC.md`](BINBOOK_FORMAT_SPEC.md) as the authoritative BinBook 0.1 candidate file-format specification.
@@ -211,6 +216,30 @@ Required hardware verification steps for firmware tasks:
 
 **Do not claim firmware work is complete without hardware evidence.** Host tests and builds are necessary but not sufficient.
 
+### Display Test Image Discipline
+
+Use a persistent orientation frame on every firmware display-test page so
+rotation, mirroring, clipping, partial writes, stale regions, and grayscale
+errors are visually distinguishable:
+
+- Draw a black 8–12 pixel border around the active display area.
+- Label all corners `TL`, `TR`, `BL`, and `BR`, with a unique shape at each
+  corner.
+- Label the center of each edge `TOP`, `RIGHT`, `BOTTOM`, and `LEFT`.
+- Include a center crosshair and horizontal and vertical rulers.
+- Add alternating edge ticks every 100 pixels.
+- Show the page number and expected orientation.
+- Include black, dark-gray, light-gray, and white calibration swatches.
+- Avoid large completely white regions; use a faint grid so unwritten areas
+  cannot be mistaken for intentional content.
+- Include one asymmetric feature, such as a black triangle only at the
+  top-left.
+
+Navigation fixtures should give each page a dominant, unmistakable pattern,
+such as horizontal bands, a checkerboard, vertical bands, or large text with
+diagonals. Keep the orientation frame identical across pages so only the page
+content changes.
+
 ### Plan Writing Conventions
 
 - Write plans assuming the executing agent starts cold with no prior conversation context. Include all necessary file paths, commands, and constraints explicitly.
@@ -258,6 +287,7 @@ Required hardware verification steps for firmware tasks:
 - Treat user questions as requests for explanation by default.
 - Do not implement changes in response to a question unless the user explicitly asks to implement, fix, add, commit, or change code.
 - If the user asks "can we", "is there", "how do I", "what about", or similar, answer the question directly instead of starting implementation.
+- If the user asks to try again, treat it as a directive to re-attempt the task immediately with the strongest valid path. Do not stop at the first failure, and do not make excuses.
 - If an answer suggests a possible code change, explain the option and ask before editing.
 - When unsure whether the user wants action or explanation, ask before editing files.
 - Keep responses concise and factual.

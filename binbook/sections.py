@@ -76,7 +76,7 @@ class DisplayProfileSection:
             native_grayscale_levels=profile.grayscale_levels,
             required_grayscale_levels=profile.grayscale_levels,
             framebuffer_bits_per_pixel=profile.framebuffer_bits_per_pixel,
-            waveform_hint=1,
+            waveform_hint=int(profile.waveform_hint),
             dither_mode=0,
         )
 

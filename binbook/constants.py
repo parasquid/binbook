@@ -70,6 +70,12 @@ class PixelFormatFlag(IntEnum):
     RGBA8888 = 1 << 5
 
 
+class WaveformHint(IntEnum):
+    UNKNOWN = 0
+    SSD1677_ABSOLUTE_GRAY2 = 1
+    SSD1677_STAGED_GRAY2 = 2
+
+
 class CompressionMethod(IntEnum):
     NONE = 0
     RLE_PACKBITS = 1

@@ -161,10 +161,11 @@ cargo run --features serial-device -- diag logs --port "$PORT" --since <returned
 not a fixed protocol constant. Continue from each returned cursor when the
 bounded response does not yet include the generated render.
 
-Verify increasing sequences and the events `CMD_RECEIPT`, `PAGE_DECISION`,
-`RENDER_START`, `REFRESH_DECISION`, `PANEL_MODE`, and `RENDER_SUCCESS`. After
-clear, no pre-clear record may reappear; the retrieval command's own receipt is
-a valid new record.
+Verify increasing sequences and the current aggregator events `CMD_RECEIPT`,
+`REFRESH_PHASE`, `PANEL_MODE`, `CONTROLLER_RAM_STATE`, `PAGE_TURN`, and
+`TURN_DEQUEUED`. Probe operations additionally emit `RENDER_START` and
+`RENDER_SUCCESS`. After clear, no pre-clear record may reappear; the retrieval
+command's own receipt is a valid new record.
 
 ### 8. Verify Crash Flash Behavior
 
@@ -199,9 +200,20 @@ Record who or what observed each visible result.
 
 ### 10. Verify Fragmented, Batched, And Malformed Streams
 
+Run the three transport tests explicitly. Do not use an unfiltered
+`--ignored`: that also selects the staged-gray exercise, whose zero-error
+precondition intentionally conflicts with the malformed-frame test.
+
 ```bash
-cargo test --features serial-device --test hardware_diagnostic -- \
-  --ignored --nocapture --test-threads=1
+cargo test --features serial-device --test hardware_diagnostic \
+  hardware_byte_by_byte_status_request -- \
+  --ignored --exact --nocapture --test-threads=1
+cargo test --features serial-device --test hardware_diagnostic \
+  hardware_two_frame_batched_request -- \
+  --ignored --exact --nocapture --test-threads=1
+cargo test --features serial-device --test hardware_diagnostic \
+  hardware_malformed_frame_does_not_wedge_stream -- \
+  --ignored --exact --nocapture --test-threads=1
 cargo run --features serial-device -- diag status --port "$PORT"
 ```
 
@@ -232,16 +244,16 @@ cargo run --features serial-device -- diag hello --port "$PORT"
 
 Leave the device running the normal diagnostic image.
 
-### 12. Verify Deferred Grayscale Exercise
+### 12. Verify Staged Grayscale Exercise
 
-This section applies to the async deferred-gray experiment. Keep one process on
+This section validates the permanent async staged-grayscale behavior. Keep one process on
 `/dev/ttyACM0` at a time and do not start the serial exercise until the boot
 capture has finished.
 
-Flash the temporary probe image:
+Flash the permanent diagnostic image:
 
 ```bash
-FW_FEATURES="firmware-bin,diagnostic-console,deferred-gray-probe" \
+FW_FEATURES="firmware-bin,diagnostic-console" \
   firmware/scripts/flash-xteink-x4-nav-probe.sh
 ```
 
@@ -262,17 +274,23 @@ beginning:
 
 ```bash
 cd cli
-cargo run --features serial-device -- diag exercise deferred-gray --port "$PORT"
+cargo run --features serial-device -- diag exercise staged-gray --port "$PORT"
 cd ..
 ```
 
 While the exercise runs, verify all of these visible criteria:
 
-1. Page 1 appears in black and white before grayscale begins.
-2. Grayscale starts only after the 350 ms idle delay.
-3. Silent reseed causes no visible flash, BW reversion, or corruption.
-4. Queued intermediate pages appear in FIFO order as `2`, `3`, `2`.
-5. The final `RIGHT` transition lands on page `3` and remains artifact-free.
+1. The fast base covers the entire active panel; every non-white swatch is
+   initially black and white remains white.
+2. Differential refinement starts only after the 350 ms idle delay and separates
+   the dark- and light-gray swatches.
+3. Black and white remain visually stable; no full-panel clear, inversion,
+   white flash, or black flash occurs.
+4. A turn queued before activation cancels overlay streaming at a 16-row
+   boundary. A turn queued after activation waits for BUSY completion.
+5. A turn during background base sync cancels sync without waiting for all rows.
+6. Queued intermediate pages complete in FIFO order as `2`, `3`, `2`.
+7. The final `RIGHT` transition lands on page `3` and remains artifact-free.
 
 After the exercise, query `STATUS` and `LOG` independently:
 
@@ -283,27 +301,13 @@ cargo run --features serial-device -- diag logs --port "$PORT" --since 0
 cd ..
 ```
 
-Confirm `page=3`, `last_error=0`, `dropped_turns=0`, and ordered refresh / reseed
-events. The exact event names depend on the build, but the log must show the
-queued turn, gray-delay, gray-refresh, and reseed sequence for the exercise.
+Confirm `page=3`, `last_error=0`, `dropped_turns=0`, waveform hint `2`, LUT
+revision `1`, and ordered `GRAY_OVERLAY_*`, `BW_BASE_SYNC_*`, and
+`CONTROLLER_RAM_STATE` events.
 
-Select the permanent strategy only after the webcam verdict:
-
-- if the silent reseed result is accepted, keep the silent strategy and remove
-  the probe selector;
-- if the silent reseed result is rejected, keep visible reseed as the permanent
-  default and remove the probe selector.
-
-After the strategy decision, rebuild the permanent diagnostic image with the
-selected default and flash it with:
-
-```bash
-FW_FEATURES="firmware-bin,diagnostic-console" \
-  firmware/scripts/flash-xteink-x4-nav-probe.sh
-```
-
-Then reconfirm `HELLO` and `STATUS` before leaving the device running that
-image.
+Reject the candidate image if the webcam shows a full refresh, BW reversion,
+corruption, clipping, or incomplete full-panel writes. Reconfirm `HELLO` and `STATUS`
+before leaving the device running the permanent diagnostic image.
 
 ## Failure Handling
 

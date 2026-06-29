@@ -19,6 +19,21 @@ const SSD1677_LUT_4G: [u8; 112] = [
     0x00, 0x00, 0x00, 0x01, 0x22, 0x22, 0x22, 0x22, 0x22, 0x17, 0x41, 0xa8, 0x32, 0x30, 0x00, 0x00,
 ];
 
+/// CrossPoint community SDK differential grayscale LUT, pinned from
+/// https://github.com/crosspoint-reader/community-sdk/blob/198ad267219c25c8ab84418b806c66f1fb5216a3/libs/display/EInkDisplay/src/EInkDisplay.cpp
+/// and used under that project's MIT license.
+const SSD1677_LUT_STAGED_GRAY: [u8; 112] = [
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x54, 0x54, 0x40, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xAA, 0xA0, 0xA8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA2, 0x22,
+    0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x00, 0x01, 0x01, 0x01, 0x01, 0x00, 0x01, 0x01, 0x01, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x8F, 0x8F, 0x8F, 0x8F, 0x8F, 0x17, 0x41, 0xA8, 0x32, 0x30, 0x00, 0x00,
+];
+
+pub const STAGED_GRAY_LUT_REVISION: u16 = 1;
+
 /// SSD1677 command bytes.
 pub struct Ssd1677;
 
@@ -47,6 +62,7 @@ impl Ssd1677 {
     pub const UPDATE_CTRL_NORMAL: u8 = 0xF7;
     pub const UPDATE_CTRL_FAST: u8 = 0xFC;
     pub const UPDATE_CTRL_GRAYSCALE: u8 = 0xC7;
+    pub const UPDATE_CTRL_STAGED_GRAYSCALE: u8 = 0x0C;
     pub const DATA_ENTRY_X_INC_Y_INC_HORIZONTAL: u8 = 0x03;
 }
 
@@ -57,6 +73,7 @@ pub struct Ssd1677Driver<SPI, CS, DC, RST, BUSY> {
     dc: DC,
     rst: RST,
     busy: BUSY,
+    screen_on: bool,
 }
 
 impl<SPI, CS, DC, RST, BUSY> Ssd1677Driver<SPI, CS, DC, RST, BUSY>
@@ -75,6 +92,7 @@ where
             dc,
             rst,
             busy,
+            screen_on: false,
         }
     }
 
@@ -117,7 +135,9 @@ where
         };
 
         self.send_cmd_data(Ssd1677::DISPLAY_UPDATE_CTRL2, &[ctrl])?;
-        self.send_cmd(Ssd1677::MASTER_ACTIVATION)
+        self.send_cmd(Ssd1677::MASTER_ACTIVATION)?;
+        self.screen_on = matches!(mode, RefreshMode::Partial);
+        Ok(())
     }
 
     fn reset_display_with_delay(&mut self, delay: &dyn Delay) -> HalResult<()> {
@@ -127,6 +147,7 @@ where
         delay.ms(20);
         self.rst.set_high()?;
         delay.ms(200);
+        self.screen_on = false;
         Ok(())
     }
 
@@ -140,6 +161,7 @@ where
         delay.ms(20).await;
         self.rst.set_high()?;
         delay.ms(200).await;
+        self.screen_on = false;
         Ok(())
     }
 
@@ -179,6 +201,29 @@ where
         self.send_cmd_data(Ssd1677::VCOM_VOLTAGE, &SSD1677_LUT_4G[109..110])?;
 
         Ok(())
+    }
+
+    /// Load the pinned short differential-grayscale waveform without resetting
+    /// the controller or altering its RAM contents.
+    pub fn load_staged_grayscale_lut(&mut self) -> HalResult<()> {
+        self.send_cmd_data(Ssd1677::WRITE_LUT, &SSD1677_LUT_STAGED_GRAY[..105])?;
+        self.send_cmd_data(Ssd1677::GATE_VOLTAGE, &SSD1677_LUT_STAGED_GRAY[105..106])?;
+        self.send_cmd_data(Ssd1677::SOURCE_VOLTAGE, &SSD1677_LUT_STAGED_GRAY[106..109])?;
+        self.send_cmd_data(Ssd1677::VCOM_VOLTAGE, &SSD1677_LUT_STAGED_GRAY[109..110])
+    }
+
+    /// Activate the already-loaded staged waveform and wait for BUSY to clear.
+    pub async fn activate_staged_grayscale_async<D: xteink_hal::AsyncDelay + ?Sized>(
+        &mut self,
+        delay: &D,
+    ) -> HalResult<()> {
+        self.send_cmd_data(Ssd1677::DISPLAY_UPDATE_CTRL1, &[0x00])?;
+        let ctrl = Ssd1677::UPDATE_CTRL_STAGED_GRAYSCALE
+            | if self.screen_on { 0x00 } else { 0xC0 };
+        self.send_cmd_data(Ssd1677::DISPLAY_UPDATE_CTRL2, &[ctrl])?;
+        self.send_cmd(Ssd1677::MASTER_ACTIVATION)?;
+        self.screen_on = true;
+        self.wait_ready_async(delay).await
     }
 
     /// Initialize display with the Xteink X4 panel sequence.
@@ -442,15 +487,15 @@ extern crate std;
 mod tests {
     use super::*;
     use core::future::Future;
-    use std::cell::RefCell;
-    use std::cell::Cell;
-    use std::format;
     use std::boxed::Box;
+    use std::cell::Cell;
+    use std::cell::RefCell;
+    use std::format;
     use std::pin::Pin;
     use std::rc::Rc;
     use std::string::String;
-    use std::vec::Vec;
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    use std::vec::Vec;
 
     #[derive(Debug, Default)]
     struct MockSpi {
@@ -578,8 +623,7 @@ mod tests {
         )
     }
 
-    fn traced_driver_with_busy_high(
-    ) -> (
+    fn traced_driver_with_busy_high() -> (
         Ssd1677Driver<TracedSpi, MockOutputPin, MockOutputPin, MockOutputPin, TracedBusyPin>,
         Rc<RefCell<Vec<u8>>>,
         Rc<Cell<usize>>,
@@ -629,7 +673,8 @@ mod tests {
 
     impl xteink_hal::AsyncDelay for RecordingAsyncDelay {
         async fn ms(&self, ms: u32) {
-            self.elapsed_ms.set(self.elapsed_ms.get().saturating_add(ms));
+            self.elapsed_ms
+                .set(self.elapsed_ms.get().saturating_add(ms));
         }
     }
 
@@ -962,15 +1007,14 @@ mod tests {
     fn trigger_refresh_sends_activation_without_waiting_for_busy() {
         let (mut driver, trace, busy_reads) = traced_driver_with_busy_high();
 
-        driver
-            .trigger_refresh(RefreshMode::Grayscale)
-            .unwrap();
+        driver.trigger_refresh(RefreshMode::Grayscale).unwrap();
 
         assert_eq!(busy_reads.get(), 0);
-        assert!(trace
-            .borrow()
-            .windows(2)
-            .any(|w| w == [Ssd1677::DISPLAY_UPDATE_CTRL2, Ssd1677::UPDATE_CTRL_GRAYSCALE]));
+        assert!(trace.borrow().windows(2).any(|w| w
+            == [
+                Ssd1677::DISPLAY_UPDATE_CTRL2,
+                Ssd1677::UPDATE_CTRL_GRAYSCALE
+            ]));
         assert!(trace.borrow().contains(&Ssd1677::MASTER_ACTIVATION));
     }
 
@@ -1046,6 +1090,80 @@ mod tests {
                 Vec::from([0xC7]),
                 Vec::from([Ssd1677::MASTER_ACTIVATION]),
             ],
+        );
+    }
+
+    #[test]
+    fn staged_grayscale_lut_matches_pinned_crosspoint_bytes() {
+        let mut driver = driver();
+
+        driver.load_staged_grayscale_lut().unwrap();
+
+        assert_eq!(STAGED_GRAY_LUT_REVISION, 1);
+        assert_eq!(
+            data_after(&driver.spi.writes, Ssd1677::WRITE_LUT).len(),
+            105
+        );
+        assert_eq!(
+            data_after(&driver.spi.writes, Ssd1677::GATE_VOLTAGE),
+            &[0x17]
+        );
+        assert_eq!(
+            data_after(&driver.spi.writes, Ssd1677::SOURCE_VOLTAGE),
+            &[0x41, 0xA8, 0x32]
+        );
+        assert_eq!(
+            data_after(&driver.spi.writes, Ssd1677::VCOM_VOLTAGE),
+            &[0x30]
+        );
+        assert!(!driver
+            .spi
+            .writes
+            .iter()
+            .any(|write| write.as_slice() == [Ssd1677::SW_RESET]));
+    }
+
+    #[test]
+    fn staged_grayscale_activation_uses_custom_fast_control_and_waits() {
+        let (mut driver, delay) = async_busy_driver(3);
+        driver.trigger_refresh(RefreshMode::Partial).unwrap();
+        driver.spi.writes.clear();
+
+        block_on(driver.activate_staged_grayscale_async(&delay)).unwrap();
+
+        assert_eq!(
+            driver.spi.writes,
+            [
+                Vec::from([Ssd1677::DISPLAY_UPDATE_CTRL1]),
+                Vec::from([0x00]),
+                Vec::from([Ssd1677::DISPLAY_UPDATE_CTRL2]),
+                Vec::from([0x0C]),
+                Vec::from([Ssd1677::MASTER_ACTIVATION]),
+            ]
+        );
+        assert_eq!(delay.awaited_milliseconds(), 3);
+        assert!(!driver.spi.writes.iter().any(|write| {
+            matches!(
+                write.as_slice(),
+                [Ssd1677::SW_RESET]
+                    | [Ssd1677::UPDATE_CTRL_NORMAL]
+                    | [Ssd1677::UPDATE_CTRL_GRAYSCALE]
+            )
+        }));
+    }
+
+    #[test]
+    fn staged_grayscale_activation_powers_on_after_full_refresh_power_down() {
+        let (mut driver, delay) = async_busy_driver(0);
+
+        driver
+            .refresh_with_delay(RefreshMode::Full, &MockDelay)
+            .unwrap();
+        block_on(driver.activate_staged_grayscale_async(&delay)).unwrap();
+
+        assert_eq!(
+            data_after_nth(&driver.spi.writes, Ssd1677::DISPLAY_UPDATE_CTRL2, 1),
+            &[Ssd1677::UPDATE_CTRL_STAGED_GRAYSCALE | 0xC0],
         );
     }
 }

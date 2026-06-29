@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..constants import PixelFormat, PixelFormatFlag
+from ..constants import PixelFormat, PixelFormatFlag, WaveformHint
 from .base import DisplayProfile
 
 
@@ -23,5 +23,6 @@ PROFILE = DisplayProfile(
     scan_order_hint=1,
     grayscale_levels=4,
     framebuffer_bits_per_pixel=2,
+    waveform_hint=WaveformHint.SSD1677_STAGED_GRAY2,
     page_data_alignment=16,
 )

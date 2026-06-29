@@ -1,3 +1,5 @@
+pub const DISPLAY_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(70);
+
 pub mod diag_protocol {
     use binbook_diagnostic_protocol::{
         decode_frame, encode_frame, encode_log_get_payload, encode_page_payload,
@@ -281,6 +283,16 @@ pub mod diag_protocol {
             EVT_TURN_DROPPED => "TURN_DROPPED",
             EVT_RESEED_START => "RESEED_START",
             EVT_RESEED_COMPLETE => "RESEED_COMPLETE",
+            EVT_GRAY_DELAY_CANCELLED => "GRAY_DELAY_CANCELLED",
+            EVT_GRAY_OVERLAY_START => "GRAY_OVERLAY_START",
+            EVT_GRAY_OVERLAY_CANCELLED => "GRAY_OVERLAY_CANCELLED",
+            EVT_GRAY_OVERLAY_ACTIVATE => "GRAY_OVERLAY_ACTIVATE",
+            EVT_GRAY_OVERLAY_COMPLETE => "GRAY_OVERLAY_COMPLETE",
+            EVT_BW_BASE_SYNC_START => "BW_BASE_SYNC_START",
+            EVT_BW_BASE_SYNC_CANCELLED => "BW_BASE_SYNC_CANCELLED",
+            EVT_BW_BASE_SYNC_COMPLETE => "BW_BASE_SYNC_COMPLETE",
+            EVT_CONTROLLER_RAM_STATE => "CONTROLLER_RAM_STATE",
+            EVT_WAVEFORM_SELECTED => "WAVEFORM_SELECTED",
             EVT_DISPLAY_RECOVERY => "DISPLAY_RECOVERY",
             _ => "UNKNOWN",
         }
@@ -437,12 +449,10 @@ pub mod serial_transport {
                 }
                 responses[expected_index] = Some(frame);
                 if responses.iter().all(Option::is_some) {
-                    return Ok(
-                        responses
-                            .into_iter()
-                            .map(|frame| frame.expect("all expected sequences present"))
-                            .collect(),
-                    );
+                    return Ok(responses
+                        .into_iter()
+                        .map(|frame| frame.expect("all expected sequences present"))
+                        .collect());
                 }
             }
             if buffered.len() > MAX_FRAME_BYTES {
@@ -463,7 +473,10 @@ pub mod serial_transport {
         if missing.is_empty() {
             Err("response timeout".into())
         } else {
-            Err(format!("response timeout missing sequences {}", missing.join(",")))
+            Err(format!(
+                "response timeout missing sequences {}",
+                missing.join(",")
+            ))
         }
     }
 }
@@ -473,170 +486,247 @@ pub mod exercise {
     use std::io::{Read, Write};
     use std::time::{Duration, Instant};
 
-    use binbook_diagnostic_protocol::{KeyCode, Opcode};
+    use binbook_diagnostic_protocol::{
+        decode_frame, decode_log_record, decode_log_response_header, decode_status_payload,
+        KeyCode, LogRecordPayload, Opcode, StatusPayload, EVT_BW_BASE_SYNC_CANCELLED,
+        EVT_BW_BASE_SYNC_COMPLETE, EVT_BW_BASE_SYNC_START, EVT_DISPLAY_ERROR,
+        EVT_GRAY_OVERLAY_ACTIVATE, EVT_GRAY_OVERLAY_CANCELLED, EVT_GRAY_OVERLAY_COMPLETE,
+        EVT_GRAY_OVERLAY_START, EVT_REFRESH_DECISION, EVT_RENDER_FAILURE, EVT_TURN_DEQUEUED,
+        EVT_TURN_DROPPED, EVT_WAVEFORM_SELECTED, LOG_RECORD_BYTES, LOG_RESPONSE_HEADER_BYTES,
+        MAX_PAYLOAD_BYTES,
+    };
 
     use crate::{diag_protocol, serial_transport};
 
     const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+    const DISPLAY_REQUEST_TIMEOUT: Duration = Duration::from_secs(70);
+    const BATCH_DISPLAY_TIMEOUT: Duration = Duration::from_secs(210);
+    const LOG_POLL_INTERVAL: Duration = Duration::from_millis(500);
     const LOG_BUDGET: u16 = 496;
+    const OVERLAY_CANCELLATION_OFFSET: Duration = Duration::from_millis(360);
 
-    pub fn run_deferred_gray(port: &str) -> Result<(), String> {
+    pub fn run_staged_gray(port: &str) -> Result<(), String> {
         let mut session = serialport::new(port, 115_200)
             .timeout(Duration::from_secs(2))
             .open()
             .map_err(|e| format!("Failed to open {port}: {e}"))?;
-        run_deferred_gray_io(&mut session, port)
+        run_staged_gray_io(&mut session, port)
     }
 
-    pub fn run_deferred_gray_io<T: Read + Write>(
-        io: &mut T,
-        _port: &str,
-    ) -> Result<(), String> {
+    pub fn run_staged_gray_io<T: Read + Write>(io: &mut T, _port: &str) -> Result<(), String> {
         let start = Instant::now();
         let mut cursor = 0u32;
+        let mut evidence = Vec::new();
 
-        let page_zero = diag_protocol::page_goto_request(1, 0);
+        let page_last =
+            diag_protocol::page_action_request(1, binbook_diagnostic_protocol::PageAction::Last);
+        validate_text(
+            &serial_transport::send_and_receive_io(
+                io,
+                &page_last,
+                Opcode::Page,
+                1,
+                DISPLAY_REQUEST_TIMEOUT,
+            )?,
+            Opcode::Page,
+            1,
+            "current_page=3",
+        )?;
+        phase("nonzero baseline", start);
+
+        let page_zero = diag_protocol::page_goto_request(2, 0);
         validate_text(
             &serial_transport::send_and_receive_io(
                 io,
                 &page_zero,
                 Opcode::Page,
-                1,
-                REQUEST_TIMEOUT,
+                2,
+                DISPLAY_REQUEST_TIMEOUT,
             )?,
             Opcode::Page,
-            1,
+            2,
             "current_page=0",
         )?;
         phase("page-0 baseline", start);
 
-        let status = diag_protocol::status_request(2);
+        let status = diag_protocol::status_request(3);
         validate_text(
             &serial_transport::send_and_receive_io(
                 io,
                 &status,
                 Opcode::Status,
-                2,
+                3,
                 REQUEST_TIMEOUT,
             )?,
             Opcode::Status,
-            2,
+            3,
             "current_page=0",
         )?;
         phase("status baseline", start);
 
-        let clear = diag_protocol::log_clear_request(3);
+        let clear = diag_protocol::log_clear_request(4);
         validate_text(
             &serial_transport::send_and_receive_io(
                 io,
                 &clear,
                 Opcode::LogClear,
-                3,
+                4,
                 REQUEST_TIMEOUT,
             )?,
             Opcode::LogClear,
-            3,
+            4,
             "record_count=0",
         )?;
         phase("clear logs", start);
 
-        let key_right = diag_protocol::key_request(4, KeyCode::Right);
+        let key_right = diag_protocol::key_request(5, KeyCode::Right);
         validate_text(
             &serial_transport::send_and_receive_io(
                 io,
                 &key_right,
                 Opcode::Key,
-                4,
-                REQUEST_TIMEOUT,
+                5,
+                DISPLAY_REQUEST_TIMEOUT,
             )?,
             Opcode::Key,
-            4,
+            5,
             "ok",
         )?;
         phase("prime gray", start);
+        let poll_deadline = Instant::now() + DISPLAY_REQUEST_TIMEOUT;
+        loop {
+            let refresh_poll = diag_protocol::log_get_request(6, cursor, LOG_BUDGET);
+            let refresh_response = serial_transport::send_and_receive_io(
+                io,
+                &refresh_poll,
+                Opcode::LogGet,
+                6,
+                REQUEST_TIMEOUT,
+            )?;
+            let (next, mut records) = decode_log_evidence(&refresh_response, 6)?;
+            cursor = next;
+            evidence.append(&mut records);
+            if evidence
+                .iter()
+                .any(|record| record.event == EVT_BW_BASE_SYNC_COMPLETE && record.arg0 == 1)
+            {
+                break;
+            }
+            if Instant::now() >= poll_deadline {
+                return Err("timed out waiting for idle staged refinement".into());
+            }
+            std::thread::sleep(LOG_POLL_INTERVAL);
+        }
+        phase("idle staged refinement complete", start);
 
-        let refresh_poll = diag_protocol::log_get_request(5, cursor, LOG_BUDGET);
-        let refresh_response = serial_transport::send_and_receive_io(
+        let key_right = diag_protocol::key_request(7, KeyCode::Right);
+        validate_text(
+            &serial_transport::send_and_receive_io(
+                io,
+                &key_right,
+                Opcode::Key,
+                7,
+                DISPLAY_REQUEST_TIMEOUT,
+            )?,
+            Opcode::Key,
+            7,
+            "ok",
+        )?;
+        let cancel_at = Instant::now() + OVERLAY_CANCELLATION_OFFSET;
+        let overlay_poll = diag_protocol::log_get_request(10, cursor, LOG_BUDGET);
+        let overlay_response = serial_transport::send_and_receive_io(
             io,
-            &refresh_poll,
+            &overlay_poll,
             Opcode::LogGet,
-            5,
+            10,
             REQUEST_TIMEOUT,
         )?;
-        let refresh_text = validate_text(&refresh_response, Opcode::LogGet, 5, "REFRESH_PHASE")?;
-        if !refresh_text.contains("REFRESH_PHASE") {
-            return Err("missing REFRESH_PHASE event".into());
+        let (next, mut records) = decode_log_evidence(&overlay_response, 10)?;
+        cursor = next;
+        evidence.append(&mut records);
+        if let Some(remaining) = cancel_at.checked_duration_since(Instant::now()) {
+            std::thread::sleep(remaining);
         }
-        cursor = next_cursor(&refresh_text)?;
-        phase("gray refreshing", start);
+        phase("page-2 cancellation window", start);
 
         let mut batched = Vec::new();
-        for (sequence, key) in [(6, KeyCode::Right), (7, KeyCode::Right), (8, KeyCode::Left)] {
+        for (sequence, key) in [(8, KeyCode::Right), (9, KeyCode::Left)] {
             batched.extend_from_slice(&diag_protocol::key_request(sequence, key));
         }
         let batch_responses = serial_transport::send_batch_and_receive_io(
             io,
             &batched,
             Opcode::Key,
-            &[6, 7, 8],
-            REQUEST_TIMEOUT,
+            &[8, 9],
+            BATCH_DISPLAY_TIMEOUT,
         )?;
-        for (frame, sequence) in batch_responses.into_iter().zip([6u16, 7, 8]) {
+        for (frame, sequence) in batch_responses.into_iter().zip([8u16, 9]) {
             validate_text(&frame, Opcode::Key, sequence, "ok")?;
         }
         phase("batched turns", start);
-
-        let reseed_poll = diag_protocol::log_get_request(9, cursor, LOG_BUDGET);
-        let reseed_response =
-            serial_transport::send_and_receive_io(io, &reseed_poll, Opcode::LogGet, 9, REQUEST_TIMEOUT)?;
-        let reseed_text = validate_text(&reseed_response, Opcode::LogGet, 9, "RESEED_COMPLETE")?;
-        if !reseed_text.contains("RESEED_COMPLETE") {
-            return Err("missing RESEED_COMPLETE event".into());
+        let poll_deadline = Instant::now() + DISPLAY_REQUEST_TIMEOUT;
+        loop {
+            let reseed_poll = diag_protocol::log_get_request(10, cursor, LOG_BUDGET);
+            let reseed_response = serial_transport::send_and_receive_io(
+                io,
+                &reseed_poll,
+                Opcode::LogGet,
+                10,
+                REQUEST_TIMEOUT,
+            )?;
+            let (next, mut records) = decode_log_evidence(&reseed_response, 10)?;
+            cursor = next;
+            evidence.append(&mut records);
+            if evidence
+                .iter()
+                .any(|record| record.event == EVT_BW_BASE_SYNC_COMPLETE && record.arg0 == 2)
+            {
+                break;
+            }
+            if Instant::now() >= poll_deadline {
+                return Err("timed out waiting for BW base-sync completion".into());
+            }
+            std::thread::sleep(LOG_POLL_INTERVAL);
         }
-        cursor = next_cursor(&reseed_text)?;
-        phase("reseed complete", start);
+        phase("BW base sync complete", start);
 
-        let key_right = diag_protocol::key_request(10, KeyCode::Right);
+        let key_right = diag_protocol::key_request(11, KeyCode::Right);
         validate_text(
             &serial_transport::send_and_receive_io(
                 io,
                 &key_right,
                 Opcode::Key,
-                10,
-                REQUEST_TIMEOUT,
+                11,
+                DISPLAY_REQUEST_TIMEOUT,
             )?,
             Opcode::Key,
-            10,
+            11,
             "ok",
         )?;
         phase("final turn", start);
 
-        let final_status = diag_protocol::status_request(11);
-        let status_text = validate_text(
-            &serial_transport::send_and_receive_io(
-                io,
-                &final_status,
-                Opcode::Status,
-                11,
-                REQUEST_TIMEOUT,
-            )?,
+        let final_status = diag_protocol::status_request(12);
+        let status_response = serial_transport::send_and_receive_io(
+            io,
+            &final_status,
             Opcode::Status,
-            11,
-            "current_page=3",
+            12,
+            REQUEST_TIMEOUT,
         )?;
-        if !status_text.contains("last_error=0") {
-            return Err("final status should report last_error=0".into());
-        }
+        let final_status = decode_status_evidence(&status_response, 12)?;
         phase("final status", start);
 
-        let final_logs = diag_protocol::log_get_request(12, cursor, LOG_BUDGET);
-        let final_text =
-            validate_text(&serial_transport::send_and_receive_io(io, &final_logs, Opcode::LogGet, 12, REQUEST_TIMEOUT)?, Opcode::LogGet, 12, "TURN_QUEUED")?;
-        for marker in ["TURN_QUEUED", "TURN_DEQUEUED", "RESEED_START", "RESEED_COMPLETE"] {
-            if !final_text.contains(marker) {
-                return Err(format!("missing {marker} event"));
-            }
-        }
+        let final_logs = diag_protocol::log_get_request(13, cursor, LOG_BUDGET);
+        let final_response = serial_transport::send_and_receive_io(
+            io,
+            &final_logs,
+            Opcode::LogGet,
+            13,
+            REQUEST_TIMEOUT,
+        )?;
+        let (_, mut records) = decode_log_evidence(&final_response, 13)?;
+        evidence.append(&mut records);
+        validate_staged_gray_evidence(final_status, &evidence)?;
         phase("final logs", start);
 
         Ok(())
@@ -655,19 +745,198 @@ pub mod exercise {
         Ok(text)
     }
 
-    fn next_cursor(text: &str) -> Result<u32, String> {
-        let marker = "next_cursor=";
-        let start = text
-            .find(marker)
-            .ok_or_else(|| "missing next_cursor".to_string())?
-            + marker.len();
-        let end = text[start..]
-            .find(|c: char| !c.is_ascii_digit())
-            .map(|index| start + index)
-            .unwrap_or(text.len());
-        text[start..end]
-            .parse::<u32>()
-            .map_err(|e| format!("invalid next_cursor: {e}"))
+    fn decode_log_evidence(
+        frame: &[u8],
+        sequence: u16,
+    ) -> Result<(u32, Vec<LogRecordPayload>), String> {
+        let mut payload = [0u8; MAX_PAYLOAD_BYTES];
+        let (header, len) =
+            decode_frame(frame, &mut payload).map_err(|e| format!("invalid log frame: {e:?}"))?;
+        if header.opcode != Opcode::LogGet || header.sequence != sequence {
+            return Err(format!(
+                "mismatched log response sequence {}",
+                header.sequence
+            ));
+        }
+        let body = &payload[..len];
+        let log_header =
+            decode_log_response_header(body).map_err(|e| format!("invalid log header: {e:?}"))?;
+        let expected =
+            LOG_RESPONSE_HEADER_BYTES + log_header.record_count as usize * LOG_RECORD_BYTES;
+        if body.len() != expected {
+            return Err("log record count does not match payload".into());
+        }
+        let mut records = Vec::with_capacity(log_header.record_count as usize);
+        for chunk in body[LOG_RESPONSE_HEADER_BYTES..].chunks_exact(LOG_RECORD_BYTES) {
+            records
+                .push(decode_log_record(chunk).map_err(|e| format!("invalid log record: {e:?}"))?);
+        }
+        Ok((log_header.next_cursor, records))
+    }
+
+    fn decode_status_evidence(frame: &[u8], sequence: u16) -> Result<StatusPayload, String> {
+        let mut payload = [0u8; MAX_PAYLOAD_BYTES];
+        let (header, len) = decode_frame(frame, &mut payload)
+            .map_err(|e| format!("invalid status frame: {e:?}"))?;
+        if header.opcode != Opcode::Status || header.sequence != sequence {
+            return Err(format!(
+                "mismatched status response sequence {}",
+                header.sequence
+            ));
+        }
+        decode_status_payload(&payload[..len]).map_err(|e| format!("invalid status payload: {e:?}"))
+    }
+
+    pub fn validate_staged_gray_evidence(
+        status: StatusPayload,
+        records: &[LogRecordPayload],
+    ) -> Result<(), String> {
+        if status.current_page != 3 {
+            return Err(format!("final page must be 3, got {}", status.current_page));
+        }
+        if status.dropped_log_count != 0 || status.protocol_error_count != 0 {
+            return Err("diagnostic counters must remain zero".into());
+        }
+        if status.last_error != 0 {
+            return Err(format!(
+                "last_error must remain zero, got {}",
+                status.last_error
+            ));
+        }
+        if records
+            .iter()
+            .any(|record| record.event == EVT_TURN_DROPPED)
+        {
+            return Err("TURN_DROPPED observed".into());
+        }
+        if records
+            .iter()
+            .any(|record| matches!(record.event, EVT_RENDER_FAILURE | EVT_DISPLAY_ERROR))
+        {
+            return Err("display failure observed".into());
+        }
+
+        let prime = find_completion(records, 5, 1)?;
+        let overlay_start_index = records
+            .iter()
+            .position(|record| record.event == EVT_GRAY_OVERLAY_START && record.arg0 == 1)
+            .ok_or_else(|| "missing staged overlay start for page 1".to_string())?;
+        if records[overlay_start_index].tick_ms < prime.tick_ms.saturating_add(350) {
+            return Err("staged overlay started less than 350 ms after BW completion".into());
+        }
+        let waveform_index = records
+            .iter()
+            .position(|record| {
+                record.event == EVT_WAVEFORM_SELECTED && record.arg0 == 2 && record.arg1 == 1
+            })
+            .ok_or_else(|| "missing waveform hint 2 / LUT revision 1 evidence".to_string())?;
+        let activate_index = records
+            .iter()
+            .position(|record| record.event == EVT_GRAY_OVERLAY_ACTIVATE && record.arg0 == 1)
+            .ok_or_else(|| "missing staged overlay activation for page 1".to_string())?;
+        let overlay_complete_index = records
+            .iter()
+            .position(|record| record.event == EVT_GRAY_OVERLAY_COMPLETE && record.arg0 == 1)
+            .ok_or_else(|| "missing staged overlay completion for page 1".to_string())?;
+        if !(overlay_start_index < waveform_index
+            && waveform_index < activate_index
+            && activate_index < overlay_complete_index)
+        {
+            return Err("staged overlay events are missing or reordered".into());
+        }
+        if records.iter().any(|record| {
+            record.event == EVT_REFRESH_DECISION
+                && [record.arg0, record.arg1, record.arg2]
+                    .iter()
+                    .any(|value| matches!(*value, 0xF7 | 0xC7))
+        }) {
+            return Err("full or absolute-grayscale activation observed".into());
+        }
+
+        let queued = [
+            completion_index(records, 7, 2)?,
+            completion_index(records, 8, 3)?,
+            completion_index(records, 9, 2)?,
+        ];
+        if !(queued[0] < queued[1] && queued[1] < queued[2]) {
+            return Err("queued pages were not completed in exact order 2,3,2".into());
+        }
+
+        let cancel_index = records
+            .iter()
+            .position(|record| record.event == EVT_GRAY_OVERLAY_CANCELLED && record.arg0 == 2)
+            .ok_or_else(|| "missing cancellation of the queued page-2 overlay".to_string())?;
+        let restarted_index = records
+            .iter()
+            .enumerate()
+            .skip(cancel_index + 1)
+            .find(|(_, record)| record.event == EVT_GRAY_OVERLAY_START && record.arg0 == 2)
+            .map(|(index, _)| index)
+            .unwrap_or(records.len());
+        if records[cancel_index + 1..restarted_index]
+            .iter()
+            .any(|record| record.event == EVT_GRAY_OVERLAY_COMPLETE && record.arg0 == 2)
+        {
+            return Err("canceled page emitted a grayscale completion".into());
+        }
+
+        let sync_start_index = records
+            .iter()
+            .position(|record| record.event == EVT_BW_BASE_SYNC_START && record.arg0 == 2)
+            .ok_or_else(|| "missing BW base-sync start for page 2".to_string())?;
+        let sync_complete_index = records
+            .iter()
+            .enumerate()
+            .skip(sync_start_index + 1)
+            .find(|(_, record)| record.event == EVT_BW_BASE_SYNC_COMPLETE && record.arg0 == 2)
+            .map(|(index, _)| index)
+            .ok_or_else(|| "missing BW base-sync completion for page 2".to_string())?;
+        if records[sync_start_index..=sync_complete_index]
+            .iter()
+            .any(|record| {
+                matches!(
+                    record.event,
+                    EVT_GRAY_OVERLAY_ACTIVATE | EVT_REFRESH_DECISION
+                )
+            })
+        {
+            return Err("visible activation occurred during background BW base sync".into());
+        }
+        if records.iter().any(|record| {
+            record.event == EVT_BW_BASE_SYNC_CANCELLED
+                && record.arg0 == 2
+                && record.sequence > records[sync_complete_index].sequence
+        }) {
+            return Err("completed base sync was later reported canceled".into());
+        }
+        find_completion(records, 11, 3)?;
+        Ok(())
+    }
+
+    fn find_completion<'a>(
+        records: &'a [LogRecordPayload],
+        sequence: i32,
+        page: i32,
+    ) -> Result<&'a LogRecordPayload, String> {
+        records
+            .iter()
+            .find(|record| {
+                record.event == EVT_TURN_DEQUEUED && record.arg0 == sequence && record.arg1 == page
+            })
+            .ok_or_else(|| format!("missing completion sequence={sequence} page={page}"))
+    }
+
+    fn completion_index(
+        records: &[LogRecordPayload],
+        sequence: i32,
+        page: i32,
+    ) -> Result<usize, String> {
+        records
+            .iter()
+            .position(|record| {
+                record.event == EVT_TURN_DEQUEUED && record.arg0 == sequence && record.arg1 == page
+            })
+            .ok_or_else(|| format!("missing completion sequence={sequence} page={page}"))
     }
 
     fn phase(name: &str, start: Instant) {
@@ -783,7 +1052,7 @@ pub enum DiagCommand {
 
 #[derive(Subcommand)]
 pub enum ExerciseCommand {
-    DeferredGray {
+    StagedGray {
         #[arg(short, long)]
         port: String,
     },

@@ -57,6 +57,45 @@ fn firmware_runtime_uses_approved_async_configuration() {
 }
 
 #[test]
+fn firmware_runtime_starts_the_scheduler_before_async_main() {
+    let main_rs = include_str!("../src/main.rs");
+    let runtime_rs = include_str!("../src/runtime.rs");
+    let hal_init = main_rs
+        .find("esp_hal::init(esp_hal::Config::default())")
+        .expect("main.rs must initialize esp-hal once for firmware-bin");
+    let start = main_rs
+        .find("esp_rtos::start(")
+        .expect("main.rs must start the esp-rtos scheduler");
+    let executor = main_rs
+        .find("Executor::new()")
+        .expect("main.rs must create the Embassy executor");
+    let run = main_rs
+        .find("executor.run(")
+        .expect("main.rs must run the Embassy executor");
+
+    assert!(
+        runtime_rs
+            .find("esp_hal::init(esp_hal::Config::default())")
+            .is_none(),
+        "runtime.rs must not reinitialize esp-hal after the scheduler starts"
+    );
+    assert!(
+        hal_init < start,
+        "HAL initialization must happen before scheduler startup"
+    );
+    assert!(
+        start < executor,
+        "scheduler startup must happen before executor creation"
+    );
+    assert!(
+        start < run,
+        "scheduler startup must happen before executor run"
+    );
+    assert!(main_rs.contains("TimerGroup::new"));
+    assert!(main_rs.contains("SoftwareInterruptControl::new"));
+}
+
+#[test]
 fn decodes_adc_ladder_buttons() {
     assert_eq!(decode_buttons(500, 4095), Some(Button::Right));
     assert_eq!(decode_buttons(1000, 4095), Some(Button::Left));
@@ -149,14 +188,14 @@ fn gray2_row_conversion_maps_canonical_levels_to_ssd1677_planes() {
 
     gray2_row_to_ssd1677_planes(&gray2, &mut red, &mut black);
 
-    assert_eq!(red[DISPLAY_ROW_BYTES - 1], 0xFC);
-    assert_eq!(black[DISPLAY_ROW_BYTES - 1], 0xFA);
+    assert_eq!(red[DISPLAY_ROW_BYTES - 1], 0x03);
+    assert_eq!(black[DISPLAY_ROW_BYTES - 1], 0x05);
     assert!(red[..DISPLAY_ROW_BYTES - 1]
         .iter()
-        .all(|byte| *byte == 0xFF));
+        .all(|byte| *byte == 0x00));
     assert!(black[..DISPLAY_ROW_BYTES - 1]
         .iter()
-        .all(|byte| *byte == 0xFF));
+        .all(|byte| *byte == 0x00));
 }
 
 #[test]
@@ -361,8 +400,53 @@ fn x4_native_page_with_three_plane_bitmap_passes_validation() {
             sizes: [780, 780, 780, 0],
         },
     };
-    assert!(is_supported_x4_native_gray2_page(&info));
+    let profile = binbook::DisplayProfileInfo {
+        physical_width: DISPLAY_WIDTH,
+        physical_height: DISPLAY_HEIGHT,
+        waveform_hint: binbook::display_profile::WAVEFORM_SSD1677_STAGED_GRAY2,
+    };
+    assert!(is_supported_x4_native_gray2_page(&profile, &info));
     assert!(!is_supported_embedded_gray2_page(&info));
+}
+
+#[test]
+fn x4_native_page_rejects_wrong_dimensions_or_waveform() {
+    use binbook::page_index::{PlaneDir, COMPRESSION_RLE_PACKBITS, PIXEL_FORMAT_GRAY2_PACKED};
+
+    let info = binbook::PageInfo {
+        page_number: 0,
+        page_kind: 0,
+        pixel_format: PIXEL_FORMAT_GRAY2_PACKED,
+        compression_method: COMPRESSION_RLE_PACKBITS,
+        page_flags: 0,
+        page_crc32: 0,
+        stored_width: DISPLAY_WIDTH,
+        stored_height: DISPLAY_HEIGHT,
+        placement_x: 0,
+        placement_y: 0,
+        progress_start_ppm: 0,
+        progress_end_ppm: 0,
+        chapter_nav_index: -1,
+        plane_dir: PlaneDir {
+            bitmap: 0x07,
+            compression: [1, 1, 1, 0],
+            offsets: [0; 4],
+            sizes: [1, 1, 1, 0],
+        },
+    };
+    let absolute = binbook::DisplayProfileInfo {
+        physical_width: DISPLAY_WIDTH,
+        physical_height: DISPLAY_HEIGHT,
+        waveform_hint: binbook::display_profile::WAVEFORM_SSD1677_ABSOLUTE_GRAY2,
+    };
+    let wrong_size = binbook::DisplayProfileInfo {
+        physical_width: 480,
+        physical_height: 800,
+        waveform_hint: binbook::display_profile::WAVEFORM_SSD1677_STAGED_GRAY2,
+    };
+
+    assert!(!is_supported_x4_native_gray2_page(&absolute, &info));
+    assert!(!is_supported_x4_native_gray2_page(&wrong_size, &info));
 }
 
 #[test]
@@ -3950,7 +4034,10 @@ fn diagnostic_snapshot_builds_status_payload_from_committed_state() {
 
     assert_eq!(status.current_page, 7);
     assert_eq!(status.page_count, 30);
-    assert_eq!(status.panel_mode, binbook_diagnostic_protocol::PanelModeCode::Bw);
+    assert_eq!(
+        status.panel_mode,
+        binbook_diagnostic_protocol::PanelModeCode::Bw
+    );
     assert_eq!(status.dropped_log_count, 4);
     assert_eq!(status.protocol_error_count, 2);
     assert_eq!(status.last_error, -12);
@@ -3959,7 +4046,9 @@ fn diagnostic_snapshot_builds_status_payload_from_committed_state() {
 #[cfg(feature = "diagnostic-console")]
 #[test]
 fn diagnostic_loop_services_status_and_log_while_render_is_pending() {
-    use binbook_fw::diag::{DiagnosticLoopState, DiagnosticSnapshot, PendingAction, PendingCommand};
+    use binbook_fw::diag::{
+        DiagnosticLoopState, DiagnosticSnapshot, PendingAction, PendingCommand,
+    };
     use binbook_fw::diag_log::{DiagEvent, DiagLog};
 
     let snapshot = DiagnosticSnapshot {
@@ -4011,7 +4100,9 @@ fn diagnostic_loop_services_status_and_log_while_render_is_pending() {
 #[cfg(feature = "diagnostic-console")]
 #[test]
 fn diagnostic_loop_reports_error_when_key_queue_is_full_without_evicting_old_requests() {
-    use binbook_fw::diag::{DiagnosticLoopState, DiagnosticSnapshot, PendingAction, PendingCommand};
+    use binbook_fw::diag::{
+        DiagnosticLoopState, DiagnosticSnapshot, PendingAction, PendingCommand,
+    };
 
     let snapshot = DiagnosticSnapshot {
         current_page: 7,
@@ -4054,10 +4145,7 @@ fn diagnostic_loop_reports_error_when_key_queue_is_full_without_evicting_old_req
 
     assert_eq!(result, binbook_diagnostic_protocol::Status::Error);
     assert_eq!(loop_state.pending_len(), 16);
-    assert_eq!(
-        loop_state.complete_pending().unwrap().header.sequence,
-        0
-    );
+    assert_eq!(loop_state.complete_pending().unwrap().header.sequence, 0);
 }
 
 #[cfg(feature = "diagnostic-console")]

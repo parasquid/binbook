@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from ..constants import PAGE_DATA_ALIGNMENT, PixelFormat, PixelFormatFlag
+from ..constants import PAGE_DATA_ALIGNMENT, PixelFormat, PixelFormatFlag, WaveformHint
 
 
 @dataclass(frozen=True)
@@ -53,6 +53,7 @@ class DisplayProfile:
     scan_order_hint: int
     grayscale_levels: int
     framebuffer_bits_per_pixel: int
+    waveform_hint: WaveformHint
     page_data_alignment: int = PAGE_DATA_ALIGNMENT
 
     @property
