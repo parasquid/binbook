@@ -1,0 +1,12 @@
+[package]
+name = "binbook-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Allocation-free BinBook format parser"
+
+[features]
+default = []
+
+[dependencies]

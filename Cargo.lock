@@ -68,22 +68,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
-name = "binbook"
-version = "0.1.0"
-dependencies = [
- "lz4_flex",
-]
-
-[[package]]
 name = "binbook-cli"
 version = "0.1.0"
 dependencies = [
- "binbook",
+ "binbook-core",
  "binbook-diagnostic-protocol",
  "clap",
  "serde_json",
  "serialport",
 ]
+
+[[package]]
+name = "binbook-core"
+version = "0.1.0"
 
 [[package]]
 name = "binbook-diagnostic-protocol"
@@ -93,7 +90,7 @@ version = "0.1.0"
 name = "binbook-fw"
 version = "0.1.0"
 dependencies = [
- "binbook",
+ "binbook-core",
  "binbook-diagnostic-protocol",
  "embassy-executor",
  "embassy-futures",
@@ -1196,12 +1193,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
 ]
-
-[[package]]
-name = "lz4_flex"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ef0d4ed8669f8f8826eb00dc878084aa8f253506c4fd5e8f58f5bce72ddb97e"
 
 [[package]]
 name = "mach2"

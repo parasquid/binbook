@@ -417,17 +417,25 @@ fn firmware_button_adc_uses_basic_calibration() {
     assert!(main_rs.contains("enable_pin_with_cal"));
 }
 
-#[test]
-fn supported_embedded_gray2_page_passes_validation() {
-    use binbook::page_index::{PlaneDir, COMPRESSION_RLE_PACKBITS, PIXEL_FORMAT_GRAY2_PACKED};
-
-    const PACKBITS: u8 = COMPRESSION_RLE_PACKBITS as u8;
-
-    let info = binbook::PageInfo {
-        page_number: 0,
+fn test_page_info(bitmap: u8, offsets: [u32; 4], sizes: [u32; 4]) -> binbook_core::PageInfo {
+    let make_plane = |slot: binbook_core::PlaneSlot, index: usize| {
+        if bitmap & (1 << index) == 0 {
+            None
+        } else {
+            Some(binbook_core::PlaneDescriptor::new(
+                slot,
+                binbook_core::CompressionMethod::RlePackBits,
+                binbook_core::FileOffset::new(u64::from(offsets[index])),
+                binbook_core::ByteLength::new(sizes[index]),
+            ))
+        }
+    };
+    binbook_core::PageInfo {
+        page_number: binbook_core::PageNumber::new(0, 1).unwrap(),
         page_kind: 0,
-        pixel_format: PIXEL_FORMAT_GRAY2_PACKED,
-        compression_method: COMPRESSION_RLE_PACKBITS,
+        pixel_format: binbook_core::PixelFormat::Gray2Packed,
+        compression_method: binbook_core::CompressionMethod::RlePackBits,
+        update_hint: 0,
         page_flags: 0,
         page_crc32: 0,
         stored_width: DISPLAY_WIDTH,
@@ -436,88 +444,85 @@ fn supported_embedded_gray2_page_passes_validation() {
         placement_y: 0,
         progress_start_ppm: 0,
         progress_end_ppm: 0,
-        chapter_nav_index: -1,
-        plane_dir: PlaneDir {
-            bitmap: 0x01,
-            compression: [PACKBITS, 0, 0, 0],
-            offsets: [0, 0, 0, 0],
-            sizes: [100, 0, 0, 0],
-        },
+        planes: binbook_core::PlaneDirectory::new([
+            make_plane(binbook_core::PlaneSlot::OverlayMsb, 0),
+            make_plane(binbook_core::PlaneSlot::OverlayLsb, 1),
+            make_plane(binbook_core::PlaneSlot::FastBase, 2),
+            make_plane(binbook_core::PlaneSlot::Reserved, 3),
+        ]),
+    }
+}
+
+fn test_display_profile(
+    physical_width: u16,
+    physical_height: u16,
+    waveform_hint: u16,
+) -> binbook_core::DisplayProfile {
+    let empty = binbook_core::StringRef {
+        offset: 0,
+        length: 0,
     };
+    binbook_core::DisplayProfile {
+        profile_id: empty,
+        device_family: empty,
+        device_model: empty,
+        logical_width: 480,
+        logical_height: 800,
+        physical_width,
+        physical_height,
+        logical_orientation: 1,
+        logical_to_physical_rotation: 270,
+        scan_order_hint: 1,
+        supported_storage_pixel_formats: 3,
+        native_output_pixel_formats: 3,
+        native_grayscale_levels: 4,
+        panel_grayscale_levels: 4,
+        framebuffer_bits_per_pixel: 2,
+        waveform_hint,
+        dither_mode: 0,
+    }
+}
+
+fn test_chunk(compressed_size: u32) -> binbook_core::PageChunk {
+    binbook_core::PageChunk {
+        page_number: binbook_core::PageNumber::new(0, 1).unwrap(),
+        plane_slot: binbook_core::PlaneSlot::OverlayMsb,
+        chunk_index: binbook_core::ChunkIndex::new(0, 30).unwrap(),
+        row_start: 0,
+        row_count: 16,
+        offset: binbook_core::FileOffset::new(0),
+        compressed_length: binbook_core::ByteLength::new(compressed_size),
+        uncompressed_length: binbook_core::ByteLength::new(1600),
+    }
+}
+
+#[test]
+fn supported_embedded_gray2_page_passes_validation() {
+    let info = test_page_info(0x01, [0; 4], [100, 0, 0, 0]);
     assert!(is_supported_embedded_gray2_page(&info));
 }
 
 #[test]
 fn x4_native_page_with_three_plane_bitmap_passes_validation() {
-    use binbook::page_index::{PlaneDir, COMPRESSION_RLE_PACKBITS, PIXEL_FORMAT_GRAY2_PACKED};
-
-    const PACKBITS: u8 = COMPRESSION_RLE_PACKBITS as u8;
-
-    let info = binbook::PageInfo {
-        page_number: 0,
-        page_kind: 0,
-        pixel_format: PIXEL_FORMAT_GRAY2_PACKED,
-        compression_method: COMPRESSION_RLE_PACKBITS,
-        page_flags: 0,
-        page_crc32: 0,
-        stored_width: DISPLAY_WIDTH,
-        stored_height: DISPLAY_HEIGHT,
-        placement_x: 0,
-        placement_y: 0,
-        progress_start_ppm: 0,
-        progress_end_ppm: 0,
-        chapter_nav_index: -1,
-        plane_dir: PlaneDir {
-            bitmap: 0x07,
-            compression: [PACKBITS, PACKBITS, PACKBITS, 0],
-            offsets: [0, 780, 1560, 0],
-            sizes: [780, 780, 780, 0],
-        },
-    };
-    let profile = binbook::DisplayProfileInfo {
-        physical_width: DISPLAY_WIDTH,
-        physical_height: DISPLAY_HEIGHT,
-        waveform_hint: binbook::display_profile::WAVEFORM_SSD1677_STAGED_GRAY2,
-    };
+    let info = test_page_info(0x07, [0, 780, 1560, 0], [780, 780, 780, 0]);
+    let profile = test_display_profile(
+        DISPLAY_WIDTH,
+        DISPLAY_HEIGHT,
+        binbook_core::WAVEFORM_SSD1677_STAGED_GRAY2,
+    );
     assert!(is_supported_x4_native_gray2_page(&profile, &info));
     assert!(!is_supported_embedded_gray2_page(&info));
 }
 
 #[test]
 fn x4_native_page_rejects_wrong_dimensions_or_waveform() {
-    use binbook::page_index::{PlaneDir, COMPRESSION_RLE_PACKBITS, PIXEL_FORMAT_GRAY2_PACKED};
-
-    let info = binbook::PageInfo {
-        page_number: 0,
-        page_kind: 0,
-        pixel_format: PIXEL_FORMAT_GRAY2_PACKED,
-        compression_method: COMPRESSION_RLE_PACKBITS,
-        page_flags: 0,
-        page_crc32: 0,
-        stored_width: DISPLAY_WIDTH,
-        stored_height: DISPLAY_HEIGHT,
-        placement_x: 0,
-        placement_y: 0,
-        progress_start_ppm: 0,
-        progress_end_ppm: 0,
-        chapter_nav_index: -1,
-        plane_dir: PlaneDir {
-            bitmap: 0x07,
-            compression: [1, 1, 1, 0],
-            offsets: [0; 4],
-            sizes: [1, 1, 1, 0],
-        },
-    };
-    let absolute = binbook::DisplayProfileInfo {
-        physical_width: DISPLAY_WIDTH,
-        physical_height: DISPLAY_HEIGHT,
-        waveform_hint: binbook::display_profile::WAVEFORM_SSD1677_ABSOLUTE_GRAY2,
-    };
-    let wrong_size = binbook::DisplayProfileInfo {
-        physical_width: 480,
-        physical_height: 800,
-        waveform_hint: binbook::display_profile::WAVEFORM_SSD1677_STAGED_GRAY2,
-    };
+    let info = test_page_info(0x07, [0; 4], [1, 1, 1, 0]);
+    let absolute = test_display_profile(
+        DISPLAY_WIDTH,
+        DISPLAY_HEIGHT,
+        binbook_core::WAVEFORM_SSD1677_ABSOLUTE_GRAY2,
+    );
+    let wrong_size = test_display_profile(480, 800, binbook_core::WAVEFORM_SSD1677_STAGED_GRAY2);
 
     assert!(!is_supported_x4_native_gray2_page(&absolute, &info));
     assert!(!is_supported_x4_native_gray2_page(&wrong_size, &info));
@@ -525,21 +530,10 @@ fn x4_native_page_rejects_wrong_dimensions_or_waveform() {
 
 #[test]
 fn embedded_chunk_slice_returns_compressed_chunk_data() {
-    use binbook::chunk_index::PageChunkEntry;
-
     let mut book_bytes = vec![0u8; 200];
     book_bytes[10..13].copy_from_slice(&[0xAA, 0xBB, 0xCC]);
 
-    let chunk = PageChunkEntry {
-        page_number: 0,
-        plane_slot: 0,
-        chunk_index: 0,
-        row_start: 0,
-        row_count: 16,
-        page_data_offset: 0,
-        compressed_size: 3,
-        uncompressed_size: 1600,
-    };
+    let chunk = test_chunk(3);
 
     let slice = embedded_chunk_slice(&book_bytes, 10, &chunk).unwrap();
     assert_eq!(slice, &[0xAA, 0xBB, 0xCC]);
@@ -547,84 +541,25 @@ fn embedded_chunk_slice_returns_compressed_chunk_data() {
 
 #[test]
 fn embedded_chunk_slice_rejects_out_of_bounds() {
-    use binbook::chunk_index::PageChunkEntry;
-
     let book_bytes = vec![0u8; 20];
 
-    let chunk = PageChunkEntry {
-        page_number: 0,
-        plane_slot: 0,
-        chunk_index: 0,
-        row_start: 0,
-        row_count: 16,
-        page_data_offset: 0,
-        compressed_size: 30,
-        uncompressed_size: 1600,
-    };
+    let chunk = test_chunk(30);
 
     assert!(embedded_chunk_slice(&book_bytes, 0, &chunk).is_none());
 }
 
 #[test]
 fn unsupported_plane_bitmap_rejected() {
-    use binbook::page_index::{PlaneDir, COMPRESSION_RLE_PACKBITS, PIXEL_FORMAT_GRAY2_PACKED};
-
-    const PACKBITS: u8 = COMPRESSION_RLE_PACKBITS as u8;
-
-    let info = binbook::PageInfo {
-        page_number: 0,
-        page_kind: 0,
-        pixel_format: PIXEL_FORMAT_GRAY2_PACKED,
-        compression_method: COMPRESSION_RLE_PACKBITS,
-        page_flags: 0,
-        page_crc32: 0,
-        stored_width: DISPLAY_WIDTH,
-        stored_height: DISPLAY_HEIGHT,
-        placement_x: 0,
-        placement_y: 0,
-        progress_start_ppm: 0,
-        progress_end_ppm: 0,
-        chapter_nav_index: -1,
-        plane_dir: PlaneDir {
-            bitmap: 0x03,
-            compression: [PACKBITS, 0, 0, 0],
-            offsets: [0, 100, 0, 0],
-            sizes: [100, 50, 0, 0],
-        },
-    };
+    let info = test_page_info(0x03, [0, 100, 0, 0], [100, 50, 0, 0]);
     assert!(!is_supported_embedded_gray2_page(&info));
 }
 
 #[test]
 fn embedded_page_slice_returns_compressed_plane_data() {
-    use binbook::page_index::{PlaneDir, COMPRESSION_RLE_PACKBITS, PIXEL_FORMAT_GRAY2_PACKED};
-
-    const PACKBITS: u8 = COMPRESSION_RLE_PACKBITS as u8;
-
     let mut book_bytes = vec![0u8; 100];
     book_bytes[15..18].copy_from_slice(&[0xAA, 0xBB, 0xCC]);
 
-    let info = binbook::PageInfo {
-        page_number: 0,
-        page_kind: 0,
-        pixel_format: PIXEL_FORMAT_GRAY2_PACKED,
-        compression_method: COMPRESSION_RLE_PACKBITS,
-        page_flags: 0,
-        page_crc32: 0,
-        stored_width: DISPLAY_WIDTH,
-        stored_height: DISPLAY_HEIGHT,
-        placement_x: 0,
-        placement_y: 0,
-        progress_start_ppm: 0,
-        progress_end_ppm: 0,
-        chapter_nav_index: -1,
-        plane_dir: PlaneDir {
-            bitmap: 0x01,
-            compression: [PACKBITS, 0, 0, 0],
-            offsets: [5, 0, 0, 0],
-            sizes: [3, 0, 0, 0],
-        },
-    };
+    let info = test_page_info(0x01, [5, 0, 0, 0], [3, 0, 0, 0]);
 
     let slice = embedded_page_slice(&book_bytes, 10, &info).unwrap();
     assert_eq!(slice, &[0xAA, 0xBB, 0xCC]);
@@ -632,33 +567,9 @@ fn embedded_page_slice_returns_compressed_plane_data() {
 
 #[test]
 fn embedded_page_slice_rejects_out_of_bounds() {
-    use binbook::page_index::{PlaneDir, COMPRESSION_RLE_PACKBITS, PIXEL_FORMAT_GRAY2_PACKED};
-
-    const PACKBITS: u8 = COMPRESSION_RLE_PACKBITS as u8;
-
     let book_bytes = vec![0u8; 20];
 
-    let info = binbook::PageInfo {
-        page_number: 0,
-        page_kind: 0,
-        pixel_format: PIXEL_FORMAT_GRAY2_PACKED,
-        compression_method: COMPRESSION_RLE_PACKBITS,
-        page_flags: 0,
-        page_crc32: 0,
-        stored_width: DISPLAY_WIDTH,
-        stored_height: DISPLAY_HEIGHT,
-        placement_x: 0,
-        placement_y: 0,
-        progress_start_ppm: 0,
-        progress_end_ppm: 0,
-        chapter_nav_index: -1,
-        plane_dir: PlaneDir {
-            bitmap: 0x01,
-            compression: [PACKBITS, 0, 0, 0],
-            offsets: [10, 0, 0, 0],
-            sizes: [20, 0, 0, 0],
-        },
-    };
+    let info = test_page_info(0x01, [10, 0, 0, 0], [20, 0, 0, 0]);
 
     assert!(embedded_page_slice(&book_bytes, 10, &info).is_none());
 }
@@ -3037,7 +2948,10 @@ fn diag_probe_full_refresh_executes_current_page_full_path() {
     let book_bytes: Vec<u8> = vec![0u8; 4096];
     let mut scratch = [0u8; 8192];
 
-    let book_result = binbook::BinBook::open(&book_bytes[..], &mut scratch);
+    let book_result = binbook_core::Book::open(
+        binbook_core::SliceSource::new(&book_bytes[..]),
+        &mut scratch,
+    );
     if let Ok(mut book) = book_result {
         if book.page_count() > 0 {
             probe_test_harness::ensure_grayscale_mode(&mut driver, &mut panel_mode).unwrap();

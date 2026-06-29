@@ -19,6 +19,22 @@ use xteink_hal::{AsyncDelay, HalError, HalResult, InputPin, OutputPin, Spi};
 const PAGE_1: u32 = 1;
 const PAGE_2: u32 = 2;
 
+fn test_profile(
+    book: &mut binbook_core::Book<binbook_core::SliceSource<'_>>,
+) -> binbook_core::DisplayProfile {
+    let mut record = [0_u8; 56];
+    book.display_profile(&mut record).expect("display profile")
+}
+
+fn test_page(
+    book: &mut binbook_core::Book<binbook_core::SliceSource<'_>>,
+    raw: u32,
+) -> binbook_core::PageInfo {
+    let number = book.page_number(raw).expect("page number");
+    let mut record = [0_u8; binbook_core::PAGE_RECORD_SIZE];
+    book.page(number, &mut record).expect("page must exist")
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 struct AsyncGrayTrace {
     red_windows: usize,
@@ -199,10 +215,13 @@ fn parse_gray_render_trace(writes: &[Vec<u8>], zero_yield_count: usize) -> Async
 fn run_async_gray_render_with_writes(page: u32) -> (AsyncGrayTrace, Vec<Vec<u8>>) {
     let book_bytes = include_bytes!("../fixtures/nav_probe.binbook");
     let mut scratch = [0u8; 8192];
-    let mut book =
-        binbook::BinBook::open(&book_bytes[..], &mut scratch).expect("open nav probe book");
-    let profile = book.display_profile().expect("display profile");
-    let page_info = book.page_info(page).expect("page must exist");
+    let mut book = binbook_core::Book::open(
+        binbook_core::SliceSource::new(&book_bytes[..]),
+        &mut scratch,
+    )
+    .expect("open nav probe book");
+    let profile = test_profile(&mut book);
+    let page_info = test_page(&mut book, page);
     assert!(
         display::is_supported_x4_native_gray2_page(&profile, &page_info),
         "page must be x4-native gray2"
@@ -244,11 +263,14 @@ fn run_async_gray_render(page: u32) -> AsyncGrayTrace {
 fn run_async_bw_differential(prev_page: u32, target_page: u32) -> AsyncReseedTrace {
     let book_bytes = include_bytes!("../fixtures/nav_probe.binbook");
     let mut scratch = [0u8; 8192];
-    let mut book =
-        binbook::BinBook::open(&book_bytes[..], &mut scratch).expect("open nav probe book");
-    let profile = book.display_profile().expect("display profile");
-    let prev_info = book.page_info(prev_page).expect("previous page must exist");
-    let target_info = book.page_info(target_page).expect("target page must exist");
+    let mut book = binbook_core::Book::open(
+        binbook_core::SliceSource::new(&book_bytes[..]),
+        &mut scratch,
+    )
+    .expect("open nav probe book");
+    let profile = test_profile(&mut book);
+    let prev_info = test_page(&mut book, prev_page);
+    let target_info = test_page(&mut book, target_page);
     assert!(
         display::is_supported_x4_native_gray2_page(&profile, &prev_info),
         "previous page must be x4-native gray2"
@@ -294,10 +316,13 @@ fn run_async_bw_differential(prev_page: u32, target_page: u32) -> AsyncReseedTra
 fn run_async_recovery(page: u32) -> AsyncReseedTrace {
     let book_bytes = include_bytes!("../fixtures/nav_probe.binbook");
     let mut scratch = [0u8; 8192];
-    let mut book =
-        binbook::BinBook::open(&book_bytes[..], &mut scratch).expect("open nav probe book");
-    let profile = book.display_profile().expect("display profile");
-    let page_info = book.page_info(page).expect("page must exist");
+    let mut book = binbook_core::Book::open(
+        binbook_core::SliceSource::new(&book_bytes[..]),
+        &mut scratch,
+    )
+    .expect("open nav probe book");
+    let profile = test_profile(&mut book);
+    let page_info = test_page(&mut book, page);
     assert!(
         display::is_supported_x4_native_gray2_page(&profile, &page_info),
         "page must be x4-native gray2"
@@ -354,7 +379,11 @@ fn mismatched_waveform_is_rejected_before_controller_writes() {
     book_bytes[profile_offset + 53..profile_offset + 55].copy_from_slice(&1u16.to_le_bytes());
 
     let mut scratch = [0u8; 8192];
-    let mut book = binbook::BinBook::open(&book_bytes[..], &mut scratch).unwrap();
+    let mut book = binbook_core::Book::open(
+        binbook_core::SliceSource::new(&book_bytes[..]),
+        &mut scratch,
+    )
+    .unwrap();
     let writes = Rc::new(RefCell::new(Vec::new()));
     let mut driver = Ssd1677Driver::new(
         RecordingSpi {
@@ -384,7 +413,11 @@ fn run_staged_gray_with_cancel_at(
 ) -> (display::GrayRenderOutcome, Vec<Vec<u8>>) {
     let book_bytes = include_bytes!("../fixtures/nav_probe.binbook");
     let mut scratch = [0u8; 8192];
-    let mut book = binbook::BinBook::open(&book_bytes[..], &mut scratch).unwrap();
+    let mut book = binbook_core::Book::open(
+        binbook_core::SliceSource::new(&book_bytes[..]),
+        &mut scratch,
+    )
+    .unwrap();
     let writes = Rc::new(RefCell::new(Vec::new()));
     let mut driver = Ssd1677Driver::new(
         RecordingSpi {
@@ -441,8 +474,7 @@ fn staged_grayscale_streams_overlay_planes_then_activates() {
     );
     assert!(writes.windows(2).any(|pair| {
         pair[0].as_slice() == [Ssd1677::DISPLAY_UPDATE_CTRL2]
-            && pair[1].as_slice()
-                == [Ssd1677::UPDATE_CTRL_STAGED_GRAYSCALE | 0xC0]
+            && pair[1].as_slice() == [Ssd1677::UPDATE_CTRL_STAGED_GRAYSCALE | 0xC0]
     }));
     assert!(writes
         .iter()
@@ -464,8 +496,7 @@ fn staged_grayscale_cancels_on_strip_boundaries_without_activation() {
         );
         assert!(!writes.windows(2).any(|pair| {
             pair[0].as_slice() == [Ssd1677::DISPLAY_UPDATE_CTRL2]
-                && pair[1].as_slice()
-                    == [Ssd1677::UPDATE_CTRL_STAGED_GRAYSCALE | 0xC0]
+                && pair[1].as_slice() == [Ssd1677::UPDATE_CTRL_STAGED_GRAYSCALE | 0xC0]
         }));
         assert!(!writes
             .iter()
@@ -478,7 +509,11 @@ fn run_base_sync_with_cancel_at(
 ) -> (display::BaseSyncOutcome, Vec<Vec<u8>>) {
     let book_bytes = include_bytes!("../fixtures/nav_probe.binbook");
     let mut scratch = [0u8; 8192];
-    let mut book = binbook::BinBook::open(&book_bytes[..], &mut scratch).unwrap();
+    let mut book = binbook_core::Book::open(
+        binbook_core::SliceSource::new(&book_bytes[..]),
+        &mut scratch,
+    )
+    .unwrap();
     let writes = Rc::new(RefCell::new(Vec::new()));
     let mut driver = Ssd1677Driver::new(
         RecordingSpi {
@@ -791,21 +826,23 @@ fn async_grayscale_streams_each_plane_in_sixteen_row_strips() {
 fn async_full_grayscale_reconstructs_absolute_planes_from_staged_slots() {
     let book_bytes = include_bytes!("../fixtures/nav_probe.binbook");
     let mut scratch = [0u8; 8192];
-    let mut book =
-        binbook::BinBook::open(&book_bytes[..], &mut scratch).expect("open nav probe book");
-    let open = book.open_info();
-    let page = book.page_info(0).expect("orientation page must exist");
+    let mut book = binbook_core::Book::open(
+        binbook_core::SliceSource::new(&book_bytes[..]),
+        &mut scratch,
+    )
+    .expect("open nav probe book");
+    let page_data_offset = usize::try_from(book.page_data_offset().get()).unwrap();
+    let page = test_page(&mut book, 0);
     let decompress_slot = |slot: usize| {
-        let offset = open.page_data_offset as usize + page.plane_dir.offsets[slot] as usize;
-        let end = offset + page.plane_dir.sizes[slot] as usize;
+        let raw_slot = u8::try_from(slot).unwrap();
+        let descriptor = page
+            .planes
+            .get(binbook_core::PlaneSlot::try_from(raw_slot).unwrap())
+            .unwrap();
+        let offset = page_data_offset + usize::try_from(descriptor.offset.get()).unwrap();
+        let end = offset + usize::try_from(descriptor.length.get()).unwrap();
         let mut plane = vec![0u8; 100 * 480];
-        binbook::decompress::decompress_bytes(
-            binbook::page_index::COMPRESSION_RLE_PACKBITS,
-            &book_bytes[offset..end],
-            &mut plane,
-            100 * 480,
-        )
-        .expect("decompress native plane");
+        display::decompress_row(&book_bytes[offset..end], &mut plane);
         plane
     };
     let msb = decompress_slot(0);

@@ -3,6 +3,44 @@ use xteink_hal::{AsyncDelay, HalError, HalResult, InputPin, OutputPin, RefreshMo
 
 use crate::refresh::{RefreshDecision, RefreshPolicy, RefreshState, X4_CHUNK_COUNT};
 
+pub type EmbeddedBook<'a> = binbook_core::Book<binbook_core::SliceSource<'a>>;
+
+fn read_page(book: &mut EmbeddedBook<'_>, raw: u32) -> HalResult<binbook_core::PageInfo> {
+    let number = book.page_number(raw).map_err(|_| HalError::InvalidParam)?;
+    let mut record = [0_u8; binbook_core::PAGE_RECORD_SIZE];
+    book.page(number, &mut record)
+        .map_err(|_| HalError::InvalidParam)
+}
+
+fn read_profile(book: &mut EmbeddedBook<'_>) -> HalResult<binbook_core::DisplayProfile> {
+    let mut record = [0_u8; 56];
+    book.display_profile(&mut record)
+        .map_err(|_| HalError::InvalidParam)
+}
+
+fn read_transition(
+    book: &mut EmbeddedBook<'_>,
+    raw: u32,
+) -> HalResult<binbook_core::PageTransition> {
+    let number = book
+        .transition_number(raw)
+        .map_err(|_| HalError::InvalidParam)?;
+    let mut record = [0_u8; 24];
+    book.transition(number, &mut record)
+        .map_err(|_| HalError::InvalidParam)
+}
+
+fn plane_descriptor(
+    planes: &binbook_core::PlaneDirectory,
+    raw: usize,
+) -> HalResult<binbook_core::PlaneDescriptor> {
+    let slot = u8::try_from(raw)
+        .ok()
+        .and_then(|value| binbook_core::PlaneSlot::try_from(value).ok())
+        .ok_or(HalError::InvalidParam)?;
+    planes.get(slot).ok_or(HalError::InvalidParam)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelMode {
     Unknown,
@@ -170,7 +208,7 @@ where
 
 pub async fn display_full_grayscale_async<SPI, CS, DC, RST, BUSY, D>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     target_page: u32,
     delay: &D,
@@ -184,15 +222,14 @@ where
     D: AsyncDelay + ?Sized,
 {
     validate_x4_native_page(book, target_page)?;
-    let open = book.open_info();
-    let pd = &book
-        .page_info(target_page)
+    let page_data_offset = book.page_data_offset().get();
+    let pd = &read_page(book, target_page)
         .map_err(|_| HalError::InvalidParam)?
-        .plane_dir;
+        .planes;
 
-    let msb = compressed_native_plane(book_bytes, open.page_data_offset, pd, 0)?;
-    let lsb = compressed_native_plane(book_bytes, open.page_data_offset, pd, 1)?;
-    let base = compressed_native_plane(book_bytes, open.page_data_offset, pd, 2)?;
+    let msb = compressed_native_plane(book_bytes, page_data_offset, pd, 0)?;
+    let lsb = compressed_native_plane(book_bytes, page_data_offset, pd, 1)?;
+    let base = compressed_native_plane(book_bytes, page_data_offset, pd, 2)?;
     let strip_count = DISPLAY_HEIGHT / X4_CHUNK_ROWS;
 
     let mut msb_decoder = PackBitsStream::new(msb);
@@ -235,20 +272,21 @@ where
 fn compressed_native_plane<'a>(
     book_bytes: &'a [u8],
     page_data_offset: u64,
-    pd: &binbook::page_index::PlaneDir,
+    pd: &binbook_core::PlaneDirectory,
     slot: usize,
 ) -> HalResult<&'a [u8]> {
-    let start = usize::try_from(page_data_offset + pd.offsets[slot] as u64)
+    let descriptor = plane_descriptor(pd, slot)?;
+    let start = usize::try_from(page_data_offset + descriptor.offset.get())
         .map_err(|_| HalError::InvalidParam)?;
     let end = start
-        .checked_add(pd.sizes[slot] as usize)
+        .checked_add(usize::try_from(descriptor.length.get()).map_err(|_| HalError::InvalidParam)?)
         .ok_or(HalError::InvalidParam)?;
     book_bytes.get(start..end).ok_or(HalError::InvalidParam)
 }
 
 pub async fn display_staged_grayscale_async<SPI, CS, DC, RST, BUSY, D, E, A>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     target_page: u32,
     expected_epoch: u32,
@@ -267,13 +305,13 @@ where
     A: FnMut(),
 {
     let page = validate_x4_native_page(book, target_page)?;
-    let page_data_offset = book.open_info().page_data_offset;
+    let page_data_offset = book.page_data_offset().get();
 
     if !stream_plane_chunks_cancellable_async(
         display,
         book_bytes,
         page_data_offset,
-        &page.plane_dir,
+        &page.planes,
         1,
         false,
         expected_epoch,
@@ -288,7 +326,7 @@ where
         display,
         book_bytes,
         page_data_offset,
-        &page.plane_dir,
+        &page.planes,
         0,
         true,
         expected_epoch,
@@ -313,7 +351,7 @@ where
 
 pub async fn sync_bw_base_async<SPI, CS, DC, RST, BUSY, D, E>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     target_page: u32,
     expected_epoch: u32,
@@ -330,12 +368,12 @@ where
     E: FnMut() -> u32,
 {
     let page = validate_x4_native_page(book, target_page)?;
-    let page_data_offset = book.open_info().page_data_offset;
+    let page_data_offset = book.page_data_offset().get();
     let completed = stream_plane_chunks_cancellable_async(
         display,
         book_bytes,
         page_data_offset,
-        &page.plane_dir,
+        &page.planes,
         2,
         true,
         expected_epoch,
@@ -352,7 +390,7 @@ where
 
 pub async fn bw_differential_async<SPI, CS, DC, RST, BUSY, D>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     prev_page: u32,
     target_page: u32,
@@ -368,21 +406,19 @@ where
 {
     validate_x4_native_page(book, prev_page)?;
     validate_x4_native_page(book, target_page)?;
-    let open = book.open_info();
-    let prev_pd = &book
-        .page_info(prev_page)
+    let page_data_offset = book.page_data_offset().get();
+    let prev_pd = &read_page(book, prev_page)
         .map_err(|_| HalError::InvalidParam)?
-        .plane_dir;
-    let target_pd = &book
-        .page_info(target_page)
+        .planes;
+    let target_pd = &read_page(book, target_page)
         .map_err(|_| HalError::InvalidParam)?
-        .plane_dir;
+        .planes;
 
     display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
     stream_plane_chunks_strips_async(
         display,
         book_bytes,
-        open.page_data_offset,
+        page_data_offset,
         prev_pd,
         2,
         true,
@@ -394,7 +430,7 @@ where
     stream_plane_chunks_strips_async(
         display,
         book_bytes,
-        open.page_data_offset,
+        page_data_offset,
         target_pd,
         2,
         false,
@@ -407,7 +443,7 @@ where
 
 pub async fn recovery_seed_async<SPI, CS, DC, RST, BUSY, D>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     target_page: u32,
     delay: &D,
@@ -421,17 +457,16 @@ where
     D: AsyncDelay + ?Sized,
 {
     validate_x4_native_page(book, target_page)?;
-    let open = book.open_info();
-    let pd = &book
-        .page_info(target_page)
+    let page_data_offset = book.page_data_offset().get();
+    let pd = &read_page(book, target_page)
         .map_err(|_| HalError::InvalidParam)?
-        .plane_dir;
+        .planes;
 
     display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
     stream_plane_chunks_strips_async(
         display,
         book_bytes,
-        open.page_data_offset,
+        page_data_offset,
         pd,
         2,
         true,
@@ -443,7 +478,7 @@ where
     stream_plane_chunks_strips_async(
         display,
         book_bytes,
-        open.page_data_offset,
+        page_data_offset,
         pd,
         2,
         false,
@@ -633,7 +668,7 @@ async fn stream_plane_chunks_strips_async<SPI, CS, DC, RST, BUSY, D>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
     book_bytes: &[u8],
     page_data_offset: u64,
-    pd: &binbook::page_index::PlaneDir,
+    pd: &binbook_core::PlaneDirectory,
     plane_slot: usize,
     red_plane: bool,
     yield_after_last_strip: bool,
@@ -647,11 +682,12 @@ where
     BUSY: InputPin,
     D: AsyncDelay + ?Sized,
 {
-    let slot_offset = pd.offsets[plane_slot];
-    let slot_size = pd.sizes[plane_slot];
-    let abs = page_data_offset + slot_offset as u64;
-    let start = abs as usize;
-    let end = start + slot_size as usize;
+    let descriptor = plane_descriptor(pd, plane_slot)?;
+    let abs = page_data_offset + descriptor.offset.get();
+    let start = usize::try_from(abs).map_err(|_| HalError::InvalidParam)?;
+    let end = start
+        .checked_add(usize::try_from(descriptor.length.get()).map_err(|_| HalError::InvalidParam)?)
+        .ok_or(HalError::InvalidParam)?;
     if end > book_bytes.len() {
         return Err(HalError::InvalidParam);
     }
@@ -670,7 +706,7 @@ async fn stream_plane_chunks_cancellable_async<SPI, CS, DC, RST, BUSY, D, E>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
     book_bytes: &[u8],
     page_data_offset: u64,
-    pd: &binbook::page_index::PlaneDir,
+    pd: &binbook_core::PlaneDirectory,
     plane_slot: usize,
     red_plane: bool,
     expected_epoch: u32,
@@ -686,11 +722,11 @@ where
     D: AsyncDelay + ?Sized,
     E: FnMut() -> u32,
 {
-    let slot_offset = pd.offsets[plane_slot];
-    let slot_size = pd.sizes[plane_slot];
-    let start = (page_data_offset + slot_offset as u64) as usize;
+    let descriptor = plane_descriptor(pd, plane_slot)?;
+    let start = usize::try_from(page_data_offset + descriptor.offset.get())
+        .map_err(|_| HalError::InvalidParam)?;
     let end = start
-        .checked_add(slot_size as usize)
+        .checked_add(usize::try_from(descriptor.length.get()).map_err(|_| HalError::InvalidParam)?)
         .ok_or(HalError::InvalidParam)?;
     if end > book_bytes.len() {
         return Err(HalError::InvalidParam);
@@ -829,36 +865,34 @@ pub fn decompress_row(input: &[u8], output: &mut [u8]) -> usize {
     in_pos
 }
 
-pub fn is_supported_embedded_gray2_page(page: &binbook::PageInfo) -> bool {
-    page.pixel_format == binbook::page_index::PIXEL_FORMAT_GRAY2_PACKED
-        && page.compression_method == binbook::page_index::COMPRESSION_RLE_PACKBITS
+pub fn is_supported_embedded_gray2_page(page: &binbook_core::PageInfo) -> bool {
+    page.pixel_format == binbook_core::PixelFormat::Gray2Packed
+        && page.compression_method == binbook_core::CompressionMethod::RlePackBits
         && page.stored_width == DISPLAY_WIDTH
         && page.stored_height == DISPLAY_HEIGHT
-        && page.plane_dir.bitmap == 0x01
+        && page.planes.bitmap() == 0x01
 }
 
 pub fn is_supported_x4_native_gray2_page(
-    profile: &binbook::DisplayProfileInfo,
-    page: &binbook::PageInfo,
+    profile: &binbook_core::DisplayProfile,
+    page: &binbook_core::PageInfo,
 ) -> bool {
     profile.physical_width == DISPLAY_WIDTH
         && profile.physical_height == DISPLAY_HEIGHT
-        && profile.waveform_hint == binbook::display_profile::WAVEFORM_SSD1677_STAGED_GRAY2
-        && page.pixel_format == binbook::page_index::PIXEL_FORMAT_GRAY2_PACKED
-        && page.compression_method == binbook::page_index::COMPRESSION_RLE_PACKBITS
+        && profile.waveform_hint == binbook_core::WAVEFORM_SSD1677_STAGED_GRAY2
+        && page.pixel_format == binbook_core::PixelFormat::Gray2Packed
+        && page.compression_method == binbook_core::CompressionMethod::RlePackBits
         && page.stored_width == DISPLAY_WIDTH
         && page.stored_height == DISPLAY_HEIGHT
-        && page.plane_dir.bitmap == 0x07
+        && page.planes.bitmap() == 0x07
 }
 
 fn validate_x4_native_page(
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     page_number: u32,
-) -> HalResult<binbook::PageInfo> {
-    let profile = book.display_profile().map_err(|_| HalError::InvalidParam)?;
-    let page = book
-        .page_info(page_number)
-        .map_err(|_| HalError::InvalidParam)?;
+) -> HalResult<binbook_core::PageInfo> {
+    let profile = read_profile(book).map_err(|_| HalError::InvalidParam)?;
+    let page = read_page(book, page_number).map_err(|_| HalError::InvalidParam)?;
     if !is_supported_x4_native_gray2_page(&profile, &page) {
         return Err(HalError::InvalidParam);
     }
@@ -868,15 +902,16 @@ fn validate_x4_native_page(
 pub fn embedded_page_slice<'a>(
     book_bytes: &'a [u8],
     page_data_offset: u64,
-    page: &binbook::PageInfo,
+    page: &binbook_core::PageInfo,
 ) -> Option<&'a [u8]> {
     if !is_supported_embedded_gray2_page(page) {
         return None;
     }
-    let pd = &page.plane_dir;
-    let offset = page_data_offset.checked_add(pd.offsets[0] as u64)?;
+    let pd = &page.planes;
+    let descriptor = pd.get(binbook_core::PlaneSlot::OverlayMsb)?;
+    let offset = page_data_offset.checked_add(descriptor.offset.get())?;
     let start = usize::try_from(offset).ok()?;
-    let size = usize::try_from(pd.sizes[0]).ok()?;
+    let size = usize::try_from(descriptor.length.get()).ok()?;
     let end = start.checked_add(size)?;
     if end > book_bytes.len() {
         return None;
@@ -887,11 +922,11 @@ pub fn embedded_page_slice<'a>(
 pub fn embedded_chunk_slice<'a>(
     book_bytes: &'a [u8],
     page_data_offset: u64,
-    chunk: &binbook::chunk_index::PageChunkEntry,
+    chunk: &binbook_core::PageChunk,
 ) -> Option<&'a [u8]> {
-    let offset = page_data_offset.checked_add(chunk.page_data_offset as u64)?;
+    let offset = page_data_offset.checked_add(chunk.offset.get())?;
     let start = usize::try_from(offset).ok()?;
-    let size = usize::try_from(chunk.compressed_size).ok()?;
+    let size = usize::try_from(chunk.compressed_length.get()).ok()?;
     let end = start.checked_add(size)?;
     if end > book_bytes.len() {
         return None;
@@ -900,7 +935,7 @@ pub fn embedded_chunk_slice<'a>(
 }
 
 pub fn find_transition_mask(
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     previous_page: Option<u32>,
     target_page: u32,
 ) -> Option<u32> {
@@ -909,8 +944,8 @@ pub fn find_transition_mask(
         return None;
     }
     for i in 0..book.transition_count() {
-        if let Ok(entry) = book.transition_entry(i) {
-            if entry.from_page_number == prev && entry.to_page_number == target_page {
+        if let Ok(entry) = read_transition(book, i) {
+            if entry.from.get() == prev && entry.to.get() == target_page {
                 return Some(entry.changed_chunk_mask);
             }
         }
@@ -920,7 +955,7 @@ pub fn find_transition_mask(
 
 pub fn display_page_with_policy<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     delay: &dyn xteink_hal::Delay,
     refresh_state: &mut RefreshState,
@@ -948,7 +983,7 @@ where
 
 pub fn display_page_with_chunk_dirty_probe_policy<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     delay: &dyn xteink_hal::Delay,
     refresh_state: &mut RefreshState,
@@ -976,7 +1011,7 @@ where
 
 pub fn display_page_with_refresh_policy<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     delay: &dyn xteink_hal::Delay,
     refresh_state: &mut RefreshState,
@@ -1032,7 +1067,7 @@ where
 
 fn stream_full_grayscale<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     target_page: u32,
     delay: &dyn xteink_hal::Delay,
@@ -1045,22 +1080,21 @@ where
     BUSY: InputPin,
 {
     validate_x4_native_page(book, target_page)?;
-    let open = book.open_info();
-    let pd = &book
-        .page_info(target_page)
+    let page_data_offset = book.page_data_offset().get();
+    let pd = &read_page(book, target_page)
         .map_err(|_| HalError::InvalidParam)?
-        .plane_dir;
+        .planes;
 
     display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
-    stream_plane_chunks_to_red(display, book_bytes, open.page_data_offset, &pd, 0, delay)?;
+    stream_plane_chunks_to_red(display, book_bytes, page_data_offset, &pd, 0, delay)?;
     display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
-    stream_plane_chunks_to_black(display, book_bytes, open.page_data_offset, &pd, 1, delay)?;
+    stream_plane_chunks_to_black(display, book_bytes, page_data_offset, &pd, 1, delay)?;
     display.refresh_with_delay(RefreshMode::Grayscale, delay)
 }
 
 fn stream_bw_seed_full<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     target_page: u32,
     delay: &dyn xteink_hal::Delay,
@@ -1072,22 +1106,21 @@ where
     RST: OutputPin,
     BUSY: InputPin,
 {
-    let open = book.open_info();
-    let pd = &book
-        .page_info(target_page)
+    let page_data_offset = book.page_data_offset().get();
+    let pd = &read_page(book, target_page)
         .map_err(|_| HalError::InvalidParam)?
-        .plane_dir;
+        .planes;
 
     display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
-    stream_plane_chunks_to_red(display, book_bytes, open.page_data_offset, &pd, 2, delay)?;
+    stream_plane_chunks_to_red(display, book_bytes, page_data_offset, &pd, 2, delay)?;
     display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
-    stream_plane_chunks_to_black(display, book_bytes, open.page_data_offset, &pd, 2, delay)?;
+    stream_plane_chunks_to_black(display, book_bytes, page_data_offset, &pd, 2, delay)?;
     display.refresh_with_delay(RefreshMode::Full, delay)
 }
 
 fn stream_bw_differential_chunked<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     prev_page: u32,
     target_page: u32,
@@ -1101,15 +1134,13 @@ where
     RST: OutputPin,
     BUSY: InputPin,
 {
-    let open = book.open_info();
-    let prev_pd = &book
-        .page_info(prev_page)
+    let page_data_offset = book.page_data_offset().get();
+    let prev_pd = &read_page(book, prev_page)
         .map_err(|_| HalError::InvalidParam)?
-        .plane_dir;
-    let target_pd = &book
-        .page_info(target_page)
+        .planes;
+    let target_pd = &read_page(book, target_page)
         .map_err(|_| HalError::InvalidParam)?
-        .plane_dir;
+        .planes;
 
     for chunk_idx in 0..X4_CHUNK_COUNT {
         if changed_mask & (1 << chunk_idx) == 0 {
@@ -1117,19 +1148,12 @@ where
         }
         let y = chunk_idx as u16 * X4_CHUNK_ROWS;
         display.set_window(0, y, DISPLAY_WIDTH, X4_CHUNK_ROWS)?;
-        stream_single_chunk_to_red(
-            display,
-            book_bytes,
-            open.page_data_offset,
-            prev_pd,
-            2,
-            chunk_idx,
-        )?;
+        stream_single_chunk_to_red(display, book_bytes, page_data_offset, prev_pd, 2, chunk_idx)?;
         display.set_window(0, y, DISPLAY_WIDTH, X4_CHUNK_ROWS)?;
         stream_single_chunk_to_black(
             display,
             book_bytes,
-            open.page_data_offset,
+            page_data_offset,
             target_pd,
             2,
             chunk_idx,
@@ -1141,7 +1165,7 @@ where
 
 fn stream_bw_differential_full<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     prev_page: u32,
     target_page: u32,
@@ -1154,34 +1178,18 @@ where
     RST: OutputPin,
     BUSY: InputPin,
 {
-    let open = book.open_info();
-    let prev_pd = &book
-        .page_info(prev_page)
+    let page_data_offset = book.page_data_offset().get();
+    let prev_pd = &read_page(book, prev_page)
         .map_err(|_| HalError::InvalidParam)?
-        .plane_dir;
-    let target_pd = &book
-        .page_info(target_page)
+        .planes;
+    let target_pd = &read_page(book, target_page)
         .map_err(|_| HalError::InvalidParam)?
-        .plane_dir;
+        .planes;
 
     display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
-    stream_plane_chunks_to_red(
-        display,
-        book_bytes,
-        open.page_data_offset,
-        prev_pd,
-        2,
-        delay,
-    )?;
+    stream_plane_chunks_to_red(display, book_bytes, page_data_offset, prev_pd, 2, delay)?;
     display.set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
-    stream_plane_chunks_to_black(
-        display,
-        book_bytes,
-        open.page_data_offset,
-        target_pd,
-        2,
-        delay,
-    )?;
+    stream_plane_chunks_to_black(display, book_bytes, page_data_offset, target_pd, 2, delay)?;
     display.refresh_with_delay(RefreshMode::Partial, delay)
 }
 
@@ -1189,7 +1197,7 @@ fn stream_plane_chunks_to_red<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
     book_bytes: &[u8],
     page_data_offset: u64,
-    pd: &binbook::page_index::PlaneDir,
+    pd: &binbook_core::PlaneDirectory,
     plane_slot: usize,
     _delay: &dyn xteink_hal::Delay,
 ) -> HalResult<()>
@@ -1200,11 +1208,12 @@ where
     RST: OutputPin,
     BUSY: InputPin,
 {
-    let slot_offset = pd.offsets[plane_slot];
-    let slot_size = pd.sizes[plane_slot];
-    let abs = page_data_offset + slot_offset as u64;
-    let start = abs as usize;
-    let end = start + slot_size as usize;
+    let descriptor = plane_descriptor(pd, plane_slot)?;
+    let abs = page_data_offset + descriptor.offset.get();
+    let start = usize::try_from(abs).map_err(|_| HalError::InvalidParam)?;
+    let end = start
+        .checked_add(usize::try_from(descriptor.length.get()).map_err(|_| HalError::InvalidParam)?)
+        .ok_or(HalError::InvalidParam)?;
     if end > book_bytes.len() {
         return Err(HalError::InvalidParam);
     }
@@ -1220,7 +1229,7 @@ fn stream_plane_chunks_to_black<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
     book_bytes: &[u8],
     page_data_offset: u64,
-    pd: &binbook::page_index::PlaneDir,
+    pd: &binbook_core::PlaneDirectory,
     plane_slot: usize,
     _delay: &dyn xteink_hal::Delay,
 ) -> HalResult<()>
@@ -1231,11 +1240,12 @@ where
     RST: OutputPin,
     BUSY: InputPin,
 {
-    let slot_offset = pd.offsets[plane_slot];
-    let slot_size = pd.sizes[plane_slot];
-    let abs = page_data_offset + slot_offset as u64;
-    let start = abs as usize;
-    let end = start + slot_size as usize;
+    let descriptor = plane_descriptor(pd, plane_slot)?;
+    let abs = page_data_offset + descriptor.offset.get();
+    let start = usize::try_from(abs).map_err(|_| HalError::InvalidParam)?;
+    let end = start
+        .checked_add(usize::try_from(descriptor.length.get()).map_err(|_| HalError::InvalidParam)?)
+        .ok_or(HalError::InvalidParam)?;
     if end > book_bytes.len() {
         return Err(HalError::InvalidParam);
     }
@@ -1261,7 +1271,7 @@ fn stream_single_chunk_to_red<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
     book_bytes: &[u8],
     page_data_offset: u64,
-    pd: &binbook::page_index::PlaneDir,
+    pd: &binbook_core::PlaneDirectory,
     plane_slot: usize,
     chunk_idx: u8,
 ) -> HalResult<()>
@@ -1272,9 +1282,9 @@ where
     RST: OutputPin,
     BUSY: InputPin,
 {
-    let slot_offset = pd.offsets[plane_slot];
-    let abs = page_data_offset + slot_offset as u64;
-    let start = abs as usize;
+    let descriptor = plane_descriptor(pd, plane_slot)?;
+    let abs = page_data_offset + descriptor.offset.get();
+    let start = usize::try_from(abs).map_err(|_| HalError::InvalidParam)?;
     if start >= book_bytes.len() {
         return Err(HalError::InvalidParam);
     }
@@ -1297,7 +1307,7 @@ fn stream_single_chunk_to_black<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
     book_bytes: &[u8],
     page_data_offset: u64,
-    pd: &binbook::page_index::PlaneDir,
+    pd: &binbook_core::PlaneDirectory,
     plane_slot: usize,
     chunk_idx: u8,
 ) -> HalResult<()>
@@ -1308,9 +1318,9 @@ where
     RST: OutputPin,
     BUSY: InputPin,
 {
-    let slot_offset = pd.offsets[plane_slot];
-    let abs = page_data_offset + slot_offset as u64;
-    let start = abs as usize;
+    let descriptor = plane_descriptor(pd, plane_slot)?;
+    let abs = page_data_offset + descriptor.offset.get();
+    let start = usize::try_from(abs).map_err(|_| HalError::InvalidParam)?;
     if start >= book_bytes.len() {
         return Err(HalError::InvalidParam);
     }
@@ -1434,7 +1444,7 @@ fn update_repeat_run(value: u8, remaining: usize, consumed: usize) -> Option<Run
 #[cfg(feature = "diagnostic-console")]
 pub fn display_full_refresh_current<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; 8192]>,
+    book: &mut EmbeddedBook<'_>,
     book_bytes: &[u8],
     delay: &dyn xteink_hal::Delay,
     panel_mode: &mut PanelMode,

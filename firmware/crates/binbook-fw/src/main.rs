@@ -17,10 +17,10 @@ use xteink_hal::{Delay as _, HalError, HalResult};
 
 #[cfg(feature = "diagnostic-console")]
 use core::cell::RefCell;
-#[cfg(feature = "diagnostic-console")]
-use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
 #[cfg(feature = "firmware-bin")]
 use embassy_executor::Spawner;
+#[cfg(feature = "diagnostic-console")]
+use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
 
 use esp_backtrace as _;
 #[cfg(all(feature = "debug-log", not(feature = "diagnostic-console")))]
@@ -209,8 +209,7 @@ fn main() -> ! {
     let mut executor = esp_rtos::embassy::Executor::new();
     let executor = unsafe { __make_static(&mut executor) };
     executor.run(move |spawner| {
-        spawner
-            .spawn(firmware_task(peripherals, spawner).expect("failed to create firmware task"));
+        spawner.spawn(firmware_task(peripherals, spawner).expect("failed to create firmware task"));
     })
 }
 
@@ -263,7 +262,8 @@ fn main() -> ! {
 
     let mut scratch = [0u8; BINBOOK_SCRATCH_BYTES];
     let mut book =
-        binbook::BinBook::open(PROBE_BOOK, &mut scratch).expect("failed to open embedded BinBook");
+        binbook_core::Book::open(binbook_core::SliceSource::new(PROBE_BOOK), &mut scratch)
+            .expect("failed to open embedded BinBook");
     let page_count = book.page_count();
 
     let mut current_page: u32 = 0;
@@ -497,11 +497,8 @@ fn main() -> ! {
                 let mut action_payload_len = 0usize;
                 let status = match pending.action {
                     PendingAction::RenderTurn { turn } => {
-                        let target_page = binbook_fw::input::apply_page_turn(
-                            current_page,
-                            page_count,
-                            turn,
-                        );
+                        let target_page =
+                            binbook_fw::input::apply_page_turn(current_page, page_count, turn);
                         diag_log.push(
                             tick as u32,
                             binbook_fw::diag_log::DiagEvent {
@@ -721,7 +718,7 @@ struct RenderReport {
 
 fn render_current_page<SPI, CS, DC, RST, BUSY>(
     display: &mut Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: &mut binbook::BinBook<&[u8], &mut [u8; BINBOOK_SCRATCH_BYTES]>,
+    book: &mut binbook_core::Book<binbook_core::SliceSource<'_>>,
     delay: &dyn xteink_hal::Delay,
     refresh_state: &mut binbook_fw::refresh::RefreshState,
     panel_mode: &mut binbook_fw::display::PanelMode,

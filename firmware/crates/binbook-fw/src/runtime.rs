@@ -171,7 +171,7 @@ impl EventSink for RuntimeEventSink {
 
 struct HardwareDisplayBackend<'a, SPI, CS, DC, RST, BUSY> {
     display: Ssd1677Driver<SPI, CS, DC, RST, BUSY>,
-    book: binbook::BinBook<&'a [u8], &'a mut [u8; BINBOOK_SCRATCH_BYTES]>,
+    book: binbook_core::Book<binbook_core::SliceSource<'a>>,
     delay: Delay,
 }
 
@@ -214,7 +214,7 @@ where
                 let _ = sender.try_send(RuntimeEvent {
                     timestamp_ms,
                     kind: binbook_fw::runtime_engine::RuntimeEventKind::WaveformSelected {
-                        waveform_hint: binbook::display_profile::WAVEFORM_SSD1677_STAGED_GRAY2,
+                        waveform_hint: binbook_core::WAVEFORM_SSD1677_STAGED_GRAY2,
                         lut_revision: ssd1677_driver::STAGED_GRAY_LUT_REVISION,
                     },
                 });
@@ -454,8 +454,8 @@ async fn display_task(
     let rst = OutputPin(Output::new(gpio5, Level::High, OutputConfig::default()));
     let busy = InputPin(Input::new(gpio6, InputConfig::default()));
     let mut scratch = [0u8; BINBOOK_SCRATCH_BYTES];
-    let book =
-        binbook::BinBook::open(PROBE_BOOK, &mut scratch).expect("failed to open embedded BinBook");
+    let book = binbook_core::Book::open(binbook_core::SliceSource::new(PROBE_BOOK), &mut scratch)
+        .expect("failed to open embedded BinBook");
     let page_count = book.page_count();
     let mut backend = HardwareDisplayBackend {
         display: Ssd1677Driver::new(Spi(spi), cs, dc, rst, busy),
@@ -506,7 +506,7 @@ async fn runtime_event_aggregator_task() {
     use embassy_futures::select::{select, Either};
 
     let mut scratch = [0u8; BINBOOK_SCRATCH_BYTES];
-    let book = binbook::BinBook::open(PROBE_BOOK, &mut scratch)
+    let book = binbook_core::Book::open(binbook_core::SliceSource::new(PROBE_BOOK), &mut scratch)
         .expect("failed to open embedded BinBook for diagnostics");
     let mut aggregator = RuntimeAggregator::<
         { PAGE_TURN_QUEUE_CAPACITY },
