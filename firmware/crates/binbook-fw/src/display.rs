@@ -238,29 +238,41 @@ where
     let mut msb_row = [0u8; DISPLAY_ROW_BYTES];
     let mut lsb_row = [0u8; DISPLAY_ROW_BYTES];
     let mut base_row = [0u8; DISPLAY_ROW_BYTES];
+    let mut unused_black = [0u8; DISPLAY_ROW_BYTES];
     for strip in 0..strip_count {
         display.set_window(0, strip * X4_CHUNK_ROWS, DISPLAY_WIDTH, X4_CHUNK_ROWS)?;
         display.write_red_frame_rows::<DISPLAY_ROW_BYTES>(X4_CHUNK_ROWS, |_, row| {
             msb_decoder.fill(&mut msb_row);
             lsb_decoder.fill(&mut lsb_row);
             base_decoder.fill(&mut base_row);
-            for index in 0..DISPLAY_ROW_BYTES {
-                row[index] = !(base_row[index] | (msb_row[index] & !lsb_row[index]));
-            }
+            let converted = gray2_render::staged_row_to_absolute(
+                &msb_row,
+                &lsb_row,
+                &base_row,
+                row,
+                &mut unused_black,
+            );
+            debug_assert!(converted.is_ok());
         })?;
         delay.ms(0).await;
     }
 
     let mut lsb_decoder = PackBitsCursor::new(lsb);
     let mut base_decoder = PackBitsCursor::new(base);
+    let mut unused_red = [0u8; DISPLAY_ROW_BYTES];
     for strip in 0..strip_count {
         display.set_window(0, strip * X4_CHUNK_ROWS, DISPLAY_WIDTH, X4_CHUNK_ROWS)?;
         display.write_frame_rows::<DISPLAY_ROW_BYTES>(X4_CHUNK_ROWS, |_, row| {
             lsb_decoder.fill(&mut lsb_row);
             base_decoder.fill(&mut base_row);
-            for index in 0..DISPLAY_ROW_BYTES {
-                row[index] = !(base_row[index] | lsb_row[index]);
-            }
+            let converted = gray2_render::staged_row_to_absolute(
+                &msb_row,
+                &lsb_row,
+                &base_row,
+                &mut unused_red,
+                row,
+            );
+            debug_assert!(converted.is_ok());
         })?;
         if strip + 1 < strip_count {
             delay.ms(0).await;
@@ -557,7 +569,9 @@ where
             let _ = row;
             gray2_row.fill(0);
             decoder.fill(&mut gray2_row);
-            gray2_row_to_ssd1677_planes(&gray2_row, &mut red, &mut black);
+            let converted =
+                gray2_render::canonical_row_to_absolute(&gray2_row, &mut red, &mut black);
+            debug_assert!(converted.is_ok());
             row_buf.copy_from_slice(&red);
         })
     } else {
@@ -565,7 +579,9 @@ where
             let _ = row;
             gray2_row.fill(0);
             decoder.fill(&mut gray2_row);
-            gray2_row_to_ssd1677_planes(&gray2_row, &mut red, &mut black);
+            let converted =
+                gray2_render::canonical_row_to_absolute(&gray2_row, &mut red, &mut black);
+            debug_assert!(converted.is_ok());
             row_buf.copy_from_slice(&black);
         })
     }
@@ -601,7 +617,9 @@ where
                 let _ = row;
                 gray2_row.fill(0);
                 decoder.fill(&mut gray2_row);
-                gray2_row_to_ssd1677_planes(&gray2_row, &mut red, &mut black);
+                let converted =
+                    gray2_render::canonical_row_to_absolute(&gray2_row, &mut red, &mut black);
+                debug_assert!(converted.is_ok());
                 row_buf.copy_from_slice(&red);
             })?;
         } else {
@@ -609,7 +627,9 @@ where
                 let _ = row;
                 gray2_row.fill(0);
                 decoder.fill(&mut gray2_row);
-                gray2_row_to_ssd1677_planes(&gray2_row, &mut red, &mut black);
+                let converted =
+                    gray2_render::canonical_row_to_absolute(&gray2_row, &mut red, &mut black);
+                debug_assert!(converted.is_ok());
                 row_buf.copy_from_slice(&black);
             })?;
         }
@@ -788,47 +808,6 @@ pub fn stream_gray2_rows<E>(
     }
 
     Ok(())
-}
-
-pub fn gray2_row_to_ssd1677_planes(
-    gray2_row: &[u8; GRAY2_ROW_BYTES],
-    red_row: &mut [u8; DISPLAY_ROW_BYTES],
-    black_row: &mut [u8; DISPLAY_ROW_BYTES],
-) {
-    red_row.fill(0x00);
-    black_row.fill(0x00);
-
-    for (byte_index, packed) in gray2_row.iter().copied().enumerate() {
-        let physical_x = (byte_index * 4) as u16;
-        for pixel in 0..4 {
-            let gray = (packed >> (6 - pixel * 2)) & 0x03;
-            let xth = gray2_to_xteink_value(gray);
-            let x = physical_x + pixel as u16;
-            if xth & 0x02 != 0 {
-                set_ssd1677_pixel(red_row, x);
-            }
-            if xth & 0x01 != 0 {
-                set_ssd1677_pixel(black_row, x);
-            }
-        }
-    }
-}
-
-fn gray2_to_xteink_value(gray: u8) -> u8 {
-    match gray & 0x03 {
-        0 => 3,
-        1 => 2,
-        2 => 1,
-        _ => 0,
-    }
-}
-
-fn set_ssd1677_pixel(row: &mut [u8; DISPLAY_ROW_BYTES], physical_x: u16) {
-    if physical_x >= DISPLAY_WIDTH {
-        return;
-    }
-    let ram_x = DISPLAY_WIDTH - 1 - physical_x;
-    row[usize::from(ram_x / 8)] |= 0x80 >> (ram_x % 8);
 }
 
 pub fn decompress_row(input: &[u8], output: &mut [u8]) -> usize {

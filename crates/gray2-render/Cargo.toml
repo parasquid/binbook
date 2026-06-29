@@ -1,0 +1,12 @@
+[package]
+name = "gray2-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure allocation-free GRAY2 rendering operations"
+
+[features]
+default = []
+
+[dependencies]

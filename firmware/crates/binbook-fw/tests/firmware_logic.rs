@@ -2,10 +2,9 @@
 use binbook_fw::diag_log::{DiagDeduper, DiagEvent, DiagLog, DiagLogRecord};
 use binbook_fw::display::{
     build_display_smoke_row, decompress_row, embedded_chunk_slice, embedded_page_slice,
-    gray2_row_to_ssd1677_planes, is_supported_embedded_gray2_page,
-    is_supported_x4_native_gray2_page, logical_to_physical, smoke_probe_windows, stream_gray1_rows,
-    stream_gray2_rows, DISPLAY_HEIGHT, DISPLAY_ROW_BYTES, DISPLAY_WIDTH, GRAY1_ROW_BYTES,
-    GRAY2_ROW_BYTES,
+    is_supported_embedded_gray2_page, is_supported_x4_native_gray2_page, logical_to_physical,
+    smoke_probe_windows, stream_gray1_rows, stream_gray2_rows, DISPLAY_HEIGHT, DISPLAY_ROW_BYTES,
+    DISPLAY_WIDTH, GRAY1_ROW_BYTES, GRAY2_ROW_BYTES,
 };
 use binbook_fw::flash::{FlashStorage, FILE_ENTRY_SIZE};
 use binbook_fw::input::{
@@ -186,7 +185,7 @@ fn gray2_row_conversion_maps_canonical_levels_to_ssd1677_planes() {
 
     gray2[0] = 0b00011011; // black, dark gray, light gray, white at physical x 0..3
 
-    gray2_row_to_ssd1677_planes(&gray2, &mut red, &mut black);
+    gray2_render::canonical_row_to_absolute(&gray2, &mut red, &mut black).unwrap();
 
     assert_eq!(red[DISPLAY_ROW_BYTES - 1], 0x03);
     assert_eq!(black[DISPLAY_ROW_BYTES - 1], 0x05);

@@ -112,6 +112,7 @@ dependencies = [
  "esp-println",
  "esp-rtos",
  "esp-storage",
+ "gray2-render",
  "nb 1.1.0",
  "portable-atomic",
  "ssd1677-driver",
@@ -1039,6 +1040,10 @@ dependencies = [
  "typenum",
  "version_check",
 ]
+
+[[package]]
+name = "gray2-render"
+version = "0.1.0"
 
 [[package]]
 name = "hash32"
