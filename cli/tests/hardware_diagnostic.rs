@@ -57,27 +57,6 @@ impl Write for ScriptedExerciseIo {
     }
 }
 
-fn send_and_receive(port: &mut Box<dyn serialport::SerialPort>, frame: &[u8]) -> Vec<u8> {
-    port.write_all(frame).unwrap();
-    port.flush().unwrap();
-
-    let mut response = Vec::new();
-    let mut buf = [0u8; 512];
-    let start = std::time::Instant::now();
-    while start.elapsed() < std::time::Duration::from_secs(2) {
-        match port.read(&mut buf) {
-            Ok(n) if n > 0 => {
-                response.extend_from_slice(&buf[..n]);
-                if response.contains(&FRAME_DELIMITER) {
-                    break;
-                }
-            }
-            _ => std::thread::sleep(std::time::Duration::from_millis(10)),
-        }
-    }
-    response
-}
-
 fn find_frame(data: &[u8]) -> Option<&[u8]> {
     data.iter()
         .position(|&b| b == FRAME_DELIMITER)

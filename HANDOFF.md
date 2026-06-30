@@ -4,7 +4,7 @@ Date: 2026-06-30
 
 ## Current state
 
-Tasks 0–10 of `docs/plans/2026-06-30-rust-modular-foundation-refactor.md` are implemented. Task 7 passes on the attached Xteink X4 after correcting the migrated absolute-grayscale LUT boundary. Task 8 extracts the complete X4 display policy, Task 9 reduces firmware to platform wiring, and Task 10 enforces workspace quality and crate boundaries. Tasks 11–13 remain.
+Tasks 0–11 of `docs/plans/2026-06-30-rust-modular-foundation-refactor.md` are implemented. Task 7 passes on the attached Xteink X4 after correcting the migrated absolute-grayscale LUT boundary. Task 8 extracts the complete X4 display policy, Task 9 reduces firmware to platform wiring, Task 10 enforces workspace quality and crate boundaries, and Task 11 passes the clean regression matrix. Tasks 12–13 remain.
 
 The device is running `firmware-bin,diagnostic-console`, page 0, grayscale mode. Independent STATUS reports 16 pages, zero dropped logs, zero protocol errors, and `last_error=0`.
 
@@ -46,6 +46,15 @@ The array is restored byte-for-byte. A firmware integration test now locks the 1
   - `ssd1677-driver`: embedded-hal and embedded-hal-async only.
   - `xteink-x4-display`: the four reusable foundation crates plus embedded-hal traits.
 - `Book` construction/indexing, record parsing, and payload I/O are split into focused modules under 130 logical lines each.
+- Clean Task 11 regression evidence:
+  - `cargo test --workspace`: passes from a fresh `cargo clean` baseline.
+  - Diagnostic firmware tests: pass.
+  - Serial-device CLI tests: 10 passed and 4 live tests ignored; 11 serial transport tests pass.
+  - Python suite: 98 passed, 26 skipped.
+  - Explicit kerning-proof suite: exits successfully with all proof tests passing.
+  - Pinned release ELF sizes: 1,090,836 bytes default and 1,108,052 bytes diagnostic.
+  - Rust CLI help renders the expected command surface.
+  - Python encode/inspect/decode round trip validates a 10,512-byte, 18-section fixture; header fields match `BINBOOK_FORMAT_SPEC.md`, and decoded physical pixels exactly match the specified `(799-y, x)` mapping.
 
 ## Live device evidence
 
@@ -79,6 +88,5 @@ Probe `ok` responses are treated as transport acknowledgements only. Visible out
 
 ## Remaining work
 
-1. Task 11: run the clean automated regression matrix and CLI/format round trip.
-2. Task 12: run the mandatory final serial, navigation, staged-gray, ignored-live-test, and webcam hardware gate.
-3. Task 13: update reference documentation, roadmap, stale paths, and the final acceptance matrix.
+1. Task 12: run the mandatory final serial, navigation, staged-gray, ignored-live-test, and webcam hardware gate.
+2. Task 13: update reference documentation, roadmap, stale paths, and the final acceptance matrix.
