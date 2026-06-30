@@ -119,6 +119,7 @@ dependencies = [
  "ssd1677-driver",
  "static_cell",
  "xteink-hal",
+ "xteink-x4-display",
 ]
 
 [[package]]
@@ -1980,6 +1981,18 @@ version = "0.1.0"
 dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
+ "ssd1677-driver",
+]
+
+[[package]]
+name = "xteink-x4-display"
+version = "0.1.0"
+dependencies = [
+ "binbook-core",
+ "binbook-decompress",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "gray2-render",
  "ssd1677-driver",
 ]
 

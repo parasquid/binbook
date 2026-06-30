@@ -12,6 +12,7 @@ ssd1677-driver.workspace = true
 binbook-core.workspace = true
 binbook-decompress.workspace = true
 gray2-render.workspace = true
+xteink-x4-display.workspace = true
 embedded-hal.workspace = true
 binbook-diagnostic-protocol = { workspace = true, optional = true }
 embassy-sync.workspace = true

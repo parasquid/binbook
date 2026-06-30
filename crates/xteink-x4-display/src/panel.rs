@@ -1,0 +1,131 @@
+use embedded_hal::{
+    delay::DelayNs,
+    digital::{InputPin, OutputPin},
+    spi::SpiDevice,
+};
+use embedded_hal_async::delay::DelayNs as AsyncDelayNs;
+use ssd1677_driver::{PanelConfig, Ssd1677, Waveform};
+
+use crate::DisplayResult;
+
+pub use ssd1677_driver::{ControllerState, RefreshMode};
+
+pub const STAGED_GRAY_LUT_REVISION: u16 = 1;
+
+const ABSOLUTE_GRAY_LUT: [u8; 112] = [
+    0x80, 0x48, 0x4a, 0x22, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x48, 0x68, 0x08, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x88, 0x48, 0x60, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa8, 0x48,
+    0x45, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x07, 0x1e, 0x1c, 0x02, 0x00, 0x05, 0x01, 0x05, 0x01, 0x02, 0x08, 0x01, 0x01, 0x04,
+    0x04, 0x00, 0x02, 0x01, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x01, 0x22, 0x22, 0x22, 0x22, 0x22, 0x17, 0x41, 0xa8, 0x32, 0x30, 0x00, 0x00,
+];
+
+const STAGED_GRAY_LUT: [u8; 112] = [
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x54, 0x54, 0x40, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xaa, 0xa0, 0xa8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa2, 0x22,
+    0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x00, 0x01, 0x01, 0x01, 0x01, 0x00, 0x01, 0x01, 0x01, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x8f, 0x8f, 0x8f, 0x8f, 0x8f, 0x17, 0x41, 0xa8, 0x32, 0x30, 0x00, 0x00,
+];
+
+pub struct X4Panel<SPI, DC, RST, BUSY>(Ssd1677<SPI, DC, RST, BUSY>);
+
+impl<SPI, DC, RST, BUSY> X4Panel<SPI, DC, RST, BUSY>
+where
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    #[must_use]
+    pub fn new(spi: SPI, dc: DC, reset: RST, busy: BUSY) -> Self {
+        Self(Ssd1677::new(spi, dc, reset, busy, panel_config()))
+    }
+
+    pub fn init_bw(&mut self, delay: &mut impl DelayNs) -> DisplayResult<()> {
+        self.0.init_with_delay(delay)?;
+        Ok(())
+    }
+
+    pub fn init_absolute_gray(&mut self, delay: &mut impl DelayNs) -> DisplayResult<()> {
+        self.0.init_grayscale_with_delay(delay)?;
+        self.0.load_waveform(&waveform(&ABSOLUTE_GRAY_LUT))?;
+        Ok(())
+    }
+
+    pub async fn init_bw_async(&mut self, delay: &mut impl AsyncDelayNs) -> DisplayResult<()> {
+        self.0.init_async(delay).await?;
+        Ok(())
+    }
+
+    pub async fn init_absolute_gray_async(
+        &mut self,
+        delay: &mut impl AsyncDelayNs,
+    ) -> DisplayResult<()> {
+        self.0.init_grayscale_async(delay).await?;
+        self.0.load_waveform(&waveform(&ABSOLUTE_GRAY_LUT))?;
+        Ok(())
+    }
+
+    pub fn load_staged_gray(&mut self) -> DisplayResult<()> {
+        self.0.load_waveform(&waveform(&STAGED_GRAY_LUT))?;
+        Ok(())
+    }
+
+    pub async fn activate_staged_gray(
+        &mut self,
+        delay: &mut impl AsyncDelayNs,
+    ) -> DisplayResult<()> {
+        self.0.activate_staged_grayscale_async(delay).await?;
+        Ok(())
+    }
+
+    pub fn controller(&mut self) -> &mut Ssd1677<SPI, DC, RST, BUSY> {
+        &mut self.0
+    }
+}
+
+#[must_use]
+pub const fn panel_config() -> PanelConfig {
+    PanelConfig {
+        width: 800,
+        height: 480,
+        driver_output: [0xdf, 0x01, 0x02],
+        booster_soft_start: [0xae, 0xc7, 0xc3, 0xc0, 0x80],
+        temperature_sensor: 0x80,
+        bw_border_waveform: 0x01,
+        grayscale_border_waveform: 0,
+        busy_timeout_ms: 60_000,
+    }
+}
+
+fn waveform(bytes: &'static [u8; 112]) -> Waveform<'static> {
+    Waveform {
+        lut: &bytes[..105],
+        gate_voltage: bytes[105],
+        source_voltage: [bytes[106], bytes[107], bytes[108]],
+        vcom_voltage: bytes[109],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{waveform, ABSOLUTE_GRAY_LUT, STAGED_GRAY_LUT};
+
+    #[test]
+    fn verified_waveforms_keep_voltage_tail_outside_lut_bytes() {
+        for bytes in [&ABSOLUTE_GRAY_LUT, &STAGED_GRAY_LUT] {
+            let waveform = waveform(bytes);
+            assert_eq!(waveform.lut.len(), 105);
+            assert_eq!(waveform.gate_voltage, 0x17);
+            assert_eq!(waveform.source_voltage, [0x41, 0xa8, 0x32]);
+            assert_eq!(waveform.vcom_voltage, 0x30);
+        }
+        assert_eq!(&ABSOLUTE_GRAY_LUT[100..105], &[0x22; 5]);
+        assert_eq!(&STAGED_GRAY_LUT[100..105], &[0x8f; 5]);
+    }
+}

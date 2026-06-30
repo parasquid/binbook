@@ -19,12 +19,11 @@ use esp_hal::{
 };
 use portable_atomic::{AtomicU32, Ordering};
 
-use binbook_fw::panel_driver::{new_legacy_display, LegacyDisplayDriver};
 use crate::{Delay, InputPin, OutputPin, Spi, BINBOOK_SCRATCH_BYTES, PROBE_BOOK};
 #[cfg(feature = "diagnostic-console")]
 use binbook_diagnostic_protocol::{encode_crash_response, CRASH_SUMMARY_BYTES};
-#[cfg(feature = "diagnostic-console")]
 use binbook_fw::async_refresh::DisplayProbeKind;
+use binbook_fw::panel_driver::{new_legacy_display, LegacyDisplayDriver};
 #[cfg(feature = "diagnostic-console")]
 use binbook_fw::{
     async_refresh::DISPLAY_COMPLETION_CAPACITY, runtime_engine::RuntimeCompletionStatus,
@@ -32,7 +31,7 @@ use binbook_fw::{
 use binbook_fw::{
     async_refresh::{DisplayRequest, INPUT_POLL_INTERVAL_MS, PAGE_TURN_QUEUE_CAPACITY},
     input::{self, InputState},
-    runtime_engine::{DisplayBackend, DisplayEngine, EventSink, RuntimeEvent},
+    runtime_engine::RuntimeEvent,
 };
 #[cfg(feature = "diagnostic-console")]
 use binbook_fw::{
@@ -40,6 +39,10 @@ use binbook_fw::{
         complete_pending_command, DiagnosticSnapshot, PendingAction, PendingCommand, SerialState,
     },
     diag_flash::CrashStore,
+};
+use xteink_x4_display::{
+    engine::{DisplayBackend, DisplayEngine},
+    events::EventSink,
 };
 
 type RequestSender =
@@ -155,10 +158,8 @@ impl RuntimeEventSink {
         self.pending[index] = Some(event);
         self.len += 1;
     }
-}
 
-impl EventSink for RuntimeEventSink {
-    fn emit(&mut self, event: RuntimeEvent) {
+    fn push(&mut self, event: RuntimeEvent) {
         if self.len > 0 {
             self.buffer(event);
             return;
@@ -169,10 +170,30 @@ impl EventSink for RuntimeEventSink {
     }
 }
 
+impl EventSink for RuntimeEventSink {
+    fn emit(&mut self, event: xteink_x4_display::events::DisplayEvent) {
+        self.push(binbook_fw::runtime_engine::map_display_event(event));
+    }
+}
+
 struct HardwareDisplayBackend<'a, SPI, CS, DC, RST, BUSY> {
     display: LegacyDisplayDriver<SPI, CS, DC, RST, BUSY>,
     book: binbook_core::Book<binbook_core::SliceSource<'a>>,
     delay: Delay,
+    compressed: [u8; 768],
+    decoded: [u8; 300],
+    black: [u8; 100],
+    red: [u8; 100],
+}
+
+fn hal_error(error: xteink_hal::HalError) -> xteink_x4_display::DisplayError {
+    match error {
+        xteink_hal::HalError::Flash => xteink_x4_display::DisplayError::Source,
+        xteink_hal::HalError::Spi | xteink_hal::HalError::Gpio | xteink_hal::HalError::Timeout => {
+            xteink_x4_display::DisplayError::Controller
+        }
+        xteink_hal::HalError::InvalidParam => xteink_x4_display::DisplayError::InvalidState,
+    }
 }
 
 impl<'a, SPI, CS, DC, RST, BUSY> DisplayBackend
@@ -192,54 +213,76 @@ where
         REQUEST_EPOCH.load(Ordering::Acquire)
     }
 
-    async fn init_grayscale(&mut self) -> xteink_hal::HalResult<()> {
-        self.display.init_grayscale_async(&self.delay).await
+    async fn init_grayscale(&mut self) -> xteink_x4_display::DisplayResult<()> {
+        self.display
+            .init_grayscale_async(&self.delay)
+            .await
+            .map_err(hal_error)
     }
 
     async fn render_grayscale(
         &mut self,
         page: u32,
         expected_epoch: u32,
-    ) -> xteink_hal::HalResult<binbook_fw::display::GrayRenderOutcome> {
-        binbook_fw::display::display_staged_grayscale_async(
-            &mut self.display,
+    ) -> xteink_x4_display::DisplayResult<xteink_x4_display::events::OperationOutcome> {
+        let mut buffers = xteink_x4_display::buffers::RenderBuffers::new(
+            &mut self.compressed,
+            &mut self.decoded,
+            &mut self.black,
+            &mut self.red,
+        );
+        let mut delay = xteink_hal::AsyncDelayAdapter(&self.delay);
+        xteink_x4_display::render::render_staged_overlay(
+            self.display.inner_mut(),
             &mut self.book,
-            PROBE_BOOK,
             page,
-            expected_epoch,
-            || REQUEST_EPOCH.load(Ordering::Acquire),
-            || {
-                let timestamp_ms = embassy_time::Instant::now().as_millis();
-                let sender = RUNTIME_EVENT_CHANNEL.sender();
-                let _ = sender.try_send(RuntimeEvent {
-                    timestamp_ms,
-                    kind: binbook_fw::runtime_engine::RuntimeEventKind::WaveformSelected {
-                        waveform_hint: binbook_core::WAVEFORM_SSD1677_STAGED_GRAY2,
-                        lut_revision: binbook_fw::panel_driver::STAGED_GRAY_LUT_REVISION,
-                    },
-                });
-                let _ = sender.try_send(RuntimeEvent {
-                    timestamp_ms,
-                    kind: binbook_fw::runtime_engine::RuntimeEventKind::GrayActivated { page },
-                });
+            &mut buffers,
+            xteink_x4_display::render::OverlayControl {
+                expected_epoch,
+                epoch: || REQUEST_EPOCH.load(Ordering::Acquire),
+                on_activate: || {
+                    let timestamp_ms = embassy_time::Instant::now().as_millis();
+                    let sender = RUNTIME_EVENT_CHANNEL.sender();
+                    let _ = sender.try_send(RuntimeEvent {
+                        timestamp_ms,
+                        kind: binbook_fw::runtime_engine::RuntimeEventKind::WaveformSelected {
+                            waveform_hint: binbook_core::WAVEFORM_SSD1677_STAGED_GRAY2,
+                            lut_revision: binbook_fw::panel_driver::STAGED_GRAY_LUT_REVISION,
+                        },
+                    });
+                    let _ = sender.try_send(RuntimeEvent {
+                        timestamp_ms,
+                        kind: binbook_fw::runtime_engine::RuntimeEventKind::GrayActivated { page },
+                    });
+                },
             },
-            &self.delay,
+            &mut delay,
         )
         .await
     }
 
-    async fn init_bw(&mut self) -> xteink_hal::HalResult<()> {
-        self.display.init_async(&self.delay).await
+    async fn init_bw(&mut self) -> xteink_x4_display::DisplayResult<()> {
+        self.display
+            .init_async(&self.delay)
+            .await
+            .map_err(hal_error)
     }
 
-    async fn render_bw(&mut self, from: u32, target: u32) -> xteink_hal::HalResult<()> {
-        binbook_fw::display::bw_differential_async(
-            &mut self.display,
+    async fn render_bw(&mut self, from: u32, target: u32) -> xteink_x4_display::DisplayResult<()> {
+        let mut buffers = xteink_x4_display::buffers::RenderBuffers::new(
+            &mut self.compressed,
+            &mut self.decoded,
+            &mut self.black,
+            &mut self.red,
+        );
+        let mut delay = xteink_hal::AsyncDelayAdapter(&self.delay);
+        xteink_x4_display::render::render_bw_differential(
+            self.display.inner_mut(),
             &mut self.book,
-            PROBE_BOOK,
             from,
             target,
-            &self.delay,
+            &mut buffers,
+            &mut delay,
         )
         .await
     }
@@ -248,54 +291,77 @@ where
         &mut self,
         page: u32,
         expected_epoch: u32,
-    ) -> xteink_hal::HalResult<binbook_fw::display::BaseSyncOutcome> {
-        binbook_fw::display::sync_bw_base_async(
-            &mut self.display,
+    ) -> xteink_x4_display::DisplayResult<xteink_x4_display::events::OperationOutcome> {
+        let mut buffers = xteink_x4_display::buffers::RenderBuffers::new(
+            &mut self.compressed,
+            &mut self.decoded,
+            &mut self.black,
+            &mut self.red,
+        );
+        let mut delay = xteink_hal::AsyncDelayAdapter(&self.delay);
+        xteink_x4_display::render::sync_bw_base(
+            self.display.inner_mut(),
             &mut self.book,
-            PROBE_BOOK,
             page,
+            &mut buffers,
             expected_epoch,
             || REQUEST_EPOCH.load(Ordering::Acquire),
-            &self.delay,
+            &mut delay,
         )
         .await
     }
 
-    async fn recover_bw(&mut self, page: u32) -> xteink_hal::HalResult<()> {
-        binbook_fw::display::recovery_seed_async(
-            &mut self.display,
+    async fn recover_bw(&mut self, page: u32) -> xteink_x4_display::DisplayResult<()> {
+        let mut buffers = xteink_x4_display::buffers::RenderBuffers::new(
+            &mut self.compressed,
+            &mut self.decoded,
+            &mut self.black,
+            &mut self.red,
+        );
+        let mut delay = xteink_hal::AsyncDelayAdapter(&self.delay);
+        xteink_x4_display::render::recovery_seed(
+            self.display.inner_mut(),
             &mut self.book,
-            PROBE_BOOK,
             page,
-            &self.delay,
+            &mut buffers,
+            &mut delay,
         )
         .await
     }
 
     async fn run_probe(
         &mut self,
-        kind: binbook_fw::async_refresh::DisplayProbeKind,
+        kind: xteink_x4_display::probes::ProbeKind,
         page: u32,
-    ) -> xteink_hal::HalResult<()> {
+    ) -> xteink_x4_display::DisplayResult<()> {
         #[cfg(feature = "diagnostic-console")]
         {
             match kind {
-                binbook_fw::async_refresh::DisplayProbeKind::FullRefreshCurrent => {
-                    binbook_fw::display::display_full_grayscale_async(
-                        &mut self.display,
+                xteink_x4_display::probes::ProbeKind::FullRefreshCurrent => {
+                    let mut buffers = xteink_x4_display::buffers::RenderBuffers::new(
+                        &mut self.compressed,
+                        &mut self.decoded,
+                        &mut self.black,
+                        &mut self.red,
+                    );
+                    let mut delay = xteink_hal::AsyncDelayAdapter(&self.delay);
+                    xteink_x4_display::render::render_absolute_gray(
+                        self.display.inner_mut(),
                         &mut self.book,
-                        PROBE_BOOK,
                         page,
-                        &self.delay,
+                        &mut buffers,
+                        &mut delay,
                     )
                     .await
                 }
-                binbook_fw::async_refresh::DisplayProbeKind::ClearWhite => {
-                    binbook_fw::display::clear_white_probe_async(&mut self.display, &self.delay)
+                xteink_x4_display::probes::ProbeKind::ClearWhite => {
+                    let mut delay = xteink_hal::AsyncDelayAdapter(&self.delay);
+                    xteink_x4_display::probes::clear_white(self.display.inner_mut(), &mut delay)
                         .await
                 }
-                binbook_fw::async_refresh::DisplayProbeKind::WindowCorners => {
-                    binbook_fw::display::window_corners_probe_async(&mut self.display, &self.delay)
+                xteink_x4_display::probes::ProbeKind::WindowCorners => {
+                    let mut delay = xteink_hal::AsyncDelayAdapter(&self.delay);
+                    xteink_x4_display::probes::window_corners(self.display.inner_mut(), &mut delay)
                         .await
                 }
             }
@@ -303,7 +369,7 @@ where
         #[cfg(not(feature = "diagnostic-console"))]
         {
             let _ = (kind, page);
-            Err(xteink_hal::HalError::InvalidParam)
+            Err(xteink_x4_display::DisplayError::InvalidState)
         }
     }
 }
@@ -426,6 +492,43 @@ async fn input_task(
     }
 }
 
+fn display_request(request: DisplayRequest) -> xteink_x4_display::events::DisplayRequest {
+    match request {
+        DisplayRequest::Turn {
+            turn,
+            completion_sequence,
+        } => xteink_x4_display::events::DisplayRequest::Turn {
+            turn: binbook_fw::runtime_engine::to_display_turn(turn),
+            sequence: completion_sequence,
+        },
+        DisplayRequest::Goto {
+            page,
+            completion_sequence,
+        } => xteink_x4_display::events::DisplayRequest::Goto {
+            page,
+            sequence: completion_sequence,
+        },
+        DisplayRequest::Probe {
+            kind,
+            completion_sequence,
+        } => {
+            let kind = match kind {
+                DisplayProbeKind::FullRefreshCurrent => {
+                    xteink_x4_display::probes::ProbeKind::FullRefreshCurrent
+                }
+                DisplayProbeKind::ClearWhite => xteink_x4_display::probes::ProbeKind::ClearWhite,
+                DisplayProbeKind::WindowCorners => {
+                    xteink_x4_display::probes::ProbeKind::WindowCorners
+                }
+            };
+            xteink_x4_display::events::DisplayRequest::Probe {
+                kind,
+                sequence: completion_sequence,
+            }
+        }
+    }
+}
+
 #[embassy_executor::task]
 async fn display_task(
     spi2: esp_hal::peripherals::SPI2<'static>,
@@ -461,6 +564,10 @@ async fn display_task(
         display: new_legacy_display(Spi(spi), cs, dc, rst, busy),
         book,
         delay: Delay(EspDelay::new()),
+        compressed: [0; 768],
+        decoded: [0; 300],
+        black: [0; 100],
+        red: [0; 100],
     };
     let mut engine = DisplayEngine::new(page_count);
     let mut events = RuntimeEventSink::new(RUNTIME_EVENT_CHANNEL.sender());
@@ -483,8 +590,21 @@ async fn display_task(
         .await
         {
             Either::First(request) => {
+                if let DisplayRequest::Turn {
+                    turn,
+                    completion_sequence,
+                } = request
+                {
+                    events.push(RuntimeEvent {
+                        timestamp_ms: now_ms,
+                        kind: binbook_fw::runtime_engine::RuntimeEventKind::TurnQueued {
+                            sequence: completion_sequence,
+                            turn,
+                        },
+                    });
+                }
                 let _ = engine
-                    .request(request, &mut backend, &mut events, now_ms)
+                    .request(display_request(request), &mut backend, &mut events, now_ms)
                     .await;
                 events.flush().await;
             }

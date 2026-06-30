@@ -237,6 +237,27 @@ impl<R: ReadAt> Book<R> {
         self.read_page_data(plane.offset.get(), plane.length.get(), out)
     }
 
+    pub fn read_plane_range(
+        &mut self,
+        plane: PlaneDescriptor,
+        offset: u32,
+        out: &mut [u8],
+    ) -> Result<(), Error<R::Error>> {
+        let requested = u32::try_from(out.len()).map_err(|_| FormatError::InvalidPage)?;
+        let end = offset
+            .checked_add(requested)
+            .ok_or(FormatError::InvalidPage)?;
+        if end > plane.length.get() {
+            return Err(FormatError::InvalidPage.into());
+        }
+        let relative = plane
+            .offset
+            .get()
+            .checked_add(u64::from(offset))
+            .ok_or(FormatError::InvalidPage)?;
+        self.read_page_data(relative, requested, out)
+    }
+
     pub fn read_chunk(&mut self, chunk: PageChunk, out: &mut [u8]) -> Result<(), Error<R::Error>> {
         self.read_page_data(chunk.offset.get(), chunk.compressed_length.get(), out)
     }

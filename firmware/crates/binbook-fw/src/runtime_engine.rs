@@ -1,28 +1,11 @@
-//! Allocation-free, host-testable staged-grayscale display engine.
-
 use crate::{
-    async_refresh::{
-        DisplayProbeKind, DisplayRequest, RefreshAction, RefreshCoordinator, RefreshPhase,
-    },
-    display::{BaseSyncOutcome, GrayRenderOutcome},
-    input::{apply_page_turn, Button, InputDecision, PageTurn},
+    async_refresh::{DisplayProbeKind, RefreshPhase},
+    input::{Button, InputDecision, PageTurn},
 };
-use xteink_hal::{HalError, HalResult};
+use xteink_hal::HalError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuntimePanelMode {
-    Unknown,
-    Grayscale,
-    Bw,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControllerRamState {
-    BwBaseReady,
-    GrayOverlayResident,
-    BaseSyncInProgress,
-    NeedsFullBwInputs,
-}
+pub use xteink_x4_display::engine::ControllerRamState;
+pub type RuntimePanelMode = xteink_x4_display::events::PanelMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeCompletionStatus {
@@ -136,570 +119,115 @@ pub struct RuntimeEvent {
     pub kind: RuntimeEventKind,
 }
 
-pub trait EventSink {
-    fn emit(&mut self, event: RuntimeEvent);
-}
-
-#[allow(async_fn_in_trait)]
-pub trait DisplayBackend {
-    fn timestamp_ms(&self) -> Option<u64> {
-        None
-    }
-    fn request_epoch(&self) -> u32 {
-        0
-    }
-    async fn init_grayscale(&mut self) -> HalResult<()> {
-        Ok(())
-    }
-    async fn render_grayscale(
-        &mut self,
-        page: u32,
-        expected_epoch: u32,
-    ) -> HalResult<GrayRenderOutcome>;
-    async fn init_bw(&mut self) -> HalResult<()>;
-    async fn render_bw(&mut self, from: u32, target: u32) -> HalResult<()>;
-    async fn sync_bw_base(&mut self, page: u32, expected_epoch: u32) -> HalResult<BaseSyncOutcome>;
-    async fn recover_bw(&mut self, page: u32) -> HalResult<()>;
-    async fn run_probe(&mut self, kind: DisplayProbeKind, page: u32) -> HalResult<()>;
-}
-
-pub struct DisplayEngine {
-    page_count: u32,
-    coordinator: RefreshCoordinator,
-    panel_mode: RuntimePanelMode,
-    controller_state: ControllerRamState,
-}
-
-impl DisplayEngine {
-    pub fn new(page_count: u32) -> Self {
-        Self {
-            page_count,
-            coordinator: RefreshCoordinator::new(page_count),
-            panel_mode: RuntimePanelMode::Unknown,
-            controller_state: ControllerRamState::NeedsFullBwInputs,
-        }
-    }
-
-    pub fn current_page(&self) -> u32 {
-        self.coordinator.displayed_page()
-    }
-    pub fn phase(&self) -> RefreshPhase {
-        self.coordinator.phase()
-    }
-    pub fn panel_mode(&self) -> RuntimePanelMode {
-        self.panel_mode
-    }
-    pub fn controller_state(&self) -> ControllerRamState {
-        self.controller_state
-    }
-    pub fn differential_ready(&self) -> bool {
-        self.controller_state == ControllerRamState::BwBaseReady
-    }
-
-    pub async fn initialize<B: DisplayBackend, S: EventSink>(
-        &mut self,
-        backend: &mut B,
-        events: &mut S,
-        now_ms: u64,
-    ) -> Option<RuntimeCompletion> {
-        self.phase_event(events, now_ms);
-        emit(
-            events,
-            now_ms,
-            RuntimeEventKind::RecoveryStarted { page: 0 },
-        );
-        let result = async {
-            backend.init_bw().await?;
-            self.set_panel_mode(RuntimePanelMode::Bw, events, now_ms);
-            backend.recover_bw(0).await
-        }
-        .await;
-        let completed_ms = backend.timestamp_ms().unwrap_or(now_ms);
-        match result {
-            Ok(()) => {
-                self.coordinator.record_seed_complete(0, completed_ms);
-                self.set_controller_state(ControllerRamState::BwBaseReady, events, completed_ms);
-                emit(
-                    events,
-                    completed_ms,
-                    RuntimeEventKind::RecoveryCompleted { page: 0 },
-                );
-                self.phase_event(events, completed_ms);
-                None
-            }
-            Err(error) => {
-                emit_failure(events, completed_ms, error, 0);
-                self.coordinator.record_failure();
-                self.phase_event(events, completed_ms);
-                Some(self.complete(
-                    None,
-                    RuntimeCompletionStatus::Error,
-                    Some(error),
-                    events,
-                    completed_ms,
-                ))
-            }
-        }
-    }
-
-    pub async fn request<B: DisplayBackend, S: EventSink>(
-        &mut self,
-        request: DisplayRequest,
-        backend: &mut B,
-        events: &mut S,
-        now_ms: u64,
-    ) -> Option<RuntimeCompletion> {
-        if self.phase() == RefreshPhase::Fault {
-            return Some(self.complete(
-                request_sequence(request),
-                RuntimeCompletionStatus::Error,
-                Some(HalError::InvalidParam),
-                events,
-                now_ms,
-            ));
-        }
-        match request {
-            DisplayRequest::Probe {
-                kind,
-                completion_sequence,
-            } => {
-                self.run_probe(kind, completion_sequence, backend, events, now_ms)
-                    .await
-            }
-            DisplayRequest::Turn {
-                turn,
-                completion_sequence,
-            } => {
-                emit(
-                    events,
-                    now_ms,
-                    RuntimeEventKind::TurnQueued {
-                        sequence: completion_sequence,
-                        turn,
-                    },
-                );
-                let target = apply_page_turn(self.current_page(), self.page_count, turn);
-                Some(
-                    self.navigate(
-                        target,
-                        completion_sequence,
-                        Some(turn),
-                        backend,
-                        events,
-                        now_ms,
-                    )
-                    .await,
-                )
-            }
-            DisplayRequest::Goto {
-                page,
-                completion_sequence,
-            } => Some(
-                self.navigate(
-                    page,
-                    Some(completion_sequence),
-                    None,
-                    backend,
-                    events,
-                    now_ms,
-                )
-                .await,
-            ),
-        }
-    }
-
-    pub async fn advance<B: DisplayBackend, S: EventSink>(
-        &mut self,
-        backend: &mut B,
-        events: &mut S,
-        now_ms: u64,
-    ) -> Option<RuntimeCompletion> {
-        if let RefreshAction::WaitUntil { deadline_ms } = self.coordinator.next_action() {
-            if now_ms < deadline_ms {
-                return None;
-            }
-            self.coordinator.gray_deadline_elapsed(now_ms);
-        }
-        if matches!(
-            self.coordinator.next_action(),
-            RefreshAction::RenderGray { .. }
-        ) {
-            return self.run_staged_gray(backend, events, now_ms).await;
-        }
-        None
-    }
-
-    async fn navigate<B: DisplayBackend, S: EventSink>(
-        &mut self,
-        target: u32,
-        sequence: Option<u16>,
-        boundary_turn: Option<PageTurn>,
-        backend: &mut B,
-        events: &mut S,
-        now_ms: u64,
-    ) -> RuntimeCompletion {
-        let from = self.current_page();
-        if target >= self.page_count {
-            return self.complete(
-                sequence,
-                RuntimeCompletionStatus::Error,
-                Some(HalError::InvalidParam),
-                events,
-                now_ms,
-            );
-        }
-        let cancelled_delay = self.phase() == RefreshPhase::GrayDelay;
-        if target == from {
-            if let Some(turn) = boundary_turn {
-                emit(
-                    events,
-                    now_ms,
-                    RuntimeEventKind::TurnBoundaryNoop {
-                        sequence,
-                        page: from,
-                        turn,
-                    },
-                );
-            }
-        }
-        self.coordinator.request_arrived();
-        if cancelled_delay {
-            emit(
-                events,
-                now_ms,
-                RuntimeEventKind::GrayDelayCancelled { page: from },
-            );
-        }
-        if target == from {
-            return self.complete(sequence, RuntimeCompletionStatus::Ok, None, events, now_ms);
-        }
-        emit(
-            events,
-            now_ms,
-            RuntimeEventKind::TurnStarted {
-                sequence,
-                from,
-                target,
-            },
-        );
-        self.coordinator.start_bw(target);
-        self.phase_event(events, now_ms);
-        let result = backend.render_bw(from, target).await;
-        let completed_ms = backend.timestamp_ms().unwrap_or(now_ms);
-        match result {
-            Ok(()) => {
-                self.set_panel_mode(RuntimePanelMode::Bw, events, completed_ms);
-                self.set_controller_state(ControllerRamState::BwBaseReady, events, completed_ms);
-                self.coordinator.record_bw_complete(target, completed_ms);
-                emit(
-                    events,
-                    completed_ms,
-                    RuntimeEventKind::PageDisplayed { from, page: target },
-                );
-                self.phase_event(events, completed_ms);
-                self.complete(
-                    sequence,
-                    RuntimeCompletionStatus::Ok,
-                    None,
-                    events,
-                    completed_ms,
-                )
-            }
-            Err(error) => {
-                emit_failure(events, completed_ms, error, target);
-                self.coordinator.record_failure();
-                self.recover(target, sequence, backend, events, completed_ms)
-                    .await
-            }
-        }
-    }
-
-    async fn run_staged_gray<B: DisplayBackend, S: EventSink>(
-        &mut self,
-        backend: &mut B,
-        events: &mut S,
-        now_ms: u64,
-    ) -> Option<RuntimeCompletion> {
-        let page = match self.coordinator.next_action() {
-            RefreshAction::RenderGray { page } => page,
-            _ => return None,
-        };
-        let expected_epoch = backend.request_epoch();
-        self.phase_event(events, now_ms);
-        emit(events, now_ms, RuntimeEventKind::GrayStarted { page });
-        let result = backend.render_grayscale(page, expected_epoch).await;
-        let completed_ms = backend.timestamp_ms().unwrap_or(now_ms);
-        match result {
-            Ok(GrayRenderOutcome::Cancelled) => {
-                self.coordinator.record_gray_cancelled();
-                self.set_controller_state(
-                    ControllerRamState::NeedsFullBwInputs,
-                    events,
-                    completed_ms,
-                );
-                emit(
-                    events,
-                    completed_ms,
-                    RuntimeEventKind::GrayCancelled { page },
-                );
-                self.phase_event(events, completed_ms);
-                None
-            }
-            Ok(GrayRenderOutcome::Completed) => {
-                self.set_panel_mode(RuntimePanelMode::Grayscale, events, completed_ms);
-                self.set_controller_state(
-                    ControllerRamState::GrayOverlayResident,
-                    events,
-                    completed_ms,
-                );
-                emit(
-                    events,
-                    completed_ms,
-                    RuntimeEventKind::GrayCompleted { page },
-                );
-                self.coordinator.record_gray_complete();
-                self.phase_event(events, completed_ms);
-                if backend.request_epoch() != expected_epoch {
-                    self.coordinator.skip_base_sync();
-                    self.set_controller_state(
-                        ControllerRamState::NeedsFullBwInputs,
-                        events,
-                        completed_ms,
-                    );
-                    self.phase_event(events, completed_ms);
-                    return None;
-                }
-                emit(
-                    events,
-                    completed_ms,
-                    RuntimeEventKind::BaseSyncStarted { page },
-                );
-                self.set_controller_state(
-                    ControllerRamState::BaseSyncInProgress,
-                    events,
-                    completed_ms,
-                );
-                match backend.sync_bw_base(page, expected_epoch).await {
-                    Ok(BaseSyncOutcome::Completed) => {
-                        self.coordinator.record_base_sync_complete();
-                        self.set_controller_state(
-                            ControllerRamState::BwBaseReady,
-                            events,
-                            completed_ms,
-                        );
-                        emit(
-                            events,
-                            completed_ms,
-                            RuntimeEventKind::BaseSyncCompleted { page },
-                        );
-                        self.phase_event(events, completed_ms);
-                        None
-                    }
-                    Ok(BaseSyncOutcome::Cancelled) => {
-                        self.coordinator.record_base_sync_complete();
-                        self.set_controller_state(
-                            ControllerRamState::NeedsFullBwInputs,
-                            events,
-                            completed_ms,
-                        );
-                        emit(
-                            events,
-                            completed_ms,
-                            RuntimeEventKind::BaseSyncCancelled { page },
-                        );
-                        self.phase_event(events, completed_ms);
-                        None
-                    }
-                    Err(error) => {
-                        emit_failure(events, completed_ms, error, page);
-                        self.coordinator.record_failure();
-                        Some(
-                            self.recover(page, None, backend, events, completed_ms)
-                                .await,
-                        )
-                    }
-                }
-            }
-            Err(error) => {
-                emit_failure(events, completed_ms, error, page);
-                self.coordinator.record_failure();
-                Some(
-                    self.recover(page, None, backend, events, completed_ms)
-                        .await,
-                )
-            }
-        }
-    }
-
-    async fn recover<B: DisplayBackend, S: EventSink>(
-        &mut self,
-        page: u32,
-        sequence: Option<u16>,
-        backend: &mut B,
-        events: &mut S,
-        now_ms: u64,
-    ) -> RuntimeCompletion {
-        self.phase_event(events, now_ms);
-        emit(events, now_ms, RuntimeEventKind::RecoveryStarted { page });
-        let result = async {
-            backend.init_bw().await?;
-            self.set_panel_mode(RuntimePanelMode::Bw, events, now_ms);
-            backend.recover_bw(page).await
-        }
-        .await;
-        match result {
-            Ok(()) => {
-                let from = self.current_page();
-                self.coordinator.record_recovery_complete(page, now_ms);
-                self.set_controller_state(ControllerRamState::BwBaseReady, events, now_ms);
-                emit(events, now_ms, RuntimeEventKind::RecoveryCompleted { page });
-                if from != page {
-                    emit(
-                        events,
-                        now_ms,
-                        RuntimeEventKind::PageDisplayed { from, page },
-                    );
-                }
-                self.phase_event(events, now_ms);
-                self.complete(sequence, RuntimeCompletionStatus::Ok, None, events, now_ms)
-            }
-            Err(error) => {
-                emit_failure(events, now_ms, error, page);
-                self.coordinator.record_failure();
-                self.set_controller_state(ControllerRamState::NeedsFullBwInputs, events, now_ms);
-                self.phase_event(events, now_ms);
-                self.complete(
-                    sequence,
-                    RuntimeCompletionStatus::Error,
-                    Some(error),
-                    events,
-                    now_ms,
-                )
-            }
-        }
-    }
-
-    async fn run_probe<B: DisplayBackend, S: EventSink>(
-        &mut self,
-        kind: DisplayProbeKind,
-        sequence: u16,
-        backend: &mut B,
-        events: &mut S,
-        now_ms: u64,
-    ) -> Option<RuntimeCompletion> {
-        let page = self.current_page();
-        emit(
-            events,
-            now_ms,
-            RuntimeEventKind::ProbeStarted { sequence, kind },
-        );
-        let result = async {
-            if kind == DisplayProbeKind::FullRefreshCurrent {
-                backend.init_grayscale().await?;
-            }
-            backend.run_probe(kind, page).await
-        }
-        .await;
-        self.set_controller_state(ControllerRamState::NeedsFullBwInputs, events, now_ms);
-        Some(match result {
-            Ok(()) => {
-                emit(
-                    events,
-                    now_ms,
-                    RuntimeEventKind::ProbeCompleted { sequence, kind },
-                );
-                self.complete(
-                    Some(sequence),
-                    RuntimeCompletionStatus::Ok,
-                    None,
-                    events,
-                    now_ms,
-                )
-            }
-            Err(error) => {
-                emit_failure(events, now_ms, error, page);
-                self.complete(
-                    Some(sequence),
-                    RuntimeCompletionStatus::Error,
-                    Some(error),
-                    events,
-                    now_ms,
-                )
-            }
-        })
-    }
-
-    fn complete<S: EventSink>(
-        &self,
-        sequence: Option<u16>,
-        status: RuntimeCompletionStatus,
-        error: Option<HalError>,
-        events: &mut S,
-        now_ms: u64,
-    ) -> RuntimeCompletion {
-        let completion = RuntimeCompletion {
+#[must_use]
+pub fn map_display_event(event: xteink_x4_display::events::DisplayEvent) -> RuntimeEvent {
+    use xteink_x4_display::events::DisplayEventKind as Source;
+    let kind = match event.kind {
+        Source::PhaseChanged(value) => RuntimeEventKind::PhaseChanged(map_phase(value)),
+        Source::PanelModeChanged(value) => RuntimeEventKind::PanelModeChanged(value),
+        Source::ControllerStateChanged(value) => RuntimeEventKind::ControllerRamStateChanged(value),
+        Source::TurnStarted {
             sequence,
-            status,
-            page: self.current_page(),
-            error,
-        };
-        emit(events, now_ms, RuntimeEventKind::Completion(completion));
-        completion
-    }
-    fn phase_event<S: EventSink>(&self, events: &mut S, now_ms: u64) {
-        emit(
-            events,
-            now_ms,
-            RuntimeEventKind::PhaseChanged(self.coordinator.phase()),
-        );
-    }
-    fn set_panel_mode<S: EventSink>(
-        &mut self,
-        mode: RuntimePanelMode,
-        events: &mut S,
-        now_ms: u64,
-    ) {
-        self.panel_mode = mode;
-        emit(events, now_ms, RuntimeEventKind::PanelModeChanged(mode));
-    }
-    fn set_controller_state<S: EventSink>(
-        &mut self,
-        state: ControllerRamState,
-        events: &mut S,
-        now_ms: u64,
-    ) {
-        self.controller_state = state;
-        emit(
-            events,
-            now_ms,
-            RuntimeEventKind::ControllerRamStateChanged(state),
-        );
+            from,
+            target,
+        } => RuntimeEventKind::TurnStarted {
+            sequence,
+            from,
+            target,
+        },
+        Source::TurnBoundaryNoop {
+            sequence,
+            page,
+            turn,
+        } => RuntimeEventKind::TurnBoundaryNoop {
+            sequence,
+            page,
+            turn: map_turn(turn),
+        },
+        Source::GrayDelayCancelled { page } => RuntimeEventKind::GrayDelayCancelled { page },
+        Source::PageDisplayed { from, page } => RuntimeEventKind::PageDisplayed { from, page },
+        Source::GrayStarted { page } => RuntimeEventKind::GrayStarted { page },
+        Source::GrayCancelled { page } => RuntimeEventKind::GrayCancelled { page },
+        Source::GrayCompleted { page } => RuntimeEventKind::GrayCompleted { page },
+        Source::BaseSyncStarted { page } => RuntimeEventKind::BaseSyncStarted { page },
+        Source::BaseSyncCancelled { page } => RuntimeEventKind::BaseSyncCancelled { page },
+        Source::BaseSyncCompleted { page } => RuntimeEventKind::BaseSyncCompleted { page },
+        Source::RecoveryStarted { page } => RuntimeEventKind::RecoveryStarted { page },
+        Source::RecoveryCompleted { page } => RuntimeEventKind::RecoveryCompleted { page },
+        Source::ProbeStarted { sequence, kind } => RuntimeEventKind::ProbeStarted {
+            sequence,
+            kind: map_probe(kind),
+        },
+        Source::ProbeCompleted { sequence, kind } => RuntimeEventKind::ProbeCompleted {
+            sequence,
+            kind: map_probe(kind),
+        },
+        Source::Failure { page, error } => RuntimeEventKind::DisplayFailure {
+            error: map_error(error),
+            page,
+        },
+        Source::Completion(value) => RuntimeEventKind::Completion(RuntimeCompletion {
+            sequence: value.sequence,
+            status: match value.status {
+                xteink_x4_display::events::CompletionStatus::Ok => RuntimeCompletionStatus::Ok,
+                xteink_x4_display::events::CompletionStatus::Error => {
+                    RuntimeCompletionStatus::Error
+                }
+            },
+            page: value.page,
+            error: value.error.map(map_error),
+        }),
+    };
+    RuntimeEvent {
+        timestamp_ms: event.timestamp_ms,
+        kind,
     }
 }
 
-fn request_sequence(request: DisplayRequest) -> Option<u16> {
-    match request {
-        DisplayRequest::Turn {
-            completion_sequence,
-            ..
-        } => completion_sequence,
-        DisplayRequest::Goto {
-            completion_sequence,
-            ..
-        }
-        | DisplayRequest::Probe {
-            completion_sequence,
-            ..
-        } => Some(completion_sequence),
+pub const fn map_turn(turn: xteink_x4_display::events::PageTurn) -> PageTurn {
+    match turn {
+        xteink_x4_display::events::PageTurn::Previous => PageTurn::Previous,
+        xteink_x4_display::events::PageTurn::Next => PageTurn::Next,
+        xteink_x4_display::events::PageTurn::First => PageTurn::First,
+        xteink_x4_display::events::PageTurn::Last => PageTurn::Last,
     }
 }
-fn emit<S: EventSink>(events: &mut S, timestamp_ms: u64, kind: RuntimeEventKind) {
-    events.emit(RuntimeEvent { timestamp_ms, kind });
+
+pub const fn to_display_turn(turn: PageTurn) -> xteink_x4_display::events::PageTurn {
+    match turn {
+        PageTurn::Previous => xteink_x4_display::events::PageTurn::Previous,
+        PageTurn::Next => xteink_x4_display::events::PageTurn::Next,
+        PageTurn::First => xteink_x4_display::events::PageTurn::First,
+        PageTurn::Last => xteink_x4_display::events::PageTurn::Last,
+    }
 }
-fn emit_failure<S: EventSink>(events: &mut S, timestamp_ms: u64, error: HalError, page: u32) {
-    emit(
-        events,
-        timestamp_ms,
-        RuntimeEventKind::DisplayFailure { error, page },
-    );
+
+fn map_phase(phase: xteink_x4_display::events::DisplayPhase) -> RefreshPhase {
+    match phase {
+        xteink_x4_display::events::DisplayPhase::BwReady => RefreshPhase::BwReady,
+        xteink_x4_display::events::DisplayPhase::BwRefreshing => RefreshPhase::BwRefreshing,
+        xteink_x4_display::events::DisplayPhase::GrayDelay => RefreshPhase::GrayDelay,
+        xteink_x4_display::events::DisplayPhase::GrayRefreshing => RefreshPhase::GrayRefreshing,
+        xteink_x4_display::events::DisplayPhase::BaseSync => RefreshPhase::BaseSync,
+        xteink_x4_display::events::DisplayPhase::Recovering => RefreshPhase::Recovering,
+        xteink_x4_display::events::DisplayPhase::Fault => RefreshPhase::Fault,
+    }
+}
+
+fn map_probe(kind: xteink_x4_display::probes::ProbeKind) -> DisplayProbeKind {
+    match kind {
+        xteink_x4_display::probes::ProbeKind::FullRefreshCurrent => {
+            DisplayProbeKind::FullRefreshCurrent
+        }
+        xteink_x4_display::probes::ProbeKind::ClearWhite => DisplayProbeKind::ClearWhite,
+        xteink_x4_display::probes::ProbeKind::WindowCorners => DisplayProbeKind::WindowCorners,
+    }
+}
+
+fn map_error(error: xteink_x4_display::DisplayError) -> HalError {
+    match error {
+        xteink_x4_display::DisplayError::Source => HalError::Flash,
+        xteink_x4_display::DisplayError::Controller => HalError::Spi,
+        _ => HalError::InvalidParam,
+    }
 }
