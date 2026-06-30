@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FIRMWARE_DIR="${ROOT}/firmware"
 ESPFLASH="${ESPFLASH:-${HOME}/.cargo/bin/espflash}"
 ESPFLASH_PORT="${ESPFLASH_PORT:-/dev/ttyACM0}"
-IMAGE="${IMAGE:-target/riscv32imc-unknown-none-elf/release/binbook-fw}"
+IMAGE="${IMAGE:-${ROOT}/target/riscv32imc-unknown-none-elf/release/binbook-fw}"
 
 if [[ ! -x "${ESPFLASH}" ]]; then
   printf 'espflash not found or not executable: %s\n' "${ESPFLASH}" >&2
