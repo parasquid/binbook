@@ -99,13 +99,13 @@ name = "binbook-fw"
 version = "0.1.0"
 dependencies = [
  "binbook-core",
- "binbook-decompress",
  "binbook-diagnostic-protocol",
  "embassy-executor",
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-hal 1.0.0",
+ "embedded-hal-async",
  "embedded-storage",
  "esp-backtrace",
  "esp-bootloader-esp-idf",
@@ -113,12 +113,9 @@ dependencies = [
  "esp-println",
  "esp-rtos",
  "esp-storage",
- "gray2-render",
  "nb 1.1.0",
  "portable-atomic",
- "ssd1677-driver",
  "static_cell",
- "xteink-hal",
  "xteink-x4-display",
 ]
 
@@ -1973,15 +1970,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "xteink-hal"
-version = "0.1.0"
-dependencies = [
- "embedded-hal 1.0.0",
- "embedded-hal-async",
- "ssd1677-driver",
 ]
 
 [[package]]

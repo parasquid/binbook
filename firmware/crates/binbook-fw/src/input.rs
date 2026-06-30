@@ -1,5 +1,3 @@
-use xteink_hal::AdcPin;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
     Left,
@@ -129,15 +127,6 @@ impl InputState {
             elapsed_since_last_press_ms: elapsed_ms,
             decision,
         }
-    }
-
-    pub fn poll(
-        &mut self,
-        ch1: &impl AdcPin,
-        ch2: &impl AdcPin,
-        now_ms: u64,
-    ) -> Option<ButtonEvent> {
-        self.poll_raw(ch1.read().unwrap_or(0), ch2.read().unwrap_or(0), now_ms)
     }
 }
 

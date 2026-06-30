@@ -1,12 +1,11 @@
 #![no_std]
 
 pub mod async_refresh;
+pub mod board;
 pub mod book;
-pub mod display;
+pub mod error;
 pub mod flash;
 pub mod input;
-pub mod panel_driver;
-pub mod refresh;
 pub mod runtime_engine;
 
 #[cfg(feature = "diagnostic-console")]

@@ -1,8 +1,8 @@
+use crate::error::FirmwareError;
 use crate::{
     async_refresh::{DisplayProbeKind, RefreshPhase},
     input::{Button, InputDecision, PageTurn},
 };
-use xteink_hal::HalError;
 
 pub use xteink_x4_display::engine::ControllerRamState;
 pub type RuntimePanelMode = xteink_x4_display::events::PanelMode;
@@ -18,7 +18,7 @@ pub struct RuntimeCompletion {
     pub sequence: Option<u16>,
     pub status: RuntimeCompletionStatus,
     pub page: u32,
-    pub error: Option<HalError>,
+    pub error: Option<FirmwareError>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,7 +107,7 @@ pub enum RuntimeEventKind {
         turn: PageTurn,
     },
     DisplayFailure {
-        error: HalError,
+        error: FirmwareError,
         page: u32,
     },
     Completion(RuntimeCompletion),
@@ -224,10 +224,10 @@ fn map_probe(kind: xteink_x4_display::probes::ProbeKind) -> DisplayProbeKind {
     }
 }
 
-fn map_error(error: xteink_x4_display::DisplayError) -> HalError {
+fn map_error(error: xteink_x4_display::DisplayError) -> FirmwareError {
     match error {
-        xteink_x4_display::DisplayError::Source => HalError::Flash,
-        xteink_x4_display::DisplayError::Controller => HalError::Spi,
-        _ => HalError::InvalidParam,
+        xteink_x4_display::DisplayError::Source => FirmwareError::Storage,
+        xteink_x4_display::DisplayError::Controller => FirmwareError::Spi,
+        _ => FirmwareError::InvalidParameter,
     }
 }

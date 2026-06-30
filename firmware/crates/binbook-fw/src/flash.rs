@@ -1,4 +1,6 @@
-use xteink_hal::{Flash, HalResult};
+use embedded_storage::nor_flash::ReadNorFlash;
+
+use crate::error::{FirmwareError, FirmwareResult};
 
 pub const STORAGE_OFFSET: u32 = 0x00FB_0000;
 pub const STORAGE_SIZE: u32 = 192 * 1024;
@@ -21,17 +23,19 @@ pub struct FlashStorage<F> {
     flash: F,
 }
 
-impl<F: Flash> FlashStorage<F> {
+impl<F: ReadNorFlash> FlashStorage<F> {
     pub fn new(flash: F) -> Self {
         Self { flash }
     }
 
-    pub fn find(&mut self, name: &str) -> HalResult<Option<FileInfo>> {
+    pub fn find(&mut self, name: &str) -> FirmwareResult<Option<FileInfo>> {
         let mut entry = [0u8; FILE_ENTRY_SIZE];
 
         for index in 0..MAX_FILES {
             let offset = FILE_TABLE_OFFSET + (index * FILE_ENTRY_SIZE) as u32;
-            self.flash.read(offset, &mut entry)?;
+            self.flash
+                .read(offset, &mut entry)
+                .map_err(|_| FirmwareError::Storage)?;
 
             if entry[40] != VALID_ENTRY {
                 continue;
@@ -48,13 +52,20 @@ impl<F: Flash> FlashStorage<F> {
         Ok(None)
     }
 
-    pub fn read_file(&self, info: &FileInfo, offset: u32, buf: &mut [u8]) -> HalResult<()> {
+    pub fn read_file(
+        &mut self,
+        info: &FileInfo,
+        offset: u32,
+        buf: &mut [u8],
+    ) -> FirmwareResult<()> {
         let end = offset.saturating_add(buf.len() as u32);
         if end > info.size {
-            return Err(xteink_hal::HalError::InvalidParam);
+            return Err(FirmwareError::InvalidParameter);
         }
 
-        self.flash.read(info.offset + offset, buf)
+        self.flash
+            .read(info.offset + offset, buf)
+            .map_err(|_| FirmwareError::Storage)
     }
 }
 

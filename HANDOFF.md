@@ -4,7 +4,7 @@ Date: 2026-06-30
 
 ## Current state
 
-Tasks 0–6 of `docs/plans/2026-06-30-rust-modular-foundation-refactor.md` are implemented. Task 7 now passes on the attached Xteink X4 after correcting the migrated absolute-grayscale LUT boundary. Tasks 8–13 remain.
+Tasks 0–9 of `docs/plans/2026-06-30-rust-modular-foundation-refactor.md` are implemented. Task 7 passes on the attached Xteink X4 after correcting the migrated absolute-grayscale LUT boundary. Task 8 extracts the complete X4 display policy, and Task 9 reduces firmware to platform wiring. Tasks 10–13 remain.
 
 The device is running `firmware-bin,diagnostic-console`, page 0, grayscale mode. Independent STATUS reports 16 pages, zero dropped logs, zero protocol errors, and `last_error=0`.
 
@@ -12,9 +12,11 @@ The device is running `firmware-bin,diagnostic-console`, page 0, grayscale mode.
 
 - Unified root Cargo workspace.
 - Reusable `binbook-core`, `binbook-decompress`, `gray2-render`, and embedded-hal 1.0 `ssd1677-driver` crates.
-- Firmware-owned X4 panel policy adapter pending extraction into `xteink-x4-display` in Task 8.
+- Reusable `xteink-x4-display` owns X4 profile validation, caller-owned streaming buffers, staged/absolute rendering, cancellation, refresh policy, probes, and display-engine state.
 - SSD1677 driver accepts `SpiDevice<u8>`, embedded-hal digital pins, sync delay, and async delay without importing `xteink-hal`.
-- X4 staged and absolute waveform bytes remain outside the generic driver.
+- X4 staged and absolute waveform bytes remain outside the generic driver and are owned by `xteink-x4-display`.
+- Firmware `main.rs` is a composition root; focused runtime modules own ADC polling, display adaptation, diagnostic aggregation, and USB diagnostic transport.
+- `xteink-hal` and the firmware-local display, panel-driver, refresh, parsing, and PackBits paths are removed.
 
 ## Driver-gate defect and fix
 
@@ -29,6 +31,11 @@ The array is restored byte-for-byte. A firmware integration test now locks the 1
 - `cargo clippy -p ssd1677-driver --all-targets -- -D warnings`: passes after the LUT fix.
 - `cargo test --workspace`: passes after the LUT fix.
 - Pinned RISC-V diagnostic release build with `firmware-bin,diagnostic-console`: passes after the LUT fix.
+- Task 9 `cargo test -p binbook-fw`, diagnostic feature tests, and workspace tests pass.
+- Task 9 pinned RISC-V release sizes:
+  - Default: 1,090,836-byte ELF, up 6,400 bytes (0.59%) from the 1,084,436-byte checkpoint.
+  - Diagnostic: 1,109,036-byte ELF, up 7,344 bytes (0.67%) from the 1,101,692-byte checkpoint.
+  - The bounded growth corresponds to the reusable display engine, semantic event adapter, and caller-owned streaming state; no whole-page or fixed 8 KiB scratch buffer was introduced.
 
 ## Live device evidence
 
@@ -62,5 +69,7 @@ Probe `ok` responses are treated as transport acknowledgements only. Visible out
 
 ## Remaining work
 
-1. Start Task 8: extract `xteink-x4-display` using the verified driver/panel boundary.
-2. Continue Tasks 9–13 sequentially, including the mandatory final hardware gate.
+1. Task 10: enforce workspace lints, split the rewritten runtime aggregator, and prove independent crate compilation/dependency boundaries.
+2. Task 11: run the clean automated regression matrix and CLI/format round trip.
+3. Task 12: run the mandatory final serial, navigation, staged-gray, ignored-live-test, and webcam hardware gate.
+4. Task 13: update reference documentation, roadmap, stale paths, and the final acceptance matrix.

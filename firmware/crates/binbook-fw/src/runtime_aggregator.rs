@@ -2,6 +2,7 @@
 
 use binbook_diagnostic_protocol::{PanelModeCode, StatusPayload};
 
+use crate::error::FirmwareError;
 use crate::{
     diag::{DiagnosticSnapshot, PendingCommand},
     diag_log::{
@@ -19,7 +20,6 @@ use crate::{
         RuntimePanelMode,
     },
 };
-use xteink_hal::HalError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReserveError {
@@ -472,12 +472,12 @@ fn panel_mode(mode: RuntimePanelMode) -> PanelModeCode {
     }
 }
 
-fn hal_error_code(error: HalError) -> i32 {
+fn hal_error_code(error: FirmwareError) -> i32 {
     match error {
-        HalError::Spi => -1,
-        HalError::Gpio => -2,
-        HalError::Flash => -3,
-        HalError::Timeout => -4,
-        HalError::InvalidParam => -5,
+        FirmwareError::Spi => -1,
+        FirmwareError::Gpio => -2,
+        FirmwareError::Storage => -3,
+        FirmwareError::Timeout => -4,
+        FirmwareError::InvalidParameter => -5,
     }
 }

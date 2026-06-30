@@ -8,7 +8,6 @@ members = [
     "cli",
     "firmware/crates/binbook-diagnostic-protocol",
     "firmware/crates/binbook-fw",
-    "firmware/crates/xteink-hal",
 ]
 resolver = "2"
 
@@ -45,7 +44,6 @@ serialport = { version = "4", default-features = false }
 embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
 static_cell = { version = "2.1.1", default-features = false }
-xteink-hal = { path = "firmware/crates/xteink-hal" }
 
 [profile.release]
 opt-level = "s"
