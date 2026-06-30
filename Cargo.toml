@@ -45,6 +45,10 @@ embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
 static_cell = { version = "2.1.1", default-features = false }
 
+[workspace.lints.rust]
+unsafe_code = "deny"
+warnings = "deny"
+
 [profile.release]
 opt-level = "s"
 lto = true

@@ -8,15 +8,21 @@ fn diag_structured_logging_event_constants_exist() {
         EVT_IDLE_SUMMARY, EVT_PAGE_TURN, EVT_PANEL_MODE, EVT_REFRESH_DECISION, EVT_RENDER_START,
     };
 
-    assert!(EVT_FIRMWARE_STARTED > 0);
-    assert!(EVT_ADC_SAMPLE > 0);
-    assert!(EVT_BUTTON_EVENT > 0);
-    assert!(EVT_PAGE_TURN > 0);
-    assert!(EVT_RENDER_START > 0);
-    assert!(EVT_REFRESH_DECISION > 0);
-    assert!(EVT_PANEL_MODE > 0);
-    assert!(EVT_DISPLAY_ERROR > 0);
-    assert!(EVT_IDLE_SUMMARY > 0);
+    let codes = [
+        EVT_FIRMWARE_STARTED,
+        EVT_ADC_SAMPLE,
+        EVT_BUTTON_EVENT,
+        EVT_PAGE_TURN,
+        EVT_RENDER_START,
+        EVT_REFRESH_DECISION,
+        EVT_PANEL_MODE,
+        EVT_DISPLAY_ERROR,
+        EVT_IDLE_SUMMARY,
+    ];
+    assert!(codes.iter().all(|code| *code > 0));
+    for (index, code) in codes.iter().enumerate() {
+        assert!(!codes[..index].contains(code));
+    }
 }
 
 #[test]

@@ -94,12 +94,7 @@ async fn handle_command<F>(
     F: embedded_storage::nor_flash::NorFlash,
 {
     match command {
-        RuntimeCommand::Immediate {
-            header,
-            status,
-            payload,
-            payload_len,
-        } => queue_runtime_response(serial, header, status, &payload[..payload_len]),
+        RuntimeCommand::Immediate { .. } => {}
         RuntimeCommand::LogGet {
             header,
             cursor,

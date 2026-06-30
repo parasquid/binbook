@@ -85,6 +85,10 @@ impl<const N: usize> DiagnosticPendingQueue<N> {
         self.len
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub fn front(&self) -> Option<PendingCommand> {
         if self.len == 0 {
             None
@@ -114,6 +118,12 @@ impl<const N: usize> DiagnosticPendingQueue<N> {
         self.head = (self.head + 1) % N;
         self.len -= 1;
         pending
+    }
+}
+
+impl<const N: usize> Default for DiagnosticPendingQueue<N> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -316,6 +326,12 @@ impl SerialState {
     }
 }
 
+impl Default for SerialState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn keycode_to_button(key: KeyCode) -> Option<Button> {
     match key {
         KeyCode::Left => Some(Button::Left),
@@ -513,19 +529,19 @@ pub fn resolve_log_get<const N: usize>(
 
     let mut pos = LOG_RESPONSE_HEADER_BYTES;
 
-    for i in 0..result.record_count as usize {
+    for record in records.iter().take(usize::from(result.record_count)) {
         if pos + LOG_RECORD_BYTES > budget {
             break;
         }
         let rec = LogRecordPayload {
-            sequence: records[i].sequence,
-            tick_ms: records[i].tick_ms,
-            level: records[i].level,
-            subsystem: records[i].subsystem,
-            event: records[i].event,
-            arg0: records[i].arg0,
-            arg1: records[i].arg1,
-            arg2: records[i].arg2,
+            sequence: record.sequence,
+            tick_ms: record.tick_ms,
+            level: record.level,
+            subsystem: record.subsystem,
+            event: record.event,
+            arg0: record.arg0,
+            arg1: record.arg1,
+            arg2: record.arg2,
         };
         if let Ok(n) = encode_log_record(rec, &mut resp_buf[pos..pos + LOG_RECORD_BYTES]) {
             pos += n;
@@ -573,9 +589,6 @@ pub enum RuntimeCommand {
     },
     Immediate {
         header: FrameHeader,
-        status: Status,
-        payload: [u8; MAX_PAYLOAD_BYTES],
-        payload_len: usize,
     },
 }
 
@@ -585,7 +598,7 @@ impl RuntimeCommand {
             RuntimeCommand::Hardware(pending) => pending.header,
             RuntimeCommand::LogGet { header, .. }
             | RuntimeCommand::LogClear { header }
-            | RuntimeCommand::Immediate { header, .. } => header,
+            | RuntimeCommand::Immediate { header } => header,
         }
     }
 }
@@ -676,22 +689,16 @@ pub fn poll_runtime_command(
             } else {
                 0
             };
-            Some(RuntimeCommand::Immediate {
-                header,
-                status: Status::Ok,
-                payload: response_payload,
-                payload_len,
-            })
+            queue_runtime_response(serial, header, Status::Ok, &response_payload[..payload_len]);
+            Some(RuntimeCommand::Immediate { header })
         }
         DispatchResult::Response {
             status,
             payload_len,
-        } => Some(RuntimeCommand::Immediate {
-            header,
-            status,
-            payload: response_payload,
-            payload_len,
-        }),
+        } => {
+            queue_runtime_response(serial, header, status, &response_payload[..payload_len]);
+            Some(RuntimeCommand::Immediate { header })
+        }
     }
 }
 

@@ -1,14 +1,12 @@
 use binbook_diagnostic_protocol::{
-    decode_frame, decode_hello_response, decode_key_payload, decode_log_get_payload,
-    decode_log_record, decode_page_payload, decode_probe_payload, decode_status_payload,
-    encode_frame, encode_hello_response, encode_key_payload, encode_log_get_payload,
-    encode_log_record, encode_page_payload, encode_page_response, encode_probe_payload,
-    encode_status_payload, FrameHeader, FrameKind, HelloResponse, KeyAction, KeyCode, KeyPayload,
-    LogGetPayload, LogRecordPayload, Opcode, PageAction, PagePayload, PanelModeCode, ProbeCode,
-    Status, StatusPayload, EVT_DISPLAY_RECOVERY, EVT_INPUT_DECISION, EVT_INPUT_TRANSITION,
-    EVT_REFRESH_PHASE, EVT_RESEED_COMPLETE, EVT_RESEED_START, EVT_TURN_BOUNDARY_NOOP,
-    EVT_TURN_DEQUEUED, EVT_TURN_DROPPED, EVT_TURN_QUEUED, EVT_TURN_STARTED, FRAME_DELIMITER,
-    LOG_RECORD_BYTES, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
+    decode_frame, decode_hello_response, decode_log_get_payload, decode_log_record,
+    decode_status_payload, encode_frame, encode_hello_response, encode_log_get_payload,
+    encode_log_record, encode_page_payload, encode_status_payload, FrameHeader, FrameKind,
+    HelloResponse, KeyAction, KeyCode, LogGetPayload, LogRecordPayload, Opcode, PageAction,
+    PanelModeCode, ProbeCode, Status, StatusPayload, EVT_DISPLAY_RECOVERY, EVT_INPUT_DECISION,
+    EVT_INPUT_TRANSITION, EVT_REFRESH_PHASE, EVT_RESEED_COMPLETE, EVT_RESEED_START,
+    EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED, EVT_TURN_QUEUED, EVT_TURN_STARTED,
+    FRAME_DELIMITER, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
 };
 
 #[test]
@@ -29,7 +27,7 @@ fn log_response_header_preserves_count_and_counters() {
 
 #[test]
 fn crash_response_requires_exact_present_layout() {
-    let mut summary = [0xA5; binbook_diagnostic_protocol::CRASH_SUMMARY_BYTES];
+    let summary = [0xA5; binbook_diagnostic_protocol::CRASH_SUMMARY_BYTES];
     let mut bytes = [0u8; 1 + binbook_diagnostic_protocol::CRASH_SUMMARY_BYTES];
     let len =
         binbook_diagnostic_protocol::encode_crash_response(Some(&summary), &mut bytes).unwrap();
@@ -38,7 +36,6 @@ fn crash_response_requires_exact_present_layout() {
         binbook_diagnostic_protocol::decode_crash_response(&bytes).unwrap(),
         Some(&summary[..])
     );
-    summary[0] = 0;
     assert_eq!(
         binbook_diagnostic_protocol::decode_crash_response(&[0]).unwrap(),
         None

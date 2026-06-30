@@ -84,8 +84,8 @@ fn diag_serial_counts_oversized_frame_and_continues() {
     let mut state = SerialState::new();
 
     // Feed > MAX_FRAME_BYTES of data before a delimiter — transport should detect this
-    let mut oversized = [0xAA; (MAX_FRAME_BYTES + 64) as usize];
-    oversized[(MAX_FRAME_BYTES + 63) as usize] = 0x00; // delimiter at end
+    let mut oversized = [0xAA; MAX_FRAME_BYTES + 64];
+    oversized[MAX_FRAME_BYTES + 63] = 0x00; // delimiter at end
     state.feed_rx(&oversized);
 
     // next_frame detects the oversized frame and increments the error counter

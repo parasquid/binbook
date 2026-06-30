@@ -4,7 +4,7 @@ Date: 2026-06-30
 
 ## Current state
 
-Tasks 0–9 of `docs/plans/2026-06-30-rust-modular-foundation-refactor.md` are implemented. Task 7 passes on the attached Xteink X4 after correcting the migrated absolute-grayscale LUT boundary. Task 8 extracts the complete X4 display policy, and Task 9 reduces firmware to platform wiring. Tasks 10–13 remain.
+Tasks 0–10 of `docs/plans/2026-06-30-rust-modular-foundation-refactor.md` are implemented. Task 7 passes on the attached Xteink X4 after correcting the migrated absolute-grayscale LUT boundary. Task 8 extracts the complete X4 display policy, Task 9 reduces firmware to platform wiring, and Task 10 enforces workspace quality and crate boundaries. Tasks 11–13 remain.
 
 The device is running `firmware-bin,diagnostic-console`, page 0, grayscale mode. Independent STATUS reports 16 pages, zero dropped logs, zero protocol errors, and `last_error=0`.
 
@@ -36,6 +36,16 @@ The array is restored byte-for-byte. A firmware integration test now locks the 1
   - Default: 1,090,836-byte ELF, up 6,400 bytes (0.59%) from the 1,084,436-byte checkpoint.
   - Diagnostic: 1,109,036-byte ELF, up 7,344 bytes (0.67%) from the 1,101,692-byte checkpoint.
   - The bounded growth corresponds to the reusable display engine, semantic event adapter, and caller-owned streaming state; no whole-page or fixed 8 KiB scratch buffer was introduced.
+- Workspace Rust warnings and unsafe code are denied through inherited Cargo lints.
+- Clippy with `-D warnings` passes for all five reusable crates and diagnostic firmware.
+- All five reusable crates pass pinned-nightly no_std checks for `riscv32imc-unknown-none-elf`.
+- Cargo metadata/tree inspection confirms these normal dependency boundaries:
+  - `binbook-core`: no dependencies.
+  - `binbook-decompress`: `binbook-core`, with optional `lz4_flex`.
+  - `gray2-render`: no dependencies.
+  - `ssd1677-driver`: embedded-hal and embedded-hal-async only.
+  - `xteink-x4-display`: the four reusable foundation crates plus embedded-hal traits.
+- `Book` construction/indexing, record parsing, and payload I/O are split into focused modules under 130 logical lines each.
 
 ## Live device evidence
 
@@ -69,7 +79,6 @@ Probe `ok` responses are treated as transport acknowledgements only. Visible out
 
 ## Remaining work
 
-1. Task 10: enforce workspace lints, split the rewritten runtime aggregator, and prove independent crate compilation/dependency boundaries.
-2. Task 11: run the clean automated regression matrix and CLI/format round trip.
-3. Task 12: run the mandatory final serial, navigation, staged-gray, ignored-live-test, and webcam hardware gate.
-4. Task 13: update reference documentation, roadmap, stale paths, and the final acceptance matrix.
+1. Task 11: run the clean automated regression matrix and CLI/format round trip.
+2. Task 12: run the mandatory final serial, navigation, staged-gray, ignored-live-test, and webcam hardware gate.
+3. Task 13: update reference documentation, roadmap, stale paths, and the final acceptance matrix.

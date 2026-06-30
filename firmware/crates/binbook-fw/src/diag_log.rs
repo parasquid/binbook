@@ -157,9 +157,9 @@ impl CrashSummary {
             return Err(CrashSummaryError::BadCrc);
         }
         let mut records = [CrashLogSlot::default(); CRASH_LOG_RECORDS];
-        for i in 0..CRASH_LOG_RECORDS {
+        for (i, record) in records.iter_mut().enumerate() {
             let offset = 24 + i * 24;
-            records[i] = CrashLogSlot::decode(&buf[offset..offset + 24]);
+            *record = CrashLogSlot::decode(&buf[offset..offset + 24]);
         }
         Ok(Some(CrashSummary {
             flags: buf[5],
@@ -281,8 +281,8 @@ impl<const N: usize> DiagLog<N> {
         let start_offset = (effective_cursor - oldest) as usize;
         let start_index = (self.write_index + N - self.count + start_offset) % N;
 
-        for i in 0..to_copy {
-            out[i] = self.records[(start_index + i) % N];
+        for (i, destination) in out.iter_mut().take(to_copy).enumerate() {
+            *destination = self.records[(start_index + i) % N];
         }
 
         LogReadResult {
@@ -343,6 +343,12 @@ impl<const N: usize> DiagLog<N> {
             };
         }
         to_copy
+    }
+}
+
+impl<const N: usize> Default for DiagLog<N> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -447,5 +453,11 @@ impl DiagDeduper {
         } else {
             self.idle_suppressed += 1;
         }
+    }
+}
+
+impl Default for DiagDeduper {
+    fn default() -> Self {
+        Self::new()
     }
 }

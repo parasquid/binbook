@@ -2,6 +2,7 @@
 
 mod book;
 mod book_io;
+mod book_records;
 mod chunk;
 mod error;
 mod header;

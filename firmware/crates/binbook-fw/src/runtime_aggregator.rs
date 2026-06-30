@@ -132,23 +132,27 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
             RuntimeEventKind::FirmwareStarted { page_count } => {
                 self.push_with_subsystem(
                     tick_ms,
-                    LEVEL_INFO,
-                    SUB_SYSTEM,
-                    crate::diag_log::EVT_FIRMWARE_STARTED,
-                    page_count as i32,
-                    0,
-                    0,
+                    DiagEvent {
+                        level: LEVEL_INFO,
+                        subsystem: SUB_SYSTEM,
+                        event: crate::diag_log::EVT_FIRMWARE_STARTED,
+                        arg0: page_count as i32,
+                        arg1: 0,
+                        arg2: 0,
+                    },
                 );
             }
             RuntimeEventKind::ProtocolCommand { opcode, sequence } => {
                 self.push_with_subsystem(
                     tick_ms,
-                    LEVEL_INFO,
-                    SUB_SERIAL,
-                    crate::diag_log::EVT_CMD_RECEIPT,
-                    opcode as i32,
-                    sequence as i32,
-                    0,
+                    DiagEvent {
+                        level: LEVEL_INFO,
+                        subsystem: SUB_SERIAL,
+                        event: crate::diag_log::EVT_CMD_RECEIPT,
+                        arg0: opcode as i32,
+                        arg1: sequence as i32,
+                        arg2: 0,
+                    },
                 );
             }
             RuntimeEventKind::PhaseChanged(phase) => {
@@ -191,12 +195,14 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
             RuntimeEventKind::InputTransition { ch1, ch2, observed } => {
                 self.push_with_subsystem(
                     tick_ms,
-                    LEVEL_INFO,
-                    SUB_INPUT,
-                    EVT_INPUT_TRANSITION,
-                    i32::from(ch1),
-                    i32::from(ch2),
-                    observed.map(|button| button as i32).unwrap_or(-1),
+                    DiagEvent {
+                        level: LEVEL_INFO,
+                        subsystem: SUB_INPUT,
+                        event: EVT_INPUT_TRANSITION,
+                        arg0: i32::from(ch1),
+                        arg1: i32::from(ch2),
+                        arg2: observed.map(|button| button as i32).unwrap_or(-1),
+                    },
                 );
             }
             RuntimeEventKind::InputDecision {
@@ -212,12 +218,14 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
                 };
                 self.push_with_subsystem(
                     tick_ms,
-                    LEVEL_INFO,
-                    SUB_INPUT,
-                    EVT_INPUT_DECISION,
-                    observed.map(|button| button as i32).unwrap_or(-1),
-                    decision_code,
-                    elapsed_ms.min(i32::MAX as u32) as i32,
+                    DiagEvent {
+                        level: LEVEL_INFO,
+                        subsystem: SUB_INPUT,
+                        event: EVT_INPUT_DECISION,
+                        arg0: observed.map(|button| button as i32).unwrap_or(-1),
+                        arg1: decision_code,
+                        arg2: elapsed_ms.min(i32::MAX as u32) as i32,
+                    },
                 );
             }
             RuntimeEventKind::TurnStarted {
@@ -227,12 +235,14 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
             } => {
                 self.push_with_subsystem(
                     tick_ms,
-                    LEVEL_INFO,
-                    SUB_NAV,
-                    EVT_TURN_STARTED,
-                    sequence.map(i32::from).unwrap_or(-1),
-                    from as i32,
-                    target as i32,
+                    DiagEvent {
+                        level: LEVEL_INFO,
+                        subsystem: SUB_NAV,
+                        event: EVT_TURN_STARTED,
+                        arg0: sequence.map(i32::from).unwrap_or(-1),
+                        arg1: from as i32,
+                        arg2: target as i32,
+                    },
                 );
             }
             RuntimeEventKind::TurnBoundaryNoop {
@@ -242,12 +252,14 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
             } => {
                 self.push_with_subsystem(
                     tick_ms,
-                    LEVEL_INFO,
-                    SUB_NAV,
-                    EVT_TURN_BOUNDARY_NOOP,
-                    sequence.map(i32::from).unwrap_or(-1),
-                    page as i32,
-                    turn as i32,
+                    DiagEvent {
+                        level: LEVEL_INFO,
+                        subsystem: SUB_NAV,
+                        event: EVT_TURN_BOUNDARY_NOOP,
+                        arg0: sequence.map(i32::from).unwrap_or(-1),
+                        arg1: page as i32,
+                        arg2: turn as i32,
+                    },
                 );
             }
             RuntimeEventKind::PageDisplayed { from, page } => {
@@ -437,20 +449,7 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
             crate::diag_log::EVT_PAGE_TURN => SUB_NAV,
             _ => SUB_DISPLAY,
         };
-        self.push_with_subsystem(tick_ms, level, subsystem, event, arg0, arg1, arg2)
-    }
-
-    fn push_with_subsystem(
-        &mut self,
-        tick_ms: u32,
-        level: u8,
-        subsystem: u8,
-        event: u16,
-        arg0: i32,
-        arg1: i32,
-        arg2: i32,
-    ) -> u32 {
-        self.log.push(
+        self.push_with_subsystem(
             tick_ms,
             DiagEvent {
                 level,
@@ -461,6 +460,10 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
                 arg2,
             },
         )
+    }
+
+    fn push_with_subsystem(&mut self, tick_ms: u32, event: DiagEvent) -> u32 {
+        self.log.push(tick_ms, event)
     }
 }
 

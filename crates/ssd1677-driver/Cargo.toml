@@ -12,3 +12,6 @@ embedded-hal-async.workspace = true
 
 [dev-dependencies]
 pollster = "0.4"
+
+[lints]
+workspace = true

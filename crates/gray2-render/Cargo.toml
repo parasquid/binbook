@@ -10,3 +10,6 @@ description = "Pure allocation-free GRAY2 rendering operations"
 default = []
 
 [dependencies]
+
+[lints]
+workspace = true

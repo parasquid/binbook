@@ -1,4 +1,6 @@
-use binbook_cli::{Cli, Commands, DiagCommand, ExerciseCommand, PageAction, ProbeCommand};
+use binbook_cli::{Cli, Commands, DiagCommand};
+#[cfg(feature = "serial-device")]
+use binbook_cli::{ExerciseCommand, PageAction, ProbeCommand};
 use clap::Parser;
 
 #[cfg(feature = "serial-device")]

@@ -55,3 +55,6 @@ test = false
 doctest = false
 bench = false
 required-features = ["firmware-bin"]
+
+[lints]
+workspace = true

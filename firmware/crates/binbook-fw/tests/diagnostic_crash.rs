@@ -183,12 +183,12 @@ fn diag_crash_store_survives_reopen() {
         ],
     };
 
-    let flash = CrashMockFlash::new();
-    let mut store = CrashStore::new(flash);
-    store.write_fatal(&summary).unwrap();
-
-    let flash_bytes = store.flash().raw_bytes().clone();
-    drop(store);
+    let flash_bytes = {
+        let flash = CrashMockFlash::new();
+        let mut store = CrashStore::new(flash);
+        store.write_fatal(&summary).unwrap();
+        *store.flash().raw_bytes()
+    };
 
     let mut flash2 = CrashMockFlash::new();
     flash2.sector = flash_bytes;

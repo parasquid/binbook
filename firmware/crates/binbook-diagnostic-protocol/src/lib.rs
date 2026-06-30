@@ -419,7 +419,7 @@ pub fn encode_page_payload(
             Ok(5)
         }
         _ => {
-            if out.len() < 1 {
+            if out.is_empty() {
                 return Err(ProtocolError::OutputTooSmall);
             }
             out[0] = action as u8;

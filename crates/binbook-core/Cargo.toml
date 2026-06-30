@@ -10,3 +10,6 @@ description = "Allocation-free BinBook format parser"
 default = []
 
 [dependencies]
+
+[lints]
+workspace = true
