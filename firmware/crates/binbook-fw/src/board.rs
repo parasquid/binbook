@@ -47,7 +47,8 @@ where
                     .transfer_in_place(buffer)
                     .map_err(|_| FirmwareError::Spi),
                 Operation::DelayNs(_) => Ok(()),
-            });
+            })
+            .and_then(|()| self.bus.flush().map_err(|_| FirmwareError::Spi));
         let deselect = self.chip_select.set_high().map_err(|_| FirmwareError::Gpio);
         result.and(deselect)
     }

@@ -34,6 +34,7 @@ impl SpiBus<u8> for Bus {
         Ok(())
     }
     fn flush(&mut self) -> Result<(), Self::Error> {
+        self.0 .0.borrow_mut().push("flush");
         Ok(())
     }
 }
@@ -61,6 +62,9 @@ fn board_spi_adapter_owns_chip_select_for_the_whole_transaction() {
     device
         .transaction(&mut [Operation::Write(&[1, 2]), Operation::Read(&mut read)])
         .unwrap();
-    assert_eq!(&*trace.0.borrow(), &["select", "write", "read", "deselect"]);
+    assert_eq!(
+        &*trace.0.borrow(),
+        &["select", "write", "read", "flush", "deselect"]
+    );
     assert_eq!(read, [0x5a; 2]);
 }
