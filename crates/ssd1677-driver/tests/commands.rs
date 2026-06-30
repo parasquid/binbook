@@ -42,3 +42,29 @@ fn grayscale_initialization_and_waveform_are_explicit_operations() {
         [0x41, 0xa8, 0x32]
     );
 }
+
+#[test]
+fn grayscale_initialization_preserves_controller_command_order() {
+    let (mut driver, trace, _) = driver(4);
+    let mut delay = Delay::default();
+
+    driver.init_grayscale_with_delay(&mut delay).unwrap();
+
+    let expected = [
+        vec![Command::BOOSTER_SOFT_START],
+        vec![0xae, 0xc7, 0xc3, 0xc0, 0x80],
+        vec![Command::DRIVER_OUTPUT_CTRL],
+        vec![0xdf, 0x01, 0x02],
+        vec![Command::DATA_ENTRY_MODE],
+        vec![0x03],
+        vec![Command::BORDER_WAVEFORM],
+        vec![0x00],
+        vec![Command::TEMP_SENSOR_CTRL],
+        vec![0x80],
+    ];
+    assert!(trace
+        .0
+        .borrow()
+        .windows(expected.len())
+        .any(|window| window == expected));
+}

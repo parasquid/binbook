@@ -1,69 +1,66 @@
-# Handoff: X4 Boundary Burst FIFO Fix
+# Handoff: Rust Modular Foundation Refactor
 
 Date: 2026-06-30
 
 ## Current state
 
-The boundary and mixed-direction protocol KEY fix is implemented and verified on the attached Xteink X4. The device is running `firmware-bin,diagnostic-console` and is visibly settled on page 1 in grayscale mode.
+Tasks 0–6 of `docs/plans/2026-06-30-rust-modular-foundation-refactor.md` are implemented. Task 7 now passes on the attached Xteink X4 after correcting the migrated absolute-grayscale LUT boundary. Tasks 8–13 remain.
 
-All 165 live KEY requests from the ten-round navigation diagnostic plus the five-key boundary burst produced unique sequence-matched engine completions. The boundary burst `[Up, Down, Up, Up, Down]` from page 0 completed as `0,1,0,0,1`; sequences 283 and 286 emitted `TURN_BOUNDARY_NOOP`, and independent STATUS reported page 1 with zero dropped logs, protocol errors, or display errors.
+The device is running `firmware-bin,diagnostic-console`, page 0, grayscale mode. Independent STATUS reports 16 pages, zero dropped logs, zero protocol errors, and `last_error=0`.
 
-## Implementation
+## Implemented foundation
 
-Directional protocol KEY presses no longer complete as dispatch-time no-ops. Every accepted press becomes a typed relative `PageTurn` and enters the existing 16-request FIFO. The display engine applies turns in FIFO order, so dequeue order is the queue-tail logical page model. Boundary turns reach the existing no-render observation/completion path and retain their protocol sequence.
+- Unified root Cargo workspace.
+- Reusable `binbook-core`, `binbook-decompress`, `gray2-render`, and embedded-hal 1.0 `ssd1677-driver` crates.
+- Firmware-owned X4 panel policy adapter pending extraction into `xteink-x4-display` in Task 8.
+- SSD1677 driver accepts `SpiDevice<u8>`, embedded-hal digital pins, sync delay, and async delay without importing `xteink-hal`.
+- X4 staged and absolute waveform bytes remain outside the generic driver.
 
-This does not change ADC thresholds, 50 ms polling, 100 ms cooldown, physical button mapping, queue capacity, display coordination, SSD1677 behavior, protocol version, STATUS layout, or framebuffer/RAM usage.
+## Driver-gate defect and fix
+
+The first Task 7 run produced correct corner and clear-white probes but an almost-black `full-refresh-current` image. Old/new SPI trace comparison found that the migrated `GRAY_LUT` contained two extra zero bytes before its tail. That shifted controller policy to gate `0x22`, source `[0x22, 0x17, 0x41]`, and VCOM `0xA8` instead of gate `0x17`, source `[0x41, 0xA8, 0x32]`, and VCOM `0x30`.
+
+The array is restored byte-for-byte. A firmware integration test now locks the 105-byte LUT tail and all voltage bytes. Independent Python-derived fixture offsets and full-plane hashes also lock parser, decompression, and absolute-plane output.
 
 ## Host verification
 
-- Regression red phase: `cargo test -p binbook-fw --features diagnostic-console --test boundary_fifo -- --nocapture` failed because sequences 100 and 77 returned immediate success instead of `RuntimeCommand::Hardware`.
-- Regression green phase: the same command passes 2 tests.
-- Focused protocol/engine/aggregator/transport/nav-burst suites pass.
-- Clean diagnostic firmware workspace: 218 tests pass (`27 + 22 + 2 + 128 + 9 + 11 + 19` across nonempty suites).
-- Default firmware workspace: 133 tests pass (`27 + 21 + 55 + 11 + 19` across nonempty suites).
-- CLI default: 35 tests pass.
-- CLI `serial-device`: 56 tests pass and 4 live tests remain explicitly ignored.
-- Python: 98 tests pass and 26 are skipped.
-- Pinned release binaries: default 1,084,436 bytes; diagnostic 1,101,692 bytes; diagnostic/debug 1,101,692 bytes.
-- `git diff --check` passes. Protocol version remains `1`; STATUS layout and input/queue constants are unchanged; no serde dependency was added to firmware crates.
+- `cargo test -p ssd1677-driver`: passes.
+- `cargo check -p ssd1677-driver --no-default-features --target riscv32imc-unknown-none-elf` with the pinned nightly `rustc`: passes.
+- `cargo clippy -p ssd1677-driver --all-targets -- -D warnings`: passes after the LUT fix.
+- `cargo test --workspace`: passes after the LUT fix.
+- Pinned RISC-V diagnostic release build with `firmware-bin,diagnostic-console`: passes after the LUT fix.
 
 ## Live device evidence
 
-- Flash command: `FW_FEATURES="firmware-bin,diagnostic-console" firmware/scripts/flash-xteink-x4-nav-probe.sh`.
-- Flash result: ESP32-C3 rev v0.4, 40 MHz, 16 MB flash, application 1,116,352 bytes, completed successfully.
-- Boot capture command: the 15-second pyserial reset/capture from `AGENTS.md`.
-- Boot record: `/tmp/x4-nav-burst-fifo-fix-boot.txt`.
-- Baseline HELLO: protocol 1, frame limit 512, firmware `binbook-fw`, target `xteink-x4`, and all required capabilities.
-- Baseline STATUS: page 0, page count 16, grayscale, all counters zero.
-- Diagnostic command: `UV_CACHE_DIR=/tmp/binbook-uv-cache uv run --offline python firmware/scripts/run-x4-nav-burst-diagnostic.py --port /dev/ttyACM0 --video-device /dev/video1 --rounds 10 --inter-key-ms 0 --output-dir /tmp/x4-nav-burst-fifo-fix`.
-- JSONL: `/tmp/x4-nav-burst-fifo-fix/evidence.jsonl` contains 165 KEY records, 165 unique `TURN_DEQUEUED` sequence values, 11 successful round results, and `error_count=0`.
-- Boundary no-ops: sequence 283 at page 0 and sequence 286 at page 0.
-- Boundary completions: sequences 283 through 287 completed on pages `0,1,0,0,1`.
-- Independent final STATUS: `/tmp/x4-nav-burst-fifo-fix/final-status.txt` reports `current_page=1 page_count=16 panel_mode=Grayscale dropped_log_count=0 protocol_error_count=0 last_error=0`.
-- Independent boundary logs: `/tmp/x4-nav-burst-fifo-fix/final-boundary-log-page-1.txt` and `/tmp/x4-nav-burst-fifo-fix/final-boundary-log-page-2.txt`.
-- Video: `/tmp/x4-nav-burst-fifo-fix/nav-burst.mp4`.
-- Boundary contact sheet: `/tmp/x4-nav-burst-fifo-fix/round-11-contact-sheet.jpg`.
-- Settled boundary frame: `/tmp/x4-nav-burst-fifo-fix/round-11-settled.jpg` visibly reads `PAGE 01` with the orientation frame and grayscale swatches intact.
+- Final flash: `/tmp/binbook-rust-refactor-driver/flash.txt`.
+  - ESP32-C3 revision v0.4, 16 MB flash.
+  - Application 1,121,440 bytes.
+  - `Flashing has completed!`.
+- Final 15-second boot capture: `/tmp/binbook-rust-refactor-driver/boot.txt`.
+- HELLO: `/tmp/binbook-rust-refactor-driver/hello.txt` reports protocol 1, frame limit 512, firmware `binbook-fw`, target `xteink-x4`, and required capabilities.
+- Baseline STATUS: `/tmp/binbook-rust-refactor-driver/status-before.txt` reports page 0 of 16, grayscale, and zero errors.
+- Final STATUS: `/tmp/binbook-rust-refactor-driver/status-after.txt` reports page 0 of 16, grayscale, and zero errors.
+- Final logs: `/tmp/binbook-rust-refactor-driver/logs-after.txt`; startup recovery, staged overlay, and base sync complete without error.
+- Webcam captures:
+  - `/tmp/binbook-rust-refactor-driver/window-corners.jpg`: four physical corner rectangles visible.
+  - `/tmp/binbook-rust-refactor-driver/clear-white.jpg`: active panel uniformly white.
+  - `/tmp/binbook-rust-refactor-driver/full-refresh.jpg`: PAGE 00 orientation frame restored with distinct black, dark-gray, light-gray, and white swatches.
+  - Cropped inspection files use `crop=440:770:770:250` and are stored beside the originals.
 
-The extracted per-key frames are host-timestamp samples from a zero-delay queued burst, not proof of exact transition timing. Some samples capture a later visible page while queued requests are still completing. Serial completion sequences and independent STATUS prove per-key logical outcomes; the settled webcam frame proves the required final visible page.
+## Driver-gate acceptance matrix
 
-## Acceptance matrix
+| Requirement | Implementation path | Automated test | Observed evidence | State |
+|---|---|---|---|---|
+| embedded-hal command/reset behavior | `crates/ssd1677-driver` | external command tests | successful init and all probes | Verified |
+| window/counter endianness | driver window methods | `tests/windows.rs` | four correct physical corner rectangles | Verified |
+| full and partial refresh controls | driver refresh state | `tests/refresh.rs` | clear/corner probes complete | Verified |
+| absolute grayscale LUT and voltages | `panel_driver.rs` X4 policy | `grayscale_init_uses_verified_lut_voltage_tail` | PAGE 00 and four swatches restored | Verified |
+| parser/decompression/plane stream | core/decompress/render crates | Python-derived offsets and FNV assertions | labeled orientation page matches decoded fixture | Verified |
+| protocol state after probes | diagnostic runtime | protocol/engine suites | STATUS: zero protocol/display errors | Verified |
 
-| Requirement | Implementation path | Automated evidence | Live serial evidence | Webcam evidence | State |
-|---|---|---|---|---|---|
-| Boundary burst models `0,1,0,0,1` | KEY dispatch to typed FIFO `PageTurn` | `boundary_fifo` regression | seq 283–287 complete `0,1,0,0,1` | settled `PAGE 01` | Verified |
-| One completion per accepted KEY | runtime aggregator and display completion channel | boundary, aggregator, transport, scripted burst tests | 165 KEY records and 165 unique `TURN_DEQUEUED` sequences | final visible state agrees | Verified |
-| Boundary no-ops use observation/completion path | display engine `TurnBoundaryNoop` path | engine no-op test plus dispatch regression | seq 283 and 286 emit `TURN_BOUNDARY_NOOP` and `TURN_DEQUEUED` | no extra visible page transition required | Verified |
-| Boundary no-op performs no display operation | display engine returns before BW render | backend operation-count assertion | no `PAGE_TURN` for seq 283 or 286 | page remains 0 at those logical outcomes | Verified |
-| FIFO-relative intent preserved | bounded request FIFO | modeled burst and queue-capacity tests | all 165 sequences match host model | settled pages 10 and 1 visible | Verified |
-| No queue/counter regression | unchanged capacity and aggregator errors | full firmware/CLI/Python matrices | zero dropped logs, protocol errors, last error | no corruption in inspected contact sheets | Verified |
-| Physical ADC semantics unchanged | existing input mapping/timing | default and diagnostic input tests | no physical ADC exercise in this run | not exercised | Source/test verified; live physical path pending |
-| Display/SSD1677 behavior unchanged | no display/driver production changes | engine and SSD1677 suites | normal page events and grayscale settle | orientation frame and swatches intact | Verified |
+Probe `ok` responses are treated as transport acknowledgements only. Visible outcomes were independently inspected from the fresh webcam files and final state was queried separately.
 
-Transport acknowledgements are not counted as completion evidence. Completion claims above require matching engine events, resulting state, independent STATUS/log queries, and the required settled webcam observation.
+## Remaining work
 
-## Adversarial completion review
-
-- Dispatch-bypass hypothesis: a boundary KEY could still return immediate `Ok`. Refuted by the red/green dispatch regression and live sequence 283 reaching both `TURN_BOUNDARY_NOOP` and `TURN_DEQUEUED`.
-- FIFO-drift hypothesis: later relative requests could still resolve from stale committed state. Refuted by live sequences 283–287 completing exactly `0,1,0,0,1` and all 165 KEY sequences matching the host model.
-- Misleading-success hypothesis: the runner could exit zero while device state remained wrong. Refuted by independent STATUS/log pagination after the runner exited and direct inspection of the fresh settled webcam frame showing `PAGE 01`.
+1. Start Task 8: extract `xteink-x4-display` using the verified driver/panel boundary.
+2. Continue Tasks 9–13 sequentially, including the mandatory final hardware gate.

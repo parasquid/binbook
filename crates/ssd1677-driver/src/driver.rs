@@ -83,7 +83,9 @@ where
 
     fn configure(&mut self, grayscale: bool) -> Result<(), Error> {
         let config = self.config;
-        self.command_data(Command::TEMP_SENSOR_CTRL, &[config.temperature_sensor])?;
+        if !grayscale {
+            self.command_data(Command::TEMP_SENSOR_CTRL, &[config.temperature_sensor])?;
+        }
         self.command_data(Command::BOOSTER_SOFT_START, &config.booster_soft_start)?;
         self.command_data(Command::DRIVER_OUTPUT_CTRL, &config.driver_output)?;
         self.command_data(Command::DATA_ENTRY_MODE, &[0x03])?;
@@ -93,6 +95,9 @@ where
             config.bw_border_waveform
         };
         self.command_data(Command::BORDER_WAVEFORM, &[border])?;
+        if grayscale {
+            self.command_data(Command::TEMP_SENSOR_CTRL, &[config.temperature_sensor])?;
+        }
         self.set_window(0, 0, config.width, config.height)?;
         self.state = ControllerState::Powered;
         Ok(())

@@ -20,6 +20,36 @@ use xteink_hal::{AsyncDelay, HalError, HalResult, InputPin, OutputPin, Spi};
 const PAGE_1: u32 = 1;
 const PAGE_2: u32 = 2;
 
+#[test]
+fn grayscale_init_uses_verified_lut_voltage_tail() {
+    let writes = Rc::new(RefCell::new(Vec::new()));
+    let mut driver = new_legacy_display(
+        RecordingSpi {
+            writes: Rc::clone(&writes),
+        },
+        NoopOutputPin,
+        NoopOutputPin,
+        NoopOutputPin,
+        LowBusyPin,
+    );
+    let delay = RecordingYieldDelay::default();
+    block_on(driver.init_grayscale_async(&delay)).unwrap();
+    let writes = writes.borrow();
+    let data_after = |command: u8| {
+        let index = writes
+            .iter()
+            .rposition(|write| write.as_slice() == [command])
+            .unwrap();
+        writes[index + 1].clone()
+    };
+    let lut = data_after(Command::WRITE_LUT);
+    assert_eq!(lut.len(), 105);
+    assert_eq!(&lut[100..], &[0x22; 5]);
+    assert_eq!(data_after(Command::GATE_VOLTAGE), [0x17]);
+    assert_eq!(data_after(Command::SOURCE_VOLTAGE), [0x41, 0xa8, 0x32]);
+    assert_eq!(data_after(Command::VCOM_VOLTAGE), [0x30]);
+}
+
 fn test_profile(
     book: &mut binbook_core::Book<binbook_core::SliceSource<'_>>,
 ) -> binbook_core::DisplayProfile {
