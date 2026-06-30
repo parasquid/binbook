@@ -1,5 +1,9 @@
 # X4 BW Seed Refresh Implementation Plan
 
+> Historical implementation plan. Its crate paths and API examples describe a
+> superseded refresh milestone; current boundaries are in
+> [`2026-06-30-rust-modular-foundation-refactor.md`](2026-06-30-rust-modular-foundation-refactor.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. This repository asks agents to execute sequentially in the main thread and keep a todo tracker current. Do not delegate implementation to subagents. Use TDD for every code task: write the failing test first, run it and confirm the expected failure, implement the minimal change, then run the relevant tests and confirm they pass before starting the next task.
 
 **Goal:** Fix dirty Xteink X4 page turns by requiring a full BW seed refresh before any partial BW differential refresh after grayscale rendering.

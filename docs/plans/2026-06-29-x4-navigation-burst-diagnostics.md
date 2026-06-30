@@ -624,7 +624,7 @@ Search all current docs and code comments:
 ```bash
 rg -n "four-page|4 pages|page_count=4|pages 0.*3|last page.*3" \
   README.md HANDOFF.md docs firmware cli tests \
-  -g '*.md' -g '*.rs' -g '*.py' --glob '!docs/historical/**' --glob '!firmware/target/**'
+  -g '*.md' -g '*.rs' -g '*.py' --glob '!docs/historical/**' --glob '!target/**'
 ```
 
 Update current references to the 16-page fixture. Do not rewrite historical documents.

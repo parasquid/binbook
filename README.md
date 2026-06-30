@@ -18,6 +18,8 @@ The default bundled reading font is Literata, licensed under the SIL Open Font L
 
 - [BinBook format specification](BINBOOK_FORMAT_SPEC.md) - authoritative BinBook 0.1 candidate file-format specification.
 - [Documentation index](docs/README.md) - supporting reference notes and archived historical POC material.
+- [Rust crate architecture](docs/reference/rust-crate-architecture.md) - reusable `no_std` crate boundaries, external integration, and build gates.
+- [Xteink X4 firmware flashing](docs/reference/xteink-x4-firmware-flashing.md) - pinned firmware build and flash procedure.
 
 ## Development
 
@@ -54,6 +56,20 @@ uv run binbook view test.binbook
 The desktop viewer uses Pygame for its window backend. Keyboard controls are right/down/space for next page, left/up/backspace for previous page, Home/End for first/last page, and Esc or `q` to quit.
 
 Bundled font families include `sans-serif`/`opendyslexic` and `literata`. The `sans-serif` family uses OpenDyslexic.
+
+## Rust workspace
+
+The root Cargo workspace contains five reusable allocation-free crates, the Rust CLI, the diagnostic protocol, and the Xteink X4 firmware. All host artifacts and firmware ELFs are written under the root `target/` directory.
+
+```bash
+cargo test --workspace
+cargo test -p binbook-fw --features diagnostic-console
+cargo build -p binbook-cli
+cd firmware
+RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin --target riscv32imc-unknown-none-elf --release
+```
+
+The firmware build runs from `firmware/` so its target linker configuration is applied; its output remains `target/riscv32imc-unknown-none-elf/release/binbook-fw` at the repository root.
 
 ## Kerning Proof
 

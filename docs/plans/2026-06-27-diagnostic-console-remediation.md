@@ -1,5 +1,9 @@
 # Xteink X4 Diagnostic Console Remediation Implementation Plan
 
+> Historical implementation plan. Its pre-refactor adapter and crate paths are
+> retained as milestone context; current boundaries are in
+> [`2026-06-30-rust-modular-foundation-refactor.md`](2026-06-30-rust-modular-foundation-refactor.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task in the main thread. Do not delegate to subagents. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Replace transport-only diagnostic acknowledgements with a feature-gated, stateful console whose commands perform and report the behavior required by the design specification.

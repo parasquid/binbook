@@ -2,9 +2,9 @@
 
 ## Status and authority
 
-This document defines the target Rust architecture for the BinBook 0.1 reference implementation and Xteink X4 firmware. `BINBOOK_FORMAT_SPEC.md` remains authoritative for every wire-format field, section layout, color value, X4 plane slot, and chunk rule.
+This document defines the implemented Rust architecture for the BinBook 0.1 reference implementation and Xteink X4 firmware. `BINBOOK_FORMAT_SPEC.md` remains authoritative for every wire-format field, section layout, color value, X4 plane slot, and chunk rule.
 
-The existing `rust/` crate is intentionally replaced rather than preserved behind a compatibility facade. SquidScript is not migrated by this refactor; it may consume these crates after its post-Zephyr firmware architecture is selected.
+The former `rust/` crate was replaced rather than preserved behind a compatibility facade. SquidScript is not migrated by this refactor; it may consume these crates after its post-Zephyr firmware architecture is selected.
 
 ## Goals
 

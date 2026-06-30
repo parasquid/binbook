@@ -57,9 +57,7 @@ export LD_LIBRARY_PATH="$SYSTEMD_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 Compile the device-gated tests before touching hardware:
 
 ```bash
-cd cli
-cargo test --features serial-device --test hardware_diagnostic -- --list
-cd ..
+cargo test -p binbook-cli --features serial-device --test hardware_diagnostic -- --list
 ```
 
 The output must list:
@@ -73,13 +71,10 @@ The output must list:
 ### 1. Run Host Behavior Tests
 
 ```bash
-cd firmware
-cargo test --workspace --features diagnostic-console
+cargo test -p binbook-fw --features diagnostic-console
 cargo test --workspace
-cd ../cli
-cargo test
-cargo test --features serial-device
-cd ..
+cargo test -p binbook-cli
+cargo test -p binbook-cli --features serial-device
 uv run pytest -q
 ```
 
@@ -106,9 +101,8 @@ boot when it owns USB.
 ### 4. Verify HELLO And Baseline STATUS
 
 ```bash
-cd cli
-cargo run --features serial-device -- diag hello --port "$PORT"
-cargo run --features serial-device -- diag status --port "$PORT"
+cargo run -p binbook-cli --features serial-device -- diag hello --port "$PORT"
+cargo run -p binbook-cli --features serial-device -- diag status --port "$PORT"
 ```
 
 HELLO must report protocol 1, maximum frame size 512, firmware `binbook-fw`,
@@ -124,11 +118,11 @@ payload. The CLI performs these checks and exits nonzero on a mismatch.
 Use a discriminating starting state and query state independently:
 
 ```bash
-cargo run --features serial-device -- diag page --port "$PORT" goto 0
-cargo run --features serial-device -- diag key --port "$PORT" RIGHT
-cargo run --features serial-device -- diag status --port "$PORT"
-cargo run --features serial-device -- diag key --port "$PORT" LEFT
-cargo run --features serial-device -- diag status --port "$PORT"
+cargo run -p binbook-cli --features serial-device -- diag page --port "$PORT" goto 0
+cargo run -p binbook-cli --features serial-device -- diag key --port "$PORT" RIGHT
+cargo run -p binbook-cli --features serial-device -- diag status --port "$PORT"
+cargo run -p binbook-cli --features serial-device -- diag key --port "$PORT" LEFT
+cargo run -p binbook-cli --features serial-device -- diag status --port "$PORT"
 ```
 
 Required state transition: `0 -> 1 -> 0`. If visible navigation is an acceptance
@@ -137,17 +131,17 @@ criterion, obtain a user or camera observation in addition to STATUS.
 ### 6. Verify Every PAGE Action
 
 ```bash
-cargo run --features serial-device -- diag page --port "$PORT" goto 3
-cargo run --features serial-device -- diag status --port "$PORT"
-cargo run --features serial-device -- diag page --port "$PORT" goto 0
-cargo run --features serial-device -- diag status --port "$PORT"
-cargo run --features serial-device -- diag page --port "$PORT" next
-cargo run --features serial-device -- diag page --port "$PORT" previous
-cargo run --features serial-device -- diag page --port "$PORT" last
-cargo run --features serial-device -- diag status --port "$PORT"
-cargo run --features serial-device -- diag page --port "$PORT" first
-cargo run --features serial-device -- diag status --port "$PORT"
-cargo run --features serial-device -- diag page --port "$PORT" current
+cargo run -p binbook-cli --features serial-device -- diag page --port "$PORT" goto 3
+cargo run -p binbook-cli --features serial-device -- diag status --port "$PORT"
+cargo run -p binbook-cli --features serial-device -- diag page --port "$PORT" goto 0
+cargo run -p binbook-cli --features serial-device -- diag status --port "$PORT"
+cargo run -p binbook-cli --features serial-device -- diag page --port "$PORT" next
+cargo run -p binbook-cli --features serial-device -- diag page --port "$PORT" previous
+cargo run -p binbook-cli --features serial-device -- diag page --port "$PORT" last
+cargo run -p binbook-cli --features serial-device -- diag status --port "$PORT"
+cargo run -p binbook-cli --features serial-device -- diag page --port "$PORT" first
+cargo run -p binbook-cli --features serial-device -- diag status --port "$PORT"
+cargo run -p binbook-cli --features serial-device -- diag page --port "$PORT" current
 ```
 
 Required results are `goto 3 -> 3`, `goto 0 -> 0`, `next -> 1`, `previous -> 0`,
@@ -160,11 +154,11 @@ First generate a known page render, then retrieve from a cursor that reaches
 its records:
 
 ```bash
-cargo run --features serial-device -- diag logs --port "$PORT" --since 0
-cargo run --features serial-device -- diag logs --port "$PORT" --clear
-cargo run --features serial-device -- diag logs --port "$PORT" --since 0
-cargo run --features serial-device -- diag page --port "$PORT" next
-cargo run --features serial-device -- diag logs --port "$PORT" --since <returned-cursor>
+cargo run -p binbook-cli --features serial-device -- diag logs --port "$PORT" --since 0
+cargo run -p binbook-cli --features serial-device -- diag logs --port "$PORT" --clear
+cargo run -p binbook-cli --features serial-device -- diag logs --port "$PORT" --since 0
+cargo run -p binbook-cli --features serial-device -- diag page --port "$PORT" next
+cargo run -p binbook-cli --features serial-device -- diag logs --port "$PORT" --since <returned-cursor>
 ```
 
 `<returned-cursor>` is a runtime value printed by the preceding LOG response,
@@ -180,8 +174,8 @@ command's own receipt is a valid new record.
 ### 8. Verify Crash Flash Behavior
 
 ```bash
-cargo run --features serial-device -- diag crash --port "$PORT" --clear
-cargo run --features serial-device -- diag crash --port "$PORT"
+cargo run -p binbook-cli --features serial-device -- diag crash --port "$PORT" --clear
+cargo run -p binbook-cli --features serial-device -- diag crash --port "$PORT"
 ```
 
 The second command must print `crash=empty`. Present-summary persistence and
@@ -193,9 +187,9 @@ fatal device fault solely to manufacture hardware evidence.
 Run one command at a time and pause for user or camera confirmation after each:
 
 ```bash
-cargo run --features serial-device -- diag probe --port "$PORT" window-corners
-cargo run --features serial-device -- diag probe --port "$PORT" clear-white
-cargo run --features serial-device -- diag probe --port "$PORT" full-refresh-current
+cargo run -p binbook-cli --features serial-device -- diag probe --port "$PORT" window-corners
+cargo run -p binbook-cli --features serial-device -- diag probe --port "$PORT" clear-white
+cargo run -p binbook-cli --features serial-device -- diag probe --port "$PORT" full-refresh-current
 ```
 
 Required visible outcomes:
@@ -215,16 +209,16 @@ Run the three transport tests explicitly. Do not use an unfiltered
 precondition intentionally conflicts with the malformed-frame test.
 
 ```bash
-cargo test --features serial-device --test hardware_diagnostic \
+cargo test -p binbook-cli --features serial-device --test hardware_diagnostic \
   hardware_byte_by_byte_status_request -- \
   --ignored --exact --nocapture --test-threads=1
-cargo test --features serial-device --test hardware_diagnostic \
+cargo test -p binbook-cli --features serial-device --test hardware_diagnostic \
   hardware_two_frame_batched_request -- \
   --ignored --exact --nocapture --test-threads=1
-cargo test --features serial-device --test hardware_diagnostic \
+cargo test -p binbook-cli --features serial-device --test hardware_diagnostic \
   hardware_malformed_frame_does_not_wedge_stream -- \
   --ignored --exact --nocapture --test-threads=1
-cargo run --features serial-device -- diag status --port "$PORT"
+cargo run -p binbook-cli --features serial-device -- diag status --port "$PORT"
 ```
 
 All three live tests must pass sequentially. The follow-up STATUS must show an
@@ -234,22 +228,18 @@ still complete.
 ### 11. Verify Combined Feature USB Ownership
 
 ```bash
-cd ..
 FW_FEATURES="firmware-bin,diagnostic-console,debug-log" \
   firmware/scripts/flash-xteink-x4-nav-probe.sh
-cd cli
-cargo run --features serial-device -- diag hello --port "$PORT"
+cargo run -p binbook-cli --features serial-device -- diag hello --port "$PORT"
 ```
 
 HELLO must still decode. Reflash the normal diagnostic image afterward and
 independently reconfirm HELLO:
 
 ```bash
-cd ..
 FW_FEATURES="firmware-bin,diagnostic-console" \
   firmware/scripts/flash-xteink-x4-nav-probe.sh
-cd cli
-cargo run --features serial-device -- diag hello --port "$PORT"
+cargo run -p binbook-cli --features serial-device -- diag hello --port "$PORT"
 ```
 
 Leave the device running the normal diagnostic image.
@@ -273,19 +263,15 @@ Record the bootloader, partition, segment-load, and application-load lines.
 Re-establish the diagnostic baseline:
 
 ```bash
-cd cli
-cargo run --features serial-device -- diag hello --port "$PORT"
-cargo run --features serial-device -- diag status --port "$PORT"
-cd ..
+cargo run -p binbook-cli --features serial-device -- diag hello --port "$PORT"
+cargo run -p binbook-cli --features serial-device -- diag status --port "$PORT"
 ```
 
 Run the autonomous exercise and tell the user the webcam observation is
 beginning:
 
 ```bash
-cd cli
-cargo run --features serial-device -- diag exercise staged-gray --port "$PORT"
-cd ..
+cargo run -p binbook-cli --features serial-device -- diag exercise staged-gray --port "$PORT"
 ```
 
 While the exercise runs, verify all of these visible criteria:
@@ -305,10 +291,8 @@ While the exercise runs, verify all of these visible criteria:
 After the exercise, query `STATUS` and `LOG` independently:
 
 ```bash
-cd cli
-cargo run --features serial-device -- diag status --port "$PORT"
-cargo run --features serial-device -- diag logs --port "$PORT" --since 0
-cd ..
+cargo run -p binbook-cli --features serial-device -- diag status --port "$PORT"
+cargo run -p binbook-cli --features serial-device -- diag logs --port "$PORT" --since 0
 ```
 
 Confirm `page=3`, `last_error=0`, `dropped_turns=0`, waveform hint `2`, LUT

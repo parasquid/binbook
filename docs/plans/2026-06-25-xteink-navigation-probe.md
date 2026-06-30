@@ -1,5 +1,9 @@
 # Xteink X4 Navigation Probe Implementation Plan
 
+> Historical implementation plan. Its crate layout and commands describe the
+> four-page navigation milestone and are not current build guidance; use
+> [`2026-06-30-rust-modular-foundation-refactor.md`](2026-06-30-rust-modular-foundation-refactor.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build and flash a four-page embedded BinBook firmware probe with Xteink directional-button navigation.

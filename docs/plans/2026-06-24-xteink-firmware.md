@@ -1,5 +1,9 @@
 # BinBook Xteink X4 Firmware — Continuation Plan
 
+> Historical implementation plan. Its crate layout, paths, and commands describe
+> the 2026-06-24 milestone and are superseded by
+> [`2026-06-30-rust-modular-foundation-refactor.md`](2026-06-30-rust-modular-foundation-refactor.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Do not dispatch subagents unless the user explicitly asks for subagents or parallel agent work. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a bare-metal `no_std` Rust firmware foundation for the Xteink X4 that can display GRAY1 BinBook pages with low button-to-display latency, plus a Rust host CLI for device management.

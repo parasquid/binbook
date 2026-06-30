@@ -5,7 +5,7 @@ This document records the working flash path for the BinBook bare-metal Rust fir
 ## Scope
 
 - Target board: Xteink X4, ESP32-C3 over USB JTAG serial.
-- Firmware artifact: `firmware/target/riscv32imc-unknown-none-elf/release/binbook-fw`.
+- Firmware artifact: repository-root `target/riscv32imc-unknown-none-elf/release/binbook-fw`.
 - Current firmware behavior: 16-page labeled navigation probe with directional button and diagnostic KEY page turns.
 - Flash tool: `espflash 4.4.0`.
 
@@ -52,23 +52,26 @@ Use the wrapper above for navigation-probe firmware flashing. Do not use an arbi
 Equivalent explicit command:
 
 ```bash
-cd firmware
-RUSTC="$(rustup which --toolchain nightly rustc)" \
-  rustup run nightly cargo build \
-  -p binbook-fw \
-  --features firmware-bin \
-  --target riscv32imc-unknown-none-elf \
-  --release
+ROOT="$(pwd)"
+(
+  cd firmware
+  RUSTC="$(rustup which --toolchain nightly rustc)" \
+    rustup run nightly cargo build \
+    -p binbook-fw \
+    --features firmware-bin \
+    --target riscv32imc-unknown-none-elf \
+    --release
+)
 
 ${ESPFLASH:-${HOME}/.cargo/bin/espflash} flash \
   --non-interactive \
   --chip esp32c3 \
   --port "${ESPFLASH_PORT:-/dev/ttyACM0}" \
   --flash-size 16mb \
-  target/riscv32imc-unknown-none-elf/release/binbook-fw
+  "${ROOT}/target/riscv32imc-unknown-none-elf/release/binbook-fw"
 ```
 
-Do not pass `--monitor` for this smoke test. The firmware does not currently emit a useful serial protocol, and USB reset/re-enumeration can disrupt monitor sessions.
+Do not pass `--monitor` to the flash command. Let flashing and USB re-enumeration finish, then capture debug text with the pyserial command in `AGENTS.md` or use the diagnostic CLI for packet firmware; headless `espflash monitor` cannot initialize its input reader on this host.
 
 ## Firmware requirements for `espflash`
 
@@ -206,20 +209,19 @@ cd firmware && RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nigh
 CLI commands for diagnostic console (requires `serial-device` feature):
 
 ```bash
-cd cli
-SYSTEMD_PREFIX="$(brew --prefix systemd)" \
-PKG_CONFIG_PATH="$SYSTEMD_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH" \
-LIBRARY_PATH="$SYSTEMD_PREFIX/lib:$LIBRARY_PATH" \
-LD_LIBRARY_PATH="$SYSTEMD_PREFIX/lib:$LD_LIBRARY_PATH" \
-  cargo build --features serial-device
-binbook-cli diag hello --port /dev/ttyACM0
-binbook-cli diag key --port /dev/ttyACM0 RIGHT
-binbook-cli diag page --port /dev/ttyACM0 next
-binbook-cli diag page --port /dev/ttyACM0 goto 3
-binbook-cli diag status --port /dev/ttyACM0
-binbook-cli diag logs --port /dev/ttyACM0 --since 0
-binbook-cli diag logs --port /dev/ttyACM0 --clear
-binbook-cli diag crash --port /dev/ttyACM0
-binbook-cli diag crash --port /dev/ttyACM0 --clear
-binbook-cli diag probe --port /dev/ttyACM0 window-corners
+SYSTEMD_PREFIX="$(brew --prefix systemd)"
+export PKG_CONFIG_PATH="$SYSTEMD_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+export LIBRARY_PATH="$SYSTEMD_PREFIX/lib:${LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="$SYSTEMD_PREFIX/lib:${LD_LIBRARY_PATH:-}"
+cargo build -p binbook-cli --features serial-device
+target/debug/binbook-cli diag hello --port /dev/ttyACM0
+target/debug/binbook-cli diag key --port /dev/ttyACM0 RIGHT
+target/debug/binbook-cli diag page --port /dev/ttyACM0 next
+target/debug/binbook-cli diag page --port /dev/ttyACM0 goto 3
+target/debug/binbook-cli diag status --port /dev/ttyACM0
+target/debug/binbook-cli diag logs --port /dev/ttyACM0 --since 0
+target/debug/binbook-cli diag logs --port /dev/ttyACM0 --clear
+target/debug/binbook-cli diag crash --port /dev/ttyACM0
+target/debug/binbook-cli diag crash --port /dev/ttyACM0 --clear
+target/debug/binbook-cli diag probe --port /dev/ttyACM0 window-corners
 ```

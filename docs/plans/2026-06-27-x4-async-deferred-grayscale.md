@@ -1,5 +1,9 @@
 # Xteink X4 Async Deferred-Grayscale Refresh Implementation Plan
 
+> Historical implementation plan. Its pre-refactor crate paths are retained as
+> milestone context; current boundaries are in
+> [`2026-06-30-rust-modular-foundation-refactor.md`](2026-06-30-rust-modular-foundation-refactor.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` and execute this plan sequentially without subagents. Keep this checkbox list current. Do not begin a production-code step until its preceding test has been observed failing for the expected reason.
 
 **Goal:** Make every page turn appear quickly in black and white, render grayscale after 350 ms without further turns, preserve every queued intermediate turn, and keep button and diagnostic handling responsive throughout display work.

@@ -1,5 +1,9 @@
 # Xteink X4 Native Chunked Refresh Implementation Plan
 
+> Historical implementation plan. Its crate paths and API examples describe a
+> superseded refresh milestone; current boundaries are in
+> [`2026-06-30-rust-modular-foundation-refactor.md`](2026-06-30-rust-modular-foundation-refactor.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Do not delegate implementation to subagents in this repository; `AGENTS.md` asks agents to work sequentially and keep a todo tracker current.
 
 **Goal:** Make Xteink X4 BinBooks compiler-native for SSD1677 streaming and default page display to differential refresh with compiler-generated chunk metadata.

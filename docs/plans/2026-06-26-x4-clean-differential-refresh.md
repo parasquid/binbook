@@ -1,5 +1,9 @@
 # Xteink X4 Clean Differential Refresh Implementation Plan
 
+> Historical implementation plan. Its crate paths and API examples describe a
+> superseded refresh milestone; current boundaries are in
+> [`2026-06-30-rust-modular-foundation-refactor.md`](2026-06-30-rust-modular-foundation-refactor.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Do not delegate implementation to subagents in this repository; `AGENTS.md` asks agents to work sequentially and keep a todo tracker current. Use TDD for every code task: write the failing test first, run it and confirm the expected failure, implement the minimal change, then run the relevant tests and confirm they pass before starting the next task.
 
 **Goal:** Make Xteink X4 BinBook page turns clean by default while preserving a hardware-proven chunk-dirty fast path.

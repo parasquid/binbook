@@ -46,7 +46,34 @@ Lower layers return typed errors; upper layers translate them without discarding
 
 ## Public integration model
 
-An external consumer opens a source with `binbook_core::Book`, reads an explicit plane/chunk descriptor into its own compressed buffer, decodes into its own row buffer with `binbook_decompress`, and either converts rows directly with `gray2_render` or delegates X4 page policy to `xteink_x4_display`. A board adapter supplies `embedded-hal` devices to `ssd1677_driver` and storage through `ReadAt` or `embedded-storage` adapters.
+The reusable crates are workspace packages rather than crates.io releases. A sibling project can use local paths:
+
+```toml
+[dependencies]
+binbook-core = { path = "../binbook/crates/binbook-core" }
+binbook-decompress = { path = "../binbook/crates/binbook-decompress" }
+gray2-render = { path = "../binbook/crates/gray2-render" }
+ssd1677-driver = { path = "../binbook/crates/ssd1677-driver" }
+xteink-x4-display = { path = "../binbook/crates/xteink-x4-display" }
+```
+
+Pinned Git dependencies may use the repository URL plus `rev`; Cargo selects each package by its dependency name. Consumers should pin a revision because the public APIs follow the BinBook 0.1 candidate rather than a crates.io compatibility promise.
+
+| Crate | Feature flags | Caller-owned inputs and buffers |
+|---|---|---|
+| `binbook-core` | no optional features | A `ReadAt` source; section-table/open scratch; fixed-record scratch; string, plane, or chunk destinations. `Error::BufferTooSmall` reports the required size. |
+| `binbook-decompress` | `lz4` enables allocation-free `lz4_flex`; disabled by default | `decode_exact` requires the complete compressed slice and an exact decoded destination. `PackBitsDecoder` accepts caller-selected input/output strips and retains only run state. |
+| `gray2-render` | no optional features | Canonical packed input rows plus output plane rows. A packed GRAY2 row produces plane rows half its byte length; X4 uses 200-byte canonical rows and 100-byte plane rows. |
+| `ssd1677-driver` | no optional features | `SpiDevice<u8>`, DC/reset output pins, BUSY input pin, a `PanelConfig`, delay implementation, and row/window data supplied by the caller. |
+| `xteink-x4-display` | no optional features | A `Book<R>`, `X4Panel`, async delay, and `RenderBuffers`. Streaming buffers may be caller-sized; absolute X4 rendering requires decoded scratch for three 100-byte rows and 100-byte black/red rows. LZ4 requires whole compressed and decoded planes. |
+
+The basic integration flow is:
+
+1. Implement `binbook_core::ReadAt` for flash, a file, or a borrowed byte slice and open `Book::open(source, section_table_scratch)`.
+2. Read typed page/plane/chunk descriptors using caller-owned fixed-record scratch.
+3. Decode with `binbook_decompress::decode_exact` or an incremental `PackBitsDecoder`.
+4. Convert canonical rows with `gray2_render` when the consumer owns display policy, or construct `xteink_x4_display::buffers::RenderBuffers` and use the X4 render/engine APIs.
+5. Supply a standard `embedded_hal::spi::SpiDevice`, digital pins, and delay to `ssd1677_driver::Ssd1677` or `xteink_x4_display::panel::X4Panel`.
 
 The `xteink-x4-display` crate is the only reusable owner of X4 dimensions, rotation, staged waveform policy, chunk geometry, page-turn semantics, and refresh state.
 
