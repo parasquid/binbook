@@ -579,12 +579,11 @@ pub mod exercise {
         let mut cursor = 0u32;
         let mut evidence = Vec::new();
 
-        let page_last =
-            diag_protocol::page_action_request(1, binbook_diagnostic_protocol::PageAction::Last);
+        let page_three = diag_protocol::page_goto_request(1, 3);
         validate_text(
             &serial_transport::send_and_receive_io(
                 io,
-                &page_last,
+                &page_three,
                 Opcode::Page,
                 1,
                 DISPLAY_REQUEST_TIMEOUT,

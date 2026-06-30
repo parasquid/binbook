@@ -3,10 +3,10 @@
 use std::io::{self, Read, Write};
 
 use binbook_diagnostic_protocol::{
-    crc16_ccitt_false, decode_frame, encode_frame, encode_log_record, encode_log_response_header,
-    encode_page_response, encode_status_payload, FrameHeader, FrameKind, LogRecordPayload,
-    LogResponseHeader, Opcode, PanelModeCode, Status, StatusPayload, FRAME_DELIMITER, MAGIC,
-    MAX_FRAME_BYTES, PROTOCOL_VERSION,
+    crc16_ccitt_false, decode_frame, decode_page_payload, encode_frame, encode_log_record,
+    encode_log_response_header, encode_page_response, encode_status_payload, FrameHeader,
+    FrameKind, LogRecordPayload, LogResponseHeader, Opcode, PageAction, PanelModeCode, Status,
+    StatusPayload, FRAME_DELIMITER, MAGIC, MAX_FRAME_BYTES, PROTOCOL_VERSION,
 };
 
 const PORT: &str = "/dev/ttyACM0";
@@ -85,6 +85,12 @@ fn staged_gray_exercise_uses_the_planned_transport_script() {
         expected_request_transcript(),
         "exercise should issue the planned request order",
     );
+    let first_frame = find_frame(&io.written).expect("first request frame");
+    let mut payload = [0_u8; MAX_FRAME_BYTES];
+    let (_, payload_len) = decode_frame(first_frame, &mut payload).unwrap();
+    let page = decode_page_payload(&payload[..payload_len]).unwrap();
+    assert_eq!(page.action, PageAction::Goto);
+    assert_eq!(page.page_index, Some(3));
 }
 
 #[test]
