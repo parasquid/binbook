@@ -319,9 +319,49 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 - `firmware/scripts/build-nav-probe-fixture.py`, the three canonical fixture copies, and their parser/display/firmware/Python tests now use the Rust compiler as source of truth
 - `README.md`, `AGENTS.md`, `BINBOOK_FORMAT_SPEC.md`, current Rust/firmware references, and `docs/reference/compiler-roadmap.md` now document the shipped compiler and aspirational backends
 
-## Next exact action
+## SD Storage Foundation (Sub-project A)
 
-No implementation task remains. Preserve `/tmp/binbook-compiler-acceptance/` and the two webcam JPEGs while their local evidence is useful; they are intentionally not tracked.
+Date: 2026-07-01
+Active plan: `docs/plans/2026-07-01-sd-storage-foundation-plan.md`
+Current task: All 9 tasks complete (host gate)
+
+### Completed
+
+- **Task 0 (spike)** — Version pin (nightly ≥ 1.87 ✓, `embedded-sdmmc = "0.9.0"`), frequency strategy R1 (`Spi::apply_config` runtime switch, confirmed 70 kHz–80 MHz), shared SPI2 hardware spike proven (32 GB SD card detected at 400 kHz, display at 20 MHz).
+- **Task 1** — Scaffolded `binbook-storage` crate (backend-agnostic `.binbook` storage trait).
+- **Task 2** — `Filesystem` trait, `StorageError`, host `MemoryFs` test helper (`cargo test -p binbook-storage` passes).
+- **Task 3** — `enumerate_binbooks` + `BinbookEntry` (validates via `Book::open`, skips non-`.binbook` and corrupt files).
+- **Task 4** — `FsReadAt` adapter (`Filesystem` → `binbook_core::ReadAt`).
+- **Task 5** — Scaffolded `embedded-sd-storage` crate (generic SPI SD+FAT engine over `embedded-hal`).
+- **Task 6** — `SdStorage` wrapper (mount, open, read, enumerate over `embedded-sdmmc`), host test with FAT16 fixture (`cargo test -p embedded-sd-storage --test fat_image` passes).
+- **Task 7** — Shared SPI2 in `board.rs` (`SharedSpi2` via `RefCell<Spi>`, `FreqManagedSpiDevice` with per-acquire frequency switch). Display task converted to use shared bus. MISO (GPIO7) and SD CS (GPIO12) routed through `RuntimePeripherals`. Blocking `DelayNs` impl for `DisplayDelay`.
+- **Task 8** — SD boot mount in `runtime.rs` under `#[cfg(feature = "sd-storage")]`. `SdFilesystem` adapter + `SdError` + `FixedTime` in `storage.rs`. Test mount opens volume, logs result. Deferred full enumeration (needs global allocator) to B/C. Firmware builds clean with and without `sd-storage`.
+- **Task 9** — Workspace gate: `cargo test --workspace` (172 host tests), `cargo test -p binbook-fw --features diagnostic-console` (72 host tests), firmware release build `--features firmware-bin,sd-storage` all PASS.
+
+### Key decisions
+
+- **`binbook-storage` gated behind `sd-storage` + `target_arch = "riscv32"`** to avoid host-compilation failures from target-only deps.
+- **FAT16 for test fixtures** — `embedded-sdmmc` 0.9.0 has a FAT32 directory-iteration bug.
+- **Strategy R1** — runtime frequency switch via `Spi::apply_config` per transaction (proven in Task 0 spike).
+- **Deferred enumeration** — `enumerate_binbooks` uses `alloc::vec::Vec`; firmware defers full enumeration until sub-project B/C supplies a global allocator. Boot mount just tests volume open.
+
+### Hardware evidence
+
+A's gate is host tests + build + display-no-regression on shared bus. Byte-level SD read-back evidence is deferred to the A→B boundary (B's `storage read` command). Display regression on shared bus requires a flash test — not done in this session.
+
+### Changed files
+
+- `Cargo.toml`, `Cargo.lock` — new workspace deps (`embedded-sdmmc`, `embedded-hal-bus`, `binbook-storage`, `embedded-sd-storage`)
+- `crates/binbook-storage/` — new crate (all tasks)
+- `crates/embedded-sd-storage/` — new crate (all tasks)
+- `firmware/crates/binbook-fw/Cargo.toml` — target-specific deps, `sd-storage` feature
+- `firmware/crates/binbook-fw/src/board.rs` — SharedSpi2, FreqManagedSpiDevice, DisplayDelay blocking
+- `firmware/crates/binbook-fw/src/main.rs` — GPIO7, GPIO12 peripherals
+- `firmware/crates/binbook-fw/src/runtime.rs` — shared SPI bus init, SD boot mount, unused var fix
+- `firmware/crates/binbook-fw/src/runtime/display_task.rs` — uses FreqManagedSpiDevice
+- `firmware/crates/binbook-fw/src/lib.rs` — pub mod storage gated
+- `firmware/crates/binbook-fw/src/storage.rs` — new SdFilesystem adapter
+- `docs/plans/2026-07-01-sd-storage-foundation-plan.md` — updated with Task 6 outcome
 
 ## Hardware state
 

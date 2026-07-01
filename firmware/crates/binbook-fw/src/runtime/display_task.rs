@@ -1,16 +1,9 @@
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Sender};
-use esp_hal::{
-    gpio::{Input, InputConfig, Level, Output, OutputConfig},
-    spi::{
-        master::{Config as SpiConfig, Spi},
-        Mode,
-    },
-    time::Rate,
-};
+use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig};
 
 use binbook_fw::{
     async_refresh::{DisplayProbeKind, DisplayRequest},
-    board::{BoardSpiDevice, DisplayDelay},
+    board::{DisplayDelay, FreqManagedSpiDevice, SharedSpi2},
     runtime_engine::{self, RuntimeEvent, RuntimeEventKind},
 };
 use xteink_x4_display::{engine::DisplayEngine, events::EventSink};
@@ -112,9 +105,7 @@ fn display_request(request: DisplayRequest) -> xteink_x4_display::events::Displa
 
 #[embassy_executor::task]
 pub(super) async fn display_task(
-    spi2: esp_hal::peripherals::SPI2<'static>,
-    gpio8: esp_hal::peripherals::GPIO8<'static>,
-    gpio10: esp_hal::peripherals::GPIO10<'static>,
+    shared_spi2: &'static SharedSpi2,
     gpio21: esp_hal::peripherals::GPIO21<'static>,
     gpio4: esp_hal::peripherals::GPIO4<'static>,
     gpio5: esp_hal::peripherals::GPIO5<'static>,
@@ -123,17 +114,12 @@ pub(super) async fn display_task(
 ) {
     use embassy_futures::select::{select, Either};
 
-    let spi = Spi::new(
-        spi2,
-        SpiConfig::default()
-            .with_frequency(Rate::from_mhz(crate::DISPLAY_SPI_FREQUENCY_MHZ))
-            .with_mode(Mode::_0),
-    )
-    .expect("failed to configure SPI2")
-    .with_sck(gpio8)
-    .with_mosi(gpio10);
-
     let cs = Output::new(gpio21, Level::High, OutputConfig::default());
+    let spi_device = FreqManagedSpiDevice::new(
+        shared_spi2,
+        cs,
+        crate::DISPLAY_SPI_FREQUENCY_MHZ * 1_000_000,
+    );
     let dc = Output::new(gpio4, Level::Low, OutputConfig::default());
     let rst = Output::new(gpio5, Level::High, OutputConfig::default());
     let busy = Input::new(gpio6, InputConfig::default());
@@ -143,7 +129,7 @@ pub(super) async fn display_task(
     let page_count = book.page_count();
     let mut backend = HardwareDisplayBackend {
         display: xteink_x4_display::panel::X4Panel::new(
-            BoardSpiDevice::new(spi, cs),
+            spi_device,
             dc,
             rst,
             busy,
