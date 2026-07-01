@@ -2,11 +2,11 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 5 — reusable quantization and X4 plane APIs
+Current task: Task 6 — static image compilation and decoding
 
 ## Completed
 
-Tasks 1 through 4 are complete.
+Tasks 1 through 5 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
@@ -25,6 +25,9 @@ Tasks 1 through 4 are complete.
 - Added typed page/plane/chunk, metadata, source, navigation, font-policy, and used-font models.
 - Emit all 19 required sections in canonical order with 64 KiB page-data alignment, deterministic string deduplication, section/page CRCs, policy/font/rendition SHA-256 hashes, progress ranges, aligned planes, chunk indices, and bidirectional adjacent transitions.
 - Source and decoded-font constructors compute their SHA-256 digests directly from caller-provided bytes. Reproducible timestamp and optional header/file CRC fields remain zero.
+- Added exact GRAY1/GRAY2 threshold quantization, caller-buffer Floyd-Steinberg row state, and MSB-first GRAY1/GRAY2 row packing to `gray2-render`.
+- Added allocation-free full-image staged-plane conversion that reuses `canonical_row_to_staged`, plus borrowed plane chunk iteration.
+- Added X4 logical GRAY2 packing through the existing `logical_to_physical` mapping, avoiding a second coordinate formula.
 
 ## TDD evidence
 
@@ -80,6 +83,17 @@ Task 4 GREEN:
 - `cargo test -p binbook-core`: passed.
 - `cargo test --workspace`: passed.
 
+Task 5 RED:
+
+- Focused `gray2-render` and X4 validation tests failed on missing quantization, packing, image-plane, chunk, and logical-orientation APIs.
+
+Task 5 GREEN:
+
+- `cargo test -p gray2-render`: passed, including Python-matched GRAY1/GRAY2 diffusion and a 257×5 row-streaming case.
+- `cargo test -p xteink-x4-display`: passed, including all four logical-corner mappings.
+- `cargo clippy -p gray2-render -p xteink-x4-display --all-targets -- -D warnings`: passed.
+- Both crates passed no-default-feature RISC-V checks using the rustup compiler explicitly.
+
 ## Fixture evidence
 
 Baseline fixture SHA-256 before Task 1:
@@ -108,10 +122,12 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 - `crates/binbook-compress/{Cargo.toml,src/lib.rs,src/packbits.rs,tests/packbits.rs}`
 - Root workspace manifest and lockfile
 - `crates/binbook-encode/` model, policies, hashing, strings, indices, writer, and tests
+- `crates/gray2-render/src/{quantize,pack,image}.rs` and focused tests
+- `crates/xteink-x4-display/src/profile.rs`, reusing the established X4 mapping
 
 ## Next exact action
 
-Start Task 5 in `gray2-render` with RED quantization/orientation/chunk tests. Preserve caller-owned row/error buffers, reuse `canonical_row_to_staged`, and include dimensions larger than scratch buffers so accidental whole-image buffering cannot pass.
+Start Task 6 by creating compact in-memory image fixtures and RED tests for explicit PNG/JPEG/WebP/SVG decoding, alpha flattening, Lanczos contain/padding, staged GRAY2 and GRAY1 output, malformed/animated rejection, and book-page decoding through NONE, PackBits, and LZ4.
 
 ## Hardware state
 

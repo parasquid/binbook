@@ -277,11 +277,11 @@ All reserved fields must be zero. Include only faces actually used during raster
 - Modify: `crates/xteink-x4-display/src/profile.rs` only if a pure geometry helper is missing
 - Test: `crates/gray2-render/tests/quantization.rs`, `golden.rs`
 
-- [ ] Add RED tests matching Python GRAY1/GRAY2 thresholds, Floyd-Steinberg propagation, exact four-level values, caller-buffer failures, X4 logical-to-physical corner mapping, staged planes, and 30×1600-byte chunk decomposition.
-- [ ] Include an image wider/taller than scratch rows so tests cannot pass through accidental full-buffer assumptions.
-- [ ] Implement caller-owned quantization error buffers and reuse `canonical_row_to_staged`; do not create a second X4 coordinate formula.
-- [ ] Run host tests, Clippy, and RISC-V no-default-feature checks for both reusable crates.
-- [ ] Commit `feat(gray2-render): add compiler quantization primitives`.
+- [x] Add RED tests matching Python GRAY1/GRAY2 thresholds, Floyd-Steinberg propagation, exact four-level values, caller-buffer failures, X4 logical-to-physical corner mapping, staged planes, and 30×1600-byte chunk decomposition.
+- [x] Include an image wider/taller than scratch rows so tests cannot pass through accidental full-buffer assumptions.
+- [x] Implement caller-owned quantization error buffers and reuse `canonical_row_to_staged`; do not create a second X4 coordinate formula.
+- [x] Run host tests, Clippy, and RISC-V no-default-feature checks for both reusable crates.
+- [x] Commit `feat(gray2-render): add compiler quantization primitives`.
 
 ## Task 6: Implement Static Image Compilation and Decoding
 

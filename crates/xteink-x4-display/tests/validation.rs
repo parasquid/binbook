@@ -3,8 +3,8 @@ use binbook_core::{
     PlaneDescriptor, PlaneDirectory, PlaneSlot, StringRef, WAVEFORM_SSD1677_STAGED_GRAY2,
 };
 use xteink_x4_display::profile::{
-    logical_to_physical, validate_page, validate_profile, CHUNK_ROWS, LOGICAL_HEIGHT,
-    LOGICAL_WIDTH, PHYSICAL_HEIGHT, PHYSICAL_WIDTH,
+    logical_gray2_to_physical_packed, logical_to_physical, validate_page, validate_profile,
+    CHUNK_ROWS, LOGICAL_HEIGHT, LOGICAL_WIDTH, PHYSICAL_HEIGHT, PHYSICAL_WIDTH,
 };
 
 fn profile() -> DisplayProfile {
@@ -35,6 +35,26 @@ fn profile() -> DisplayProfile {
         framebuffer_bits_per_pixel: 1,
         waveform_hint: WAVEFORM_SSD1677_STAGED_GRAY2,
         dither_mode: 0,
+    }
+}
+
+#[test]
+fn logical_gray2_corners_pack_through_the_shared_x4_mapping() {
+    let mut logical = vec![3_u8; usize::from(LOGICAL_WIDTH) * usize::from(LOGICAL_HEIGHT)];
+    logical[0] = 0;
+    logical[usize::from(LOGICAL_WIDTH) - 1] = 1;
+    logical[(usize::from(LOGICAL_HEIGHT) - 1) * usize::from(LOGICAL_WIDTH)] = 2;
+    let mut packed = vec![0_u8; usize::from(PHYSICAL_WIDTH) * usize::from(PHYSICAL_HEIGHT) / 4];
+    logical_gray2_to_physical_packed(&logical, &mut packed).unwrap();
+    for (logical_x, logical_y, expected) in [
+        (0, 0, 0),
+        (LOGICAL_WIDTH - 1, 0, 1),
+        (0, LOGICAL_HEIGHT - 1, 2),
+        (LOGICAL_WIDTH - 1, LOGICAL_HEIGHT - 1, 3),
+    ] {
+        let (x, y) = logical_to_physical(logical_x, logical_y);
+        let index = usize::from(y) * usize::from(PHYSICAL_WIDTH) + usize::from(x);
+        assert_eq!((packed[index / 4] >> (6 - (index % 4) * 2)) & 3, expected);
     }
 }
 
