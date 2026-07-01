@@ -1,6 +1,6 @@
 use crate::FormatError;
 
-pub(crate) const HEADER_SIZE: usize = 256;
+pub(crate) const HEADER_SIZE: usize = crate::encode::HEADER_SIZE;
 const MAGIC: &[u8; 8] = b"BINBOOK\0";
 
 #[derive(Debug, Clone, Copy)]

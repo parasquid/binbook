@@ -261,7 +261,7 @@ def build_binbook(
         cursor += len(data)
 
     page_data_offset = _align_up(cursor, profile.page_data_alignment)
-    page_data = b"".join(page.compressed for page in pages)
+    page_data = _page_data(pages)
     section_entries.append(
         SectionEntry(
             SectionId.PAGE_DATA,
@@ -302,6 +302,7 @@ def _page_index(pages: list[EncodedPage], profile: DisplayProfile) -> bytes:
             offsets = [0, 0, 0, 0]
             sizes = [0, 0, 0, 0]
             for plane in page.planes:
+                blob_offset = _align_up(blob_offset, 4)
                 bitmap |= 1 << plane.slot
                 compression[plane.slot] = CompressionMethod.RLE_PACKBITS
                 offsets[plane.slot] = blob_offset
@@ -314,6 +315,7 @@ def _page_index(pages: list[EncodedPage], profile: DisplayProfile) -> bytes:
                 sizes=sizes,
             )
         else:
+            blob_offset = _align_up(blob_offset, 4)
             plane_dir = PlaneDir(
                 bitmap=0x01,
                 compression=[CompressionMethod.RLE_PACKBITS, 0, 0, 0],
@@ -393,6 +395,7 @@ def _chunk_index(pages: list[EncodedPage]) -> bytes:
             continue
         page_start = global_offset
         for plane in page.planes:
+            page_start = _align_up(page_start, 4)
             chunk_offset = page_start
             for chunk_index, chunk_data in enumerate(plane.chunks):
                 out.extend(
@@ -410,6 +413,16 @@ def _chunk_index(pages: list[EncodedPage]) -> bytes:
                 chunk_offset += len(chunk_data)
             page_start = chunk_offset
         global_offset = page_start
+    return bytes(out)
+
+
+def _page_data(pages: list[EncodedPage]) -> bytes:
+    out = bytearray()
+    for page in pages:
+        blobs = (plane.compressed for plane in page.planes) if page.planes else (page.compressed,)
+        for blob in blobs:
+            out.extend(bytes(_align_up(len(out), 4) - len(out)))
+            out.extend(blob)
     return bytes(out)
 
 

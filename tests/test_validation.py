@@ -143,6 +143,21 @@ def test_rejects_x4_gray2_page_without_all_staged_planes(tmp_path: Path):
         BinBookReader.open(path)
 
 
+def test_writer_aligns_plane_blobs_and_chunk_offsets(tmp_path: Path):
+    reader = BinBookReader.open(_write(tmp_path, _book_bytes()), validate=True)
+    page = reader.pages[0]
+    assert all(
+        page.plane_dir.offsets[slot] % 4 == 0
+        for slot in range(3)
+    )
+    for chunk in reader.page_chunks:
+        plane = page.plane_dir
+        start = plane.offsets[chunk.plane_slot]
+        end = start + plane.sizes[chunk.plane_slot]
+        assert start <= chunk.page_data_offset
+        assert chunk.page_data_offset + chunk.compressed_size <= end
+
+
 def _book_bytes() -> bytes:
     packed_white_page = bytes([0xFF]) * 96_000
     page = encoded_page(packed_white_page, PageKind.TEXT, 0)

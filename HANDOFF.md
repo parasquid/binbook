@@ -2,17 +2,22 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 2 — shared wire encoders and strict validation
+Current task: Task 3 — PackBits encoder
 
 ## Completed
 
-Task 1 is complete.
+Tasks 1 and 2 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
 - Added Python record packing/unpacking plus an empty required writer section so transitional Python fixtures and viewer remain compatible.
 - Regenerated all three canonical `nav_probe.binbook` copies; they are byte-identical.
 - Updated the exact section-table scratch requirement from 720 to 760 bytes.
+- Added allocation-free typed wire encoders for header, section, page, navigation, chapter, chunk, transition, and font-resource records.
+- Added visitor-based strict validation with stable `ValidationCode` categories for bounds, ordering, reserved bytes, CRCs, required features, profiles, strings, planes, chunks, transitions, navigation/chapter links, and fonts.
+- Shared all record-size constants between parsers and encoders.
+- Fixed the transitional Python writer to align every plane blob to four bytes and keep page/chunk indices consistent with padding.
+- Regenerated all canonical `nav_probe.binbook` copies with aligned plane offsets.
 
 ## TDD evidence
 
@@ -29,6 +34,23 @@ GREEN:
 - `cargo fmt --all -- --check`: passes.
 - Focused fixture/validation matrix: 28 passed.
 
+Task 2 RED:
+
+- `cargo test -p binbook-core --test encoding` failed on missing encoder types and constants.
+- `cargo test -p binbook-core --test strict_validation` failed on missing validator API and typed validation codes.
+- The first strict-valid fixture check exposed unaligned plane offsets (`24080`, `28539`); this was corrected in the writer and fixtures rather than weakening the validator.
+
+Task 2 GREEN:
+
+- `cargo test -p binbook-core --test encoding`: 4 passed.
+- `cargo test -p binbook-core --test strict_validation`: 4 passed.
+- `cargo test -p binbook-core`: all tests passed.
+- `cargo clippy -p binbook-core --all-targets -- -D warnings`: passed.
+- RISC-V no-std check passed using the rustup compiler explicitly: `RUSTC="$(rustup which --toolchain stable rustc)" rustup run stable cargo check -p binbook-core --no-default-features --target riscv32imc-unknown-none-elf`.
+- `cargo test --workspace`: passed.
+- `cargo test -p binbook-fw --features diagnostic-console`: passed.
+- `uv run pytest -q`: 100 passed, 26 skipped.
+
 ## Fixture evidence
 
 Baseline fixture SHA-256 before Task 1:
@@ -37,11 +59,11 @@ Baseline fixture SHA-256 before Task 1:
 
 Current SHA-256 for all three copies:
 
-`81524593bf36135562a22fd4e39b9e55c326859c6846ecf4907d0805f405a0f3`
+`96fdfa2d8d9583e91c2f868c00c0c5863788e500dc264f77c73cbe5cd404f135`
 
-The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The hash change is the required empty section-35 table entry.
+The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash includes the required empty section-35 entry and four-byte plane padding.
 
-## Files changed through Task 1
+## Files changed through Task 2
 
 - `BINBOOK_FORMAT_SPEC.md`
 - `binbook/constants.py`, `reader.py`, `structs.py`, `writer.py`
@@ -50,10 +72,14 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The hash change 
 - `tests/test_font_resources.py`
 - Three canonical `nav_probe.binbook` fixture copies
 - Active plan and this handoff
+- `binbook/writer.py`, `tests/test_validation.py`
+- `crates/binbook-core/src/{encode,index_encode,link_validation,record_validation,validate,validation_crc}.rs`
+- Shared parser modules in `crates/binbook-core/src/`
+- `crates/binbook-core/tests/{encoding,strict_validation}.rs`
 
 ## Next exact action
 
-Start Task 2 with RED tests in `crates/binbook-core/tests/encoding.rs` and `strict_validation.rs`. First cover exact little-endian encoding and exact undersized-buffer errors for the existing header, section, page, chunk, transition, navigation, chapter, and font records. Then add corruption cases one validation category at a time; do not implement production encoders or the validator before observing each intended failure.
+Start Task 3 by creating `binbook-compress` and writing the PackBits golden/boundary/property RED tests. Every encoded sample must round-trip through `binbook-decompress`, including an input larger than 8 KiB. Implement the caller-buffer API first, then the host `Vec` convenience wrapper.
 
 ## Hardware state
 

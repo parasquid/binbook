@@ -1,8 +1,8 @@
 use crate::header::{read_u16, read_u32};
 use crate::{ChapterNumber, FormatError, NavNumber, PageNumber, StringRef};
 
-pub const NAV_RECORD_SIZE: usize = 48;
-pub const CHAPTER_RECORD_SIZE: usize = 32;
+pub const NAV_RECORD_SIZE: usize = crate::index_encode::NAV_INDEX_RECORD_SIZE;
+pub const CHAPTER_RECORD_SIZE: usize = crate::index_encode::CHAPTER_INDEX_RECORD_SIZE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NavEntry {

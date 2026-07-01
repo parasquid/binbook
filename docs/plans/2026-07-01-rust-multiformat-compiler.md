@@ -215,12 +215,12 @@ All reserved fields must be zero. Include only faces actually used during raster
 - Create: `crates/binbook-core/tests/encoding.rs`
 - Create: `crates/binbook-core/tests/strict_validation.rs`
 
-- [ ] Add RED tests for exact little-endian bytes of every header/section/page/chunk/transition/nav/chapter/font record and for undersized output buffers reporting exact `required`/`provided` sizes.
-- [ ] Add corruption-matrix RED tests for section/page CRCs, bounds, ordering, reserved bytes, required features, profiles, strings, planes, chunks, transitions, nav/chapter links, and font records. Each mutation must assert a distinct typed `ValidationCode`.
-- [ ] Run the two new test targets and confirm failures are due to missing encoders/validator.
-- [ ] Implement `encode_into(&mut [u8])` on typed records and a visitor-based `validate_all` API. Continue after independent validation errors only when bounds remain safe; never index corrupted offsets.
-- [ ] Refactor existing parsers to share constants/types with encoders instead of duplicating layouts.
-- [ ] Run:
+- [x] Add RED tests for exact little-endian bytes of every header/section/page/chunk/transition/nav/chapter/font record and for undersized output buffers reporting exact `required`/`provided` sizes.
+- [x] Add corruption-matrix RED tests for section/page CRCs, bounds, ordering, reserved bytes, required features, profiles, strings, planes, chunks, transitions, nav/chapter links, and font records. Each mutation must assert a distinct typed `ValidationCode`.
+- [x] Run the two new test targets and confirm failures are due to missing encoders/validator.
+- [x] Implement `encode_into(&mut [u8])` on typed records and a visitor-based `validate_all` API. Continue after independent validation errors only when bounds remain safe; never index corrupted offsets.
+- [x] Refactor existing parsers to share constants/types with encoders instead of duplicating layouts.
+- [x] Run:
 
   ```bash
   cargo test -p binbook-core --test encoding
@@ -229,7 +229,7 @@ All reserved fields must be zero. Include only faces actually used during raster
   cargo check -p binbook-core --no-default-features --target riscv32imc-unknown-none-elf
   ```
 
-- [ ] Commit `feat(binbook-core): add wire encoders and strict validation`.
+- [x] Commit `feat(binbook-core): add wire encoders and strict validation`.
 
 ## Task 3: Implement the PackBits Encoder
 

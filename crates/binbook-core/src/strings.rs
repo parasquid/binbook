@@ -1,7 +1,7 @@
 use crate::header::read_u32;
 use crate::FormatError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct StringRef {
     pub offset: u32,
     pub length: u32,

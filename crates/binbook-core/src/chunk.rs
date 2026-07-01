@@ -1,7 +1,7 @@
 use crate::header::{read_u16, read_u32};
 use crate::{ByteLength, ChunkIndex, FileOffset, FormatError, PageNumber, PlaneSlot};
 
-pub const CHUNK_RECORD_SIZE: usize = 24;
+pub const CHUNK_RECORD_SIZE: usize = crate::index_encode::PAGE_CHUNK_INDEX_RECORD_SIZE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageChunk {

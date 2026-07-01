@@ -3,7 +3,7 @@ use crate::{
     ByteLength, CompressionMethod, FileOffset, FormatError, PageNumber, PixelFormat, PlaneSlot,
 };
 
-pub const PAGE_RECORD_SIZE: usize = 128;
+pub const PAGE_RECORD_SIZE: usize = crate::index_encode::PAGE_INDEX_RECORD_SIZE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlaneDescriptor {

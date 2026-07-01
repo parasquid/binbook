@@ -1,5 +1,5 @@
 use crate::header::{read_u16, read_u32};
-use crate::{FormatError, StringRef};
+use crate::{EncodeError, FormatError, StringRef, WireEncode};
 
 pub const FONT_RESOURCE_RECORD_SIZE: usize = 80;
 const KNOWN_FLAGS: u16 = 0x0f;
@@ -95,5 +95,25 @@ impl FontResourceIndexEntry {
             sha256,
             face_index: read_u32(record, 64)?,
         })
+    }
+}
+
+impl WireEncode for FontResourceIndexEntry {
+    fn encode_into(&self, output: &mut [u8]) -> Result<(), EncodeError> {
+        let record = crate::encode::require(output, FONT_RESOURCE_RECORD_SIZE)?;
+        record.fill(0);
+        crate::encode::put_u32(record, 0, self.font_index);
+        crate::encode::put_u16(record, 4, self.source_kind as u16);
+        crate::encode::put_u16(record, 6, self.flags);
+        crate::encode::put_u16(record, 8, self.weight);
+        crate::encode::put_u16(record, 10, self.stretch_milli);
+        record[12] = self.style as u8;
+        crate::encode::put_u32(record, 16, self.family.offset);
+        crate::encode::put_u32(record, 20, self.family.length);
+        crate::encode::put_u32(record, 24, self.source_path.offset);
+        crate::encode::put_u32(record, 28, self.source_path.length);
+        record[32..64].copy_from_slice(&self.sha256);
+        crate::encode::put_u32(record, 64, self.face_index);
+        Ok(())
     }
 }

@@ -1,7 +1,7 @@
 use crate::header::{read_u16, read_u32, read_u64, Header};
 use crate::FormatError;
 
-pub(crate) const ENTRY_SIZE: usize = 40;
+pub(crate) const ENTRY_SIZE: usize = crate::encode::SECTION_RECORD_SIZE;
 pub(crate) const STRING_TABLE: u16 = 1;
 pub(crate) const DISPLAY_PROFILE: u16 = 10;
 pub(crate) const LAYOUT_PROFILE: u16 = 11;
@@ -47,19 +47,23 @@ const REQUIRED: [u16; 19] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Section {
     pub id: u16,
+    pub flags: u16,
     pub offset: u64,
     pub length: u64,
     pub entry_size: u32,
     pub record_count: u32,
+    pub crc32: u32,
 }
 
 impl Section {
     const EMPTY: Self = Self {
         id: 0,
+        flags: 0,
         offset: 0,
         length: 0,
         entry_size: 0,
         record_count: 0,
+        crc32: 0,
     };
 }
 
@@ -80,10 +84,12 @@ impl SectionDirectory {
                 .ok_or(FormatError::InvalidSection)?;
             let section = Section {
                 id: read_u16(bytes, 0)?,
+                flags: read_u16(bytes, 2)?,
                 offset: read_u64(bytes, 4)?,
                 length: read_u64(bytes, 12)?,
                 entry_size: read_u32(bytes, 20)?,
                 record_count: read_u32(bytes, 24)?,
+                crc32: read_u32(bytes, 28)?,
             };
             let end = section
                 .offset
@@ -137,6 +143,10 @@ impl SectionDirectory {
             Some(slot) => self.entries[slot],
             None => Section::EMPTY,
         }
+    }
+
+    pub(crate) const fn entries(self) -> [Section; 19] {
+        self.entries
     }
 }
 

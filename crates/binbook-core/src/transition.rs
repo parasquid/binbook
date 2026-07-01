@@ -1,7 +1,7 @@
 use crate::header::{read_u16, read_u32};
 use crate::{FormatError, PageNumber};
 
-pub const TRANSITION_RECORD_SIZE: usize = 24;
+pub const TRANSITION_RECORD_SIZE: usize = crate::index_encode::PAGE_TRANSITION_INDEX_RECORD_SIZE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageTransition {
