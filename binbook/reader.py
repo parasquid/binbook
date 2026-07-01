@@ -32,6 +32,7 @@ from .structs import (
     SECTION_ENTRY_SIZE,
     BinBookHeader,
     ChapterIndexEntry,
+    FontResourceIndexEntry,
     NavIndexEntry,
     PageChunkIndexEntry,
     PageIndexEntry,
@@ -55,6 +56,7 @@ class BinBookReader:
     sections: dict[SectionId, SectionEntry]
     pages: list[PageIndexEntry]
     chapters: list[ChapterIndexEntry]
+    fonts: list[FontResourceIndexEntry]
     page_chunks: list[PageChunkIndexEntry] = field(default_factory=list)
     page_transitions: list[PageTransitionIndexEntry] = field(default_factory=list)
 
@@ -66,10 +68,19 @@ class BinBookReader:
         sections = _read_sections(data, header)
         pages = _read_pages(data, sections)
         chapters = _read_chapters(data, sections)
+        fonts = _read_fonts(data, sections)
         page_chunks = _read_page_chunks(data, sections)
         page_transitions = _read_page_transitions(data, sections)
         reader = cls(
-            path, data, header, sections, pages, chapters, page_chunks, page_transitions
+            path,
+            data,
+            header,
+            sections,
+            pages,
+            chapters,
+            fonts,
+            page_chunks,
+            page_transitions,
         )
         if validate:
             reader.validate()
@@ -172,8 +183,13 @@ class BinBookReader:
         font_section = self.sections[SectionId.FONT_RESOURCE_INDEX]
         if font_section.entry_size != FONT_RESOURCE_INDEX_ENTRY_SIZE:
             raise ValueError("unsupported font resource index entry size")
-        if font_section.record_count != 0:
-            raise ValueError("font resource records are not supported yet")
+        if font_section.record_count != len(self.fonts):
+            raise ValueError("font resource index count mismatch")
+        for expected, font in enumerate(self.fonts):
+            if font.font_index != expected:
+                raise ValueError("font resource index is not contiguous")
+            if len(font.sha256) != 32:
+                raise ValueError("font resource digest must be 32 bytes")
         chunk_section = self.sections.get(SectionId.PAGE_CHUNK_INDEX)
         if chunk_section is not None:
             if chunk_section.entry_size != PAGE_CHUNK_INDEX_ENTRY_SIZE:
@@ -418,6 +434,20 @@ def _read_chapters(
         return []
     return [
         ChapterIndexEntry.unpack(data, section.offset + index * section.entry_size)
+        for index in range(section.record_count)
+    ]
+
+
+def _read_fonts(
+    data: bytes, sections: dict[SectionId, SectionEntry]
+) -> list[FontResourceIndexEntry]:
+    section = sections.get(SectionId.FONT_RESOURCE_INDEX)
+    if section is None:
+        return []
+    return [
+        FontResourceIndexEntry.unpack(
+            data, section.offset + index * section.entry_size
+        )
         for index in range(section.record_count)
     ]
 

@@ -380,18 +380,30 @@ All reserved fields must be zero. Include only faces actually used during raster
 - Remove compiler-only Python modules only after Rust behavioral replacements pass
 - Migrate/remove corresponding Python tests only after mapping each assertion to a named Rust test
 
-- [ ] Add RED tests that `binbook-support --help` exposes only `view` and `kerning-proof`, and that its viewer opens a Rust-generated book containing section 35.
-- [ ] Rename the console entrypoint to `binbook-support`; remove Python encode/decode/inspect commands and implementation imports.
-- [ ] Teach the transitional Python reader to parse/validate or safely skip valid `FONT_RESOURCE_INDEX` records so the viewer remains usable.
-- [ ] Before deleting any Python test/module, create an assertion-migration table in the plan execution notes mapping it to a passing Rust test. Do not delete tests merely to obtain green output.
-- [ ] Run full pytest plus the proof test when available:
+- [x] Add RED tests that `binbook-support --help` exposes only `view` and `kerning-proof`, and that its viewer opens a Rust-generated book containing section 35.
+- [x] Rename the console entrypoint to `binbook-support`; remove Python encode/decode/inspect commands and implementation imports.
+- [x] Teach the transitional Python reader to parse/validate or safely skip valid `FONT_RESOURCE_INDEX` records so the viewer remains usable.
+- [x] Before deleting any Python test/module, create an assertion-migration table in the plan execution notes mapping it to a passing Rust test. Do not delete tests merely to obtain green output.
+
+### Task 11 assertion migration
+
+| Removed Python test | Rust replacement evidence |
+|---|---|
+| `test_chunk_validation.py`, `test_validation.py` | `binbook-core/tests/strict_validation.rs`; `binbook-compiler/tests/compile_images.rs` |
+| `test_display_profile.py`, `test_roundtrip.py` | `binbook-encode/tests/roundtrip.rs`; `binbook/tests/compiler_cli.rs` |
+| `test_encode_epub.py`, `test_font_policy.py` | `binbook-compiler/tests/compile_epub.rs`; `binbook-render/tests/fonts.rs` |
+| `test_epub.py`, `test_epub_flow.py` | `binbook-epub/tests/epub.rs` |
+| `test_inspect.py` | `binbook/tests/compiler_cli.rs` |
+| `test_strings.py` | `binbook-encode/tests/layout.rs`; `binbook-core/tests/strict_validation.rs` |
+| `test_x4_chunked_writer.py` | `binbook-image/tests/compile.rs`; `gray2-render/tests/image.rs` |
+- [x] Run full pytest plus the proof test when available:
 
   ```bash
   uv run pytest -q
   uv run pytest -q tests/test_kerning_proof.py --run-proof
   ```
 
-- [ ] Commit `refactor(python): retain viewer and kerning support only`.
+- [x] Commit `refactor(python): retain viewer and kerning support only`.
 
 ## Task 12: Make Rust the Canonical Navigation-Fixture Compiler
 

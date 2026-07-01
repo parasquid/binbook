@@ -2,12 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import Image
-
 from binbook.cli import main
 from binbook.reader import BinBookReader
 from binbook.viewer import ViewerState, image_to_surface, render_page_image
-from binbook.writer import encode_png_folder
 
 
 def test_viewer_state_navigates_and_clamps_page_numbers():
@@ -57,9 +54,5 @@ def test_cli_exposes_view_command(capsys):
 
 
 def _sample_book(tmp_path: Path) -> Path:
-    pages = tmp_path / "pages"
-    pages.mkdir()
-    Image.new("L", (480, 800), 0).save(pages / "001.png")
-    book = tmp_path / "viewer.binbook"
-    encode_png_folder(pages, book)
-    return book
+    del tmp_path
+    return Path("crates/binbook-core/tests/fixtures/nav_probe.binbook")

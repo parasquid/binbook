@@ -2,11 +2,11 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 11 — Python support-only cutover
+Current task: Task 12 — Rust canonical navigation fixture
 
 ## Completed
 
-Tasks 1 through 10 are complete.
+Tasks 1 through 11 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
@@ -42,6 +42,9 @@ Tasks 1 through 10 are complete.
 - Moved `cli/` to `crates/binbook/`, renamed the package/library/executable to `binbook`, and preserved all diagnostic commands, protocol builders, serial transport, staged-gray exercise, and navigation-burst behavior.
 - Added native `encode`, `decode`, and strict/JSON `inspect` commands with signature-based input detection, lexical non-recursive image-directory discovery, warning-and-skip behavior, locked profile/pixel/font options, logical PNG decoding, and atomic sibling-temp writes that preserve existing output and clean up every failure path.
 - Split the former 1,157-line CLI library into responsibility-focused modules; every Rust source module is now below 250 logical lines.
+- Renamed the Python console entrypoint to `binbook-support` and reduced its command surface to `view` and `kerning-proof`; Python no longer exposes encode, decode, or inspect commands.
+- Removed Python EPUB/package/flow, compiler, writer, inspector, and string-builder modules after mapping their deleted test assertions to named Rust replacements in the active plan.
+- Extended the transitional Python reader to parse and validate section-35 font records, including contiguous indices, reserved fields, SHA-256 size, and font family/source string references.
 
 ## TDD evidence
 
@@ -173,6 +176,19 @@ Task 10 GREEN:
 - Process tests cover image file, mixed directory skip warnings, EPUB, explicit mismatch, unsupported/all-skipped input, strict invalid inspection, JSON-only stdout, out-of-range decode, atomic cleanup, and preservation of an existing destination after an in-compiler failure.
 - Manual native round trip passed: encoded `two-color.svg`, strict-inspected one valid page, and decoded `/tmp/binbook-task10.png` as an 800×480 grayscale PNG.
 
+Task 11 RED:
+
+- `tests/test_support_cli.py` initially failed because `pyproject.toml` still registered `binbook` and Python help still exposed compiler commands.
+- The Rust-generated viewer test initially exposed that `BinBookReader` had no parsed font-resource collection and rejected nonempty section 35.
+
+Task 11 GREEN:
+
+- `uv run binbook-support --help` exposes exactly `view` and `kerning-proof`.
+- `tests/test_support_cli.py` compiles an EPUB through Rust, opens its nonempty section 35 with the Python reader, and renders page 0 through the transitional viewer at 480×800.
+- `uv run pytest -q`: 58 passed, 26 skipped.
+- `uv run pytest -q tests/test_kerning_proof.py --run-proof`: 26 passed.
+- Source scan found no remaining Python imports or CLI parsers for removed encoder/decoder/inspector modules.
+
 ## Fixture evidence
 
 Baseline fixture SHA-256 before Task 1:
@@ -211,10 +227,12 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 - `crates/binbook-compiler/` locked public API, dispatch/composition, validation, bundled-font policy, E2E fixtures, callback tests, and failing-sink test
 - `crates/binbook/` renamed native CLI, focused argument/input/encode/decode/inspect/atomic-output modules, preserved diagnostic modules, and process/help tests
 - `AGENTS.md` and `firmware/scripts/run-x4-nav-burst-diagnostic.py` now invoke the renamed package/path
+- `pyproject.toml`, `binbook/cli.py`, `reader.py`, and `sections.py` now define the support-only Python surface and section-35 viewer compatibility
+- `tests/test_support_cli.py` and the active-plan migration table preserve the cutover evidence; obsolete compiler-only Python modules/tests are removed
 
 ## Next exact action
 
-Start Task 11 with RED Python help/viewer tests, then rename the Python entrypoint to `binbook-support`, remove compiler/decode/inspect commands and imports, and map every removed Python assertion to an existing named Rust test before deleting compiler-only modules.
+Start Task 12 with a RED cross-language fixture test for section 35, exact page/chunk/transition counts, orientation markers, unique labels, four grayscale levels, and byte-identical copies. Then make `build-nav-probe-fixture.py` generate only source images and invoke `target/debug/binbook` explicitly.
 
 ## Hardware state
 

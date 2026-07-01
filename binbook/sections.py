@@ -18,6 +18,7 @@ SECTION_STRING_REF_OFFSETS: dict[SectionId, tuple[int, ...]] = {
     SectionId.RENDITION_IDENTITY: (256, 264),
     SectionId.FONT_POLICY: (36, 44, 52),
     SectionId.TYPOGRAPHY_POLICY: (36,),
+    SectionId.FONT_RESOURCE_INDEX: (16, 24),
     SectionId.NAV_INDEX: (8, 16),
     SectionId.CHAPTER_INDEX: (8,),
 }
