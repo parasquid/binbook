@@ -1,9 +1,15 @@
-# SD Storage Foundation Design
+# SD Storage Foundation Design  — CORRECTED COPY
 
-> **Location note:** This spec is authored under `.omo/specs/` because the
-> planning agent is sandboxed to `.omo/*.md`. It belongs at
-> `docs/specs/2026-07-01-sd-storage-foundation-design.md`. Move it before
-> implementation.
+> **Corrected copy.** This replaces the committed
+> `docs/specs/2026-07-01-sd-storage-foundation-design.md`. Move agent: overwrite
+> the `docs/specs/` file with this one.
+>
+> **Correction applied:** the shared-bus arbiter was attributed to `xteink-hal`,
+> but `firmware/crates/xteink-hal` is an **empty placeholder** (no manifest, empty
+> `src/`). The board abstraction (`BoardSpiDevice`) lives in
+> `binbook-fw/src/board.rs`, so the arbiter + pin wiring belong there. This aligns
+> better with the modularity rule (board-specific sharing stays in the app crate;
+> the reusable `embedded-sd-storage` takes a generic `SpiDevice`).
 
 ## Status and authority
 
@@ -37,7 +43,7 @@ SPI mode 0 (CPOL=0, CPHA=0), MSB-first. SD card clock starts at 400 kHz for
 initialization and may rise after init. The display task currently owns SPI2 and
 its staged refresh is timing-critical (SSD1677 staged streaming cannot be
 interrupted mid-frame). This shared-bus contention is the top technical risk and
-is owned by the board HAL, not by the storage crate.
+is owned by the firmware app's board module, not by the storage crate.
 
 ## Goals
 
@@ -47,8 +53,8 @@ is owned by the board HAL, not by the storage crate.
   pages straight off the card with zero whole-file buffering.
 - Provide the layer as reusable, `no_std`, `embedded-hal`-based library crates
   that SquidScript and other firmware can consume (modularity rule).
-- Keep all board-specific pin assignments and bus arbitration in `xteink-hal` /
-  `binbook-fw`; library crates depend only on `embedded-hal` traits.
+- Keep all board-specific pin assignments and bus arbitration in `binbook-fw`
+  (`src/board.rs`); library crates depend only on `embedded-hal` traits.
 - Make all FAT/enumeration/ReadAt logic unit-testable on host without hardware,
   via a mock block device and a mock `Filesystem` trait.
 
@@ -74,8 +80,8 @@ binbook-storage        (NEW, binbook-specific, backend-agnostic)
 ├── binbook-core                        (ReadAt, header parsing)
 └── storage trait defined here          (Filesystem/File abstraction)
 
-xteink-hal             (exists)  + shared SPI2 bus mutex with display-gating
-binbook-fw             (exists)  wires xteink-hal -> embedded-sd-storage
+binbook-fw (board.rs)  (exists)  + shared SPI2 bus mutex with display-gating
+binbook-fw (app)       (exists)  wires board -> embedded-sd-storage
                                   -> binbook-storage -> binbook-core
 ```
 
@@ -120,7 +126,14 @@ Public surface:
   Full title/author (`BookMetadata`) is a deeper read and is **not** returned by
   `enumerate_binbooks`; fetch on demand if a caller wants it.
 
-### Layer 3 — `xteink-hal` (exists, extended)
+### Layer 3 — `binbook-fw` board module (`src/board.rs`, exists, extended)
+
+> Note: `firmware/crates/xteink-hal` is an **empty placeholder** (no manifest,
+> empty `src/`); the board abstraction (`BoardSpiDevice`, which today owns the SPI
+> bus) lives in `binbook-fw/src/board.rs`. The shared-bus arbiter therefore lives
+> in `binbook-fw`, which aligns with the modularity rule (board-specific sharing
+> stays in the app crate; the reusable `embedded-sd-storage` takes a generic
+> `SpiDevice`).
 
 Owns SPI2 and all GPIO pin assignments. Gains the **shared SPI2 bus mutex with
 display-gating**: an arbiter that hands SPI2 to either the display
@@ -128,9 +141,9 @@ display-gating**: an arbiter that hands SPI2 to either the display
 the display is not mid-refresh. The storage crate receives the bus + CS pin via
 `embedded-hal` traits; the arbitration policy and pin wiring live here.
 
-### Layer 4 — `binbook-fw` (exists, wiring)
+### Layer 4 — `binbook-fw` app (exists, wiring)
 
-Wires `xteink-hal` (shared bus) → `embedded-sd-storage` → `binbook-storage` →
+Wires the `board` shared bus → `embedded-sd-storage` → `binbook-storage` →
 `binbook-core`. The diagnostic console (Sub-project B) and the menu/reader
 (Sub-project C) reach SD only through this wiring and the shared-bus arbiter.
 
@@ -158,7 +171,7 @@ Wires `xteink-hal` (shared bus) → `embedded-sd-storage` → `binbook-storage` 
 3. `binbook-core`'s `Book<R: ReadAt>` reads the page index and compressed page
    blobs on demand.
 4. Each blob read goes through `embedded-sd-storage` → SD block read → over the
-   `xteink-hal`-arbitrated shared SPI2 bus.
+   `binbook-fw` board-arbitrated shared SPI2 bus.
 
 ## RAM discipline
 
@@ -173,8 +186,8 @@ the only persistent read buffer; its size is documented and bounded.
   *shows* is C's concern; A only reports the error.
 - Corrupt BinBook header during enumeration → skip and flag; never crash the list.
 - Read error mid-page → propagate as `FirmwareError::Storage` (already exists).
-- Bus busy → the `xteink-hal` arbiter defers SD access until the display is idle
-  (async `WouldBlock`/await semantics decided in the plan).
+- Bus busy → the `binbook-fw` board arbiter defers SD access until the display is
+  idle (async `WouldBlock`/await semantics decided in the plan).
 
 ## Testing and verification
 
@@ -195,6 +208,7 @@ first hardware-verified milestone.
 
 - Confirm `embedded-sdmmc` is current, `esp-hal`-compatible, and license-compatible;
   pin a version. Evaluate its shared-bus suitability and sector-cache size.
-- Exact async shape of the shared-bus arbiter in `xteink-hal` (Embassy mutex vs.
-  a dedicated arbiter task) and how SD reads await display-idle without busy-wait.
+- Exact async shape of the shared-bus arbiter in `binbook-fw/src/board.rs` (Embassy
+  mutex vs. a dedicated arbiter task) and how SD reads await display-idle without
+  busy-wait.
 - Final public API signatures for `embedded-sd-storage` and `binbook-storage`.
