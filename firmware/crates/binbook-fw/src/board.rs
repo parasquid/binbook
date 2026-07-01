@@ -54,10 +54,10 @@ where
     }
 }
 
-#[cfg(feature = "firmware-bin")]
+#[cfg(all(feature = "firmware-bin", target_arch = "riscv32"))]
 pub struct DisplayDelay;
 
-#[cfg(feature = "firmware-bin")]
+#[cfg(all(feature = "firmware-bin", target_arch = "riscv32"))]
 impl embedded_hal_async::delay::DelayNs for DisplayDelay {
     async fn delay_ns(&mut self, ns: u32) {
         embassy_time::Timer::after_nanos(u64::from(ns)).await;

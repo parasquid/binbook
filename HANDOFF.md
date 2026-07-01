@@ -2,11 +2,11 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 14 — full automated verification
+Current task: Task 15 — mandatory live Xteink X4 verification
 
 ## Completed
 
-Tasks 1 through 13 are complete.
+Tasks 1 through 14 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
@@ -214,6 +214,29 @@ Task 13 GREEN:
 - `cargo fmt --all -- --check` and `git diff --check`: passed after applying the one pending fixture-test formatting normalization.
 - `README.md`, `AGENTS.md`, `BINBOOK_FORMAT_SPEC.md`, all four specified current references, and `docs/reference/compiler-roadmap.md` describe current behavior and commands.
 
+Task 14 GREEN:
+
+- Started with `cargo clean` (8.2 GiB and 28,495 files removed), then the complete formatting, workspace, focused, feature-gated, Clippy, RISC-V, WASM, Python, and diff gate passed. Current Python result: 60 passed, 26 skipped. Serial-device result: 10 hardware-orchestration tests passed, 11 transport tests passed, and 4 live-device tests remain intentionally ignored pending Task 15.
+- The first all-features workspace Clippy run exposed host compilation of ESP-only optional dependencies. `binbook-fw` now places ESP/Embassy dependencies behind `cfg(target_arch = "riscv32")`, gates board firmware code to RISC-V, and supplies a host stub binary. The rerun passed with `-D warnings`.
+- The exact pinned nightly firmware release build with `firmware-bin,diagnostic-console` passed for `riscv32imc-unknown-none-elf`.
+- Native image-directory acceptance produced 2 valid pages. EPUB acceptance produced 1 valid page, 1 chapter, 1 navigation entry, title `Rust Compiler Acceptance`, author `BinBook QA`, and language `en`.
+- Both decoded pages are 800×480 grayscale PNGs with exactly the canonical values 0, 85, 170, and 255. Full transcripts are `/tmp/binbook-compiler-acceptance/images-transcript.txt`, `/tmp/binbook-compiler-acceptance/epub-transcript.txt`, and `/tmp/binbook-compiler-acceptance/pixel-verification.txt`.
+- `inspect --json` now exposes title, author, and language; the EPUB CLI integration test locks the title result.
+
+## Acceptance matrix before hardware
+
+| Requirement | Implementation path | Automated test/evidence | Serial/query applicability | Webcam applicability |
+|---|---|---|---|---|
+| BinBook 0.1 font records and strict validation | `binbook-core`, `binbook-encode` | workspace tests; strict validation; section-35 tests | Fixture parse/page count must remain valid on device | Not applicable |
+| Deterministic PackBits compatible with firmware | `binbook-compress`, `binbook-decompress` | five PackBits tests including 9,217-byte input | Render/log success exercises device decode | Visible corruption or missing regions would fail |
+| Image sequence compilation | `binbook-image`, `binbook-compiler`, `binbook encode` | 2-page native E2E transcript; strict inspect; decoded pixels | Device uses the Rust-compiled canonical image fixture | Page image/orientation is required evidence |
+| EPUB parsing, reflow, metadata, navigation, and fonts | `binbook-epub`, `binbook-render`, `binbook-compiler` | compiler/render tests; EPUB E2E metadata and pixel transcript | Not applicable to canonical hardware fixture | Not applicable |
+| Native inspect/decode and atomic output | `crates/binbook/src/{inspect,decode,atomic_output}.rs` | CLI process tests and both E2E transcripts | Diagnostic commands are separately verified below | Not applicable |
+| Portable compiler and reusable firmware crates | crate feature/target boundaries and target-gated `binbook-fw` dependencies | all-features Clippy; RISC-V checks; WASM check/no-run; pinned release build | Firmware identity/protocol query required | Not applicable |
+| Rust-generated canonical fixture | `firmware/scripts/build-nav-probe-fixture.py --compiler target/debug/binbook` | fixture tests; SHA-256 `3c87fbde1e05c1bc127083511a4353b3d400c292df92672dc6710e9bc2f7f31d` | Must report 16 pages and render page transitions | Must show orientation frame and four grays |
+| Live diagnostic protocol and state transition | `binbook-fw` diagnostic console and `binbook diag` | host protocol/orchestration/transport tests | Required: HELLO, STATUS, page 3→0, logs | Page 0 must be independently visible |
+| Physical X4 output correctness | `xteink-x4-display`, `ssd1677-driver`, fixture orientation frame | host rendering/driver tests only | Logs must show successful render and no display error | Required: labels, shapes, crosshair, border, no stale regions, four grays |
+
 ## Fixture evidence
 
 Baseline fixture SHA-256 before Task 1:
@@ -259,8 +282,8 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 
 ## Next exact action
 
-Start Task 14 by running every focused, workspace, feature-gated, Python, Clippy, formatting, WASM, firmware-target, native E2E, and stale-reference gate exactly as listed in the plan. Save native image-directory and EPUB transcripts under `/tmp/binbook-compiler-acceptance/` and record any pre-existing failure separately from regressions.
+Start Task 15 by recording the fixture and release-binary hashes, then run the flash, 15-second boot capture, HELLO/STATUS, discriminating page 3→0 state sequence, logs query, and fresh `/dev/video1` webcam capture sequentially. Record each command and complete output immediately.
 
 ## Hardware state
 
-No hardware commands have run for this plan yet. Task 15 remains a mandatory completion gate: flash the Rust-generated fixture, capture at least 15 seconds of serial, independently query HELLO/STATUS/logs from a non-default page state, and inspect a fresh `/dev/video1` native capture plus the confirmed panel crop.
+No hardware commands have run for this plan yet. Starting hashes are fixture `3c87fbde1e05c1bc127083511a4353b3d400c292df92672dc6710e9bc2f7f31d` and firmware release binary `ff52cab7e1312f9db4ecbdd6a917898ac259486ba612f638cbeb61dff1080d6a`. Task 15 remains a mandatory completion gate.

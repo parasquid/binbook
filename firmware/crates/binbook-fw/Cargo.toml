@@ -16,18 +16,18 @@ binbook-diagnostic-protocol = { workspace = true, optional = true }
 embassy-sync.workspace = true
 nb.workspace = true
 portable-atomic.workspace = true
+
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+embassy-executor = { workspace = true, optional = true }
+embassy-futures = { workspace = true, optional = true }
+embassy-time = { workspace = true, optional = true }
 esp-backtrace = { workspace = true, features = ["esp32c3", "panic-handler", "println"], optional = true }
 esp-bootloader-esp-idf = { workspace = true, features = ["esp32c3"], optional = true }
 esp-hal = { workspace = true, features = ["esp32c3", "unstable"], optional = true }
-embassy-executor = { workspace = true, optional = true }
-embassy-time = { workspace = true, optional = true }
-embassy-futures = { workspace = true, optional = true }
-esp-rtos = { workspace = true, features = ["esp32c3", "embassy"], optional = true }
 esp-println = { workspace = true, features = ["esp32c3", "jtag-serial"], optional = true }
-static_cell = { workspace = true, optional = true }
-
-[target.'cfg(target_arch = "riscv32")'.dependencies]
+esp-rtos = { workspace = true, features = ["esp32c3", "embassy"], optional = true }
 esp-storage = { workspace = true, features = ["esp32c3"], optional = true }
+static_cell = { workspace = true, optional = true }
 
 [features]
 firmware-bin = [

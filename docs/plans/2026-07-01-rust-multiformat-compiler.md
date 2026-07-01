@@ -449,7 +449,7 @@ All reserved fields must be zero. Include only faces actually used during raster
 
 ## Task 14: Full Automated Verification
 
-- [ ] Start from a clean Cargo build to prevent stale artifacts masking failures:
+- [x] Start from a clean Cargo build to prevent stale artifacts masking failures:
 
   ```bash
   cargo clean
@@ -467,7 +467,7 @@ All reserved fields must be zero. Include only faces actually used during raster
   git diff --check
   ```
 
-- [ ] Build the pinned firmware release exactly:
+- [x] Build the pinned firmware release exactly:
 
   ```bash
   cd firmware && \
@@ -477,8 +477,8 @@ All reserved fields must be zero. Include only faces actually used during raster
       --target riscv32imc-unknown-none-elf --release
   ```
 
-- [ ] Drive the native surface end-to-end with an image directory and an EPUB. For each: encode, strict inspect, decode page 0, verify dimensions/pixels/metadata, and save transcripts under `/tmp/binbook-compiler-acceptance/`.
-- [ ] Update `HANDOFF.md` with an acceptance matrix before hardware work. Every row must name requirement, implementation path, automated test, serial/query evidence applicability, and webcam evidence applicability.
+- [x] Drive the native surface end-to-end with an image directory and an EPUB. For each: encode, strict inspect, decode page 0, verify dimensions/pixels/metadata, and save transcripts under `/tmp/binbook-compiler-acceptance/`.
+- [x] Update `HANDOFF.md` with an acceptance matrix before hardware work. Every row must name requirement, implementation path, automated test, serial/query evidence applicability, and webcam evidence applicability.
 
 ## Task 15: Mandatory Live Xteink X4 Verification
 

@@ -60,6 +60,10 @@ fn encodes_epub_and_rejects_mismatch_unsupported_and_all_skipped() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    let inspection = fixture::run(["inspect", book.to_str().unwrap(), "--json"]);
+    assert!(inspection.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&inspection.stdout).unwrap();
+    assert_eq!(json["title"], "CLI EPUB");
 
     let mismatch = root.join("mismatch.binbook");
     let output = fixture::run([

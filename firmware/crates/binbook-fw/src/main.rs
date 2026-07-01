@@ -1,35 +1,55 @@
-#![no_std]
-#![no_main]
+#![cfg_attr(target_arch = "riscv32", no_std)]
+#![cfg_attr(target_arch = "riscv32", no_main)]
 
+#[cfg(target_arch = "riscv32")]
 use embassy_executor::Spawner;
+#[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
 
-#[cfg(all(feature = "debug-log", not(feature = "diagnostic-console")))]
+#[cfg(all(
+    target_arch = "riscv32",
+    feature = "debug-log",
+    not(feature = "diagnostic-console")
+))]
 use esp_println::println;
 
-#[cfg(all(feature = "debug-log", not(feature = "diagnostic-console")))]
+#[cfg(all(
+    target_arch = "riscv32",
+    feature = "debug-log",
+    not(feature = "diagnostic-console")
+))]
 macro_rules! dbgprintln {
     ($($arg:tt)*) => { println!($($arg)*) };
 }
-#[cfg(not(all(feature = "debug-log", not(feature = "diagnostic-console"))))]
+#[cfg(all(
+    target_arch = "riscv32",
+    not(all(feature = "debug-log", not(feature = "diagnostic-console")))
+))]
 macro_rules! dbgprintln {
     ($($arg:tt)*) => {};
 }
 
+#[cfg(target_arch = "riscv32")]
 esp_bootloader_esp_idf::esp_app_desc!();
 
+#[cfg(target_arch = "riscv32")]
 mod runtime;
 
+#[cfg(target_arch = "riscv32")]
 const DISPLAY_SPI_FREQUENCY_MHZ: u32 = 20;
+#[cfg(target_arch = "riscv32")]
 const PROBE_BOOK: &[u8] = include_bytes!("../fixtures/nav_probe.binbook");
+#[cfg(target_arch = "riscv32")]
 const BINBOOK_SCRATCH_BYTES: usize = 8192;
 
+#[cfg(target_arch = "riscv32")]
 #[embassy_executor::task]
 async fn firmware_task(peripherals: runtime::RuntimePeripherals, spawner: Spawner) {
     dbgprintln!("[BOOT] starting firmware tasks");
     runtime::run(spawner, peripherals).await;
 }
 
+#[cfg(target_arch = "riscv32")]
 #[esp_hal::main]
 fn main() -> ! {
     let esp_hal::peripherals::Peripherals {
@@ -81,3 +101,6 @@ fn main() -> ! {
         spawner.spawn(firmware_task(peripherals, spawner).expect("failed to create firmware task"));
     })
 }
+
+#[cfg(not(target_arch = "riscv32"))]
+fn main() {}
