@@ -2,11 +2,11 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 6 — static image compilation and decoding
+Current task: Task 7 — EPUB document model and source layer
 
 ## Completed
 
-Tasks 1 through 5 are complete.
+Tasks 1 through 6 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
@@ -28,6 +28,9 @@ Tasks 1 through 5 are complete.
 - Added exact GRAY1/GRAY2 threshold quantization, caller-buffer Floyd-Steinberg row state, and MSB-first GRAY1/GRAY2 row packing to `gray2-render`.
 - Added allocation-free full-image staged-plane conversion that reuses `canonical_row_to_staged`, plus borrowed plane chunk iteration.
 - Added X4 logical GRAY2 packing through the existing `logical_to_physical` mapping, avoiding a second coordinate formula.
+- Added path-free PNG, JPEG, WebP, and SVG decoding with explicit codec features and no Rayon, system fonts, or OS font discovery.
+- Added APNG/animation rejection, white alpha flattening before Lanczos resampling, centered contain/padding, exact X4 orientation, GRAY1/GRAY2 compilation, and 30-chunk PackBits planes.
+- Added BinBook page decoding for NONE, PackBits, and host LZ4 plus PNG output and typed out-of-range rejection.
 
 ## TDD evidence
 
@@ -94,6 +97,19 @@ Task 5 GREEN:
 - `cargo clippy -p gray2-render -p xteink-x4-display --all-targets -- -D warnings`: passed.
 - Both crates passed no-default-feature RISC-V checks using the rustup compiler explicitly.
 
+Task 6 RED:
+
+- Focused image tests failed because `binbook-image`, codec decoding, fitting, compilation, and book-page decoding APIs did not exist.
+
+Task 6 GREEN:
+
+- `cargo test -p binbook-image`: 8 tests passed across decode, fit, compile, orientation, compression, and PNG output.
+- `cargo clippy -p binbook-image --all-targets -- -D warnings`: passed.
+- `cargo check -p binbook-image --target wasm32-unknown-unknown`: passed using the rustup compiler explicitly.
+- Dependency-tree scan found no Rayon, fontdb, fontconfig, or system-font dependencies.
+- Python/Pillow regenerated the 7×5 Lanczos reference exactly; Rust test RMSE stays ≤3 and exact-size orientation pixels match exactly.
+- `cargo test --workspace`: passed.
+
 ## Fixture evidence
 
 Baseline fixture SHA-256 before Task 1:
@@ -124,10 +140,11 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 - `crates/binbook-encode/` model, policies, hashing, strings, indices, writer, and tests
 - `crates/gray2-render/src/{quantize,pack,image}.rs` and focused tests
 - `crates/xteink-x4-display/src/profile.rs`, reusing the established X4 mapping
+- `crates/binbook-image/` codec, fit, compile, book decode, SVG fixture, and focused tests
 
 ## Next exact action
 
-Start Task 6 by creating compact in-memory image fixtures and RED tests for explicit PNG/JPEG/WebP/SVG decoding, alpha flattening, Lanczos contain/padding, staged GRAY2 and GRAY1 output, malformed/animated rejection, and book-page decoding through NONE, PackBits, and LZ4.
+Start Task 7 by implementing the smallest path-free `binbook-document` model under RED tests before adding EPUB parsing. Then add synthetic EPUB2/EPUB3 fixtures and wrap package/HTML/CSS/font parsing behind BinBook-owned types.
 
 ## Hardware state
 

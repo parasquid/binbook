@@ -1,0 +1,24 @@
+[package]
+name = "binbook-image"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Path-free static image compilation and BinBook page decoding"
+
+[dependencies]
+binbook-compress.workspace = true
+binbook-core.workspace = true
+binbook-decompress = { workspace = true, features = ["lz4"] }
+binbook-encode.workspace = true
+gray2-render.workspace = true
+xteink-x4-display.workspace = true
+image.workspace = true
+resvg.workspace = true
+
+[dev-dependencies]
+lz4_flex.workspace = true
+png = "0.18"
+
+[lints]
+workspace = true

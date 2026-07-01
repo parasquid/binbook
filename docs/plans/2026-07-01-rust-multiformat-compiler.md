@@ -290,12 +290,12 @@ All reserved fields must be zero. Include only faces actually used during raster
 - Create focused decode, resize, orient, compile, and output modules
 - Create fixtures/tests under `crates/binbook-image/tests/`
 
-- [ ] Add compact deterministic fixtures covering PNG alpha, JPEG, WebP, SVG, portrait/landscape resize, exact-size input, malformed input, animated/multipage rejection, GRAY1, and staged GRAY2.
-- [ ] Add RED assertions for white alpha compositing, aspect-preserving Lanczos contain, centered padding, logical orientation, exact plane/chunk counts, and decoded PNG dimensions.
-- [ ] Implement with explicit codec features only. Disable default `image`/`resvg` features that introduce unrequested formats, native parallelism, or system fonts.
-- [ ] Add decode tests for NONE, PackBits, and existing host LZ4 paths; reject page indices outside the book.
-- [ ] Run package tests, Clippy, WASM check, and Python pixel-parity comparisons. Use exact pixels for non-resized fixtures and RMSE ≤3/255 only for resampling/rasterizer comparisons.
-- [ ] Commit `feat(binbook-image): compile and decode static images`.
+- [x] Add compact deterministic fixtures covering PNG alpha, JPEG, WebP, SVG, portrait/landscape resize, exact-size input, malformed input, animated/multipage rejection, GRAY1, and staged GRAY2.
+- [x] Add RED assertions for white alpha compositing, aspect-preserving Lanczos contain, centered padding, logical orientation, exact plane/chunk counts, and decoded PNG dimensions.
+- [x] Implement with explicit codec features only. Disable default `image`/`resvg` features that introduce unrequested formats, native parallelism, or system fonts.
+- [x] Add decode tests for NONE, PackBits, and existing host LZ4 paths; reject page indices outside the book.
+- [x] Run package tests, Clippy, WASM check, and Python pixel-parity comparisons. Use exact pixels for non-resized fixtures and RMSE ≤3/255 only for resampling/rasterizer comparisons.
+- [x] Commit `feat(binbook-image): compile and decode static images`.
 
 ## Task 7: Implement the EPUB Source Layer
 

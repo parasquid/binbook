@@ -36,6 +36,15 @@ impl BookConfig {
             waveform_hint: 2,
         }
     }
+
+    #[must_use]
+    pub fn xteink_x4_gray1() -> Self {
+        let mut config = Self::xteink_x4();
+        config.storage_pixel_format = 1;
+        config.grayscale_levels = 2;
+        config.framebuffer_bits_per_pixel = 1;
+        config
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
