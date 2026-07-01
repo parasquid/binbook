@@ -242,6 +242,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "binbook-storage"
+version = "0.1.0"
+dependencies = [
+ "binbook-core",
+ "heapless 0.8.0",
+]
+
+[[package]]
 name = "bitfield"
 version = "0.19.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -13,6 +13,7 @@ members = [
     "crates/ssd1677-driver",
     "crates/xteink-x4-display",
     "crates/binbook",
+    "crates/binbook-storage",
     "firmware/crates/binbook-diagnostic-protocol",
     "firmware/crates/binbook-fw",
 ]
@@ -36,6 +37,7 @@ binbook-epub = { path = "crates/binbook-epub" }
 binbook-decompress = { path = "crates/binbook-decompress" }
 gray2-render = { path = "crates/gray2-render" }
 ssd1677-driver = { path = "crates/ssd1677-driver" }
+binbook-storage = { path = "crates/binbook-storage" }
 xteink-x4-display = { path = "crates/xteink-x4-display" }
 binbook-diagnostic-protocol = { path = "firmware/crates/binbook-diagnostic-protocol" }
 clap = { version = "4", features = ["derive"] }
@@ -70,6 +72,8 @@ serialport = { version = "4", default-features = false }
 embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
 static_cell = { version = "2.1.1", default-features = false }
+embedded-sdmmc = "0.9.0"
+embedded-hal-bus = "0.3"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
