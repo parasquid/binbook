@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/binbook-core",
+    "crates/binbook-compress",
     "crates/binbook-decompress",
     "crates/gray2-render",
     "crates/ssd1677-driver",
@@ -19,6 +20,7 @@ repository = "https://github.com/parasquid/binbook"
 
 [workspace.dependencies]
 binbook-core = { path = "crates/binbook-core" }
+binbook-compress = { path = "crates/binbook-compress" }
 binbook-decompress = { path = "crates/binbook-decompress" }
 gray2-render = { path = "crates/gray2-render" }
 ssd1677-driver = { path = "crates/ssd1677-driver" }

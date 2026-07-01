@@ -79,6 +79,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "binbook-compress"
+version = "0.1.0"
+dependencies = [
+ "binbook-core",
+ "binbook-decompress",
+]
+
+[[package]]
 name = "binbook-core"
 version = "0.1.0"
 

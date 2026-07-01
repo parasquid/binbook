@@ -2,11 +2,11 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 3 — PackBits encoder
+Current task: Task 4 — deterministic container writer
 
 ## Completed
 
-Tasks 1 and 2 are complete.
+Tasks 1 through 3 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
@@ -18,6 +18,9 @@ Tasks 1 and 2 are complete.
 - Shared all record-size constants between parsers and encoders.
 - Fixed the transitional Python writer to align every plane blob to four bytes and keep page/chunk indices consistent with padding.
 - Regenerated all canonical `nav_probe.binbook` copies with aligned plane offsets.
+- Added `binbook-compress`, with a no-std caller-buffer PackBits encoder and an alloc-gated `Vec` convenience API.
+- Matched the transitional Python encoder's deterministic run selection, including 127/128 boundaries and split-run behavior.
+- Required all PackBits test vectors, including a 9,217-byte mixed-pattern input, to decode through `binbook-decompress`.
 
 ## TDD evidence
 
@@ -51,6 +54,16 @@ Task 2 GREEN:
 - `cargo test -p binbook-fw --features diagnostic-console`: passed.
 - `uv run pytest -q`: 100 passed, 26 skipped.
 
+Task 3 RED:
+
+- `cargo test -p binbook-compress --test packbits` failed because the new crate had no library or encoding API.
+
+Task 3 GREEN:
+
+- `cargo test -p binbook-compress`: 5 PackBits tests passed.
+- `cargo clippy -p binbook-compress --all-targets -- -D warnings`: passed.
+- Default and no-default-feature WASM checks passed using the rustup compiler explicitly.
+
 ## Fixture evidence
 
 Baseline fixture SHA-256 before Task 1:
@@ -76,10 +89,12 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 - `crates/binbook-core/src/{encode,index_encode,link_validation,record_validation,validate,validation_crc}.rs`
 - Shared parser modules in `crates/binbook-core/src/`
 - `crates/binbook-core/tests/{encoding,strict_validation}.rs`
+- `crates/binbook-compress/{Cargo.toml,src/lib.rs,src/packbits.rs,tests/packbits.rs}`
+- Root workspace manifest and lockfile
 
 ## Next exact action
 
-Start Task 3 by creating `binbook-compress` and writing the PackBits golden/boundary/property RED tests. Every encoded sample must round-trip through `binbook-decompress`, including an input larger than 8 KiB. Implement the caller-buffer API first, then the host `Vec` convenience wrapper.
+Start Task 4 with exact-layout and strict-validation RED tests for a `BookBuilder` that writes to `Write + Seek`. Keep the writer model independent of image/EPUB parsing and require byte-for-byte deterministic output plus a `binbook_core::validate_all` round trip.
 
 ## Hardware state
 

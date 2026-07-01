@@ -240,10 +240,10 @@ All reserved fields must be zero. Include only faces actually used during raster
 - Create: `crates/binbook-compress/tests/packbits.rs`
 - Modify: root `Cargo.toml`
 
-- [ ] Add RED golden/property tests for empty input, 1/2/127/128-byte repeat and literal boundaries, alternating bytes, split runs, incompressible data, and the BinBook-specific `0x80` one-byte repeat rule.
-- [ ] Require every encoded sample to decode exactly through `binbook-decompress`; include inputs larger than 8 KiB.
-- [ ] Implement deterministic PackBits encoding only. Use caller-provided output for the low-level API and a host convenience `Vec` wrapper.
-- [ ] Run:
+- [x] Add RED golden/property tests for empty input, 1/2/127/128-byte repeat and literal boundaries, alternating bytes, split runs, incompressible data, and the BinBook-specific `0x80` one-byte repeat rule.
+- [x] Require every encoded sample to decode exactly through `binbook-decompress`; include inputs larger than 8 KiB.
+- [x] Implement deterministic PackBits encoding only. Use caller-provided output for the low-level API and a host convenience `Vec` wrapper.
+- [x] Run:
 
   ```bash
   cargo test -p binbook-compress
@@ -251,7 +251,7 @@ All reserved fields must be zero. Include only faces actually used during raster
   cargo check -p binbook-compress --target wasm32-unknown-unknown
   ```
 
-- [ ] Commit `feat(binbook-compress): add packbits encoding`.
+- [x] Commit `feat(binbook-compress): add packbits encoding`.
 
 ## Task 4: Build the Deterministic Container Writer
 
