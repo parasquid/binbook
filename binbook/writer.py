@@ -27,6 +27,7 @@ from .sections import (
 from .strings import StringTableBuilder
 from .structs import (
     CHAPTER_INDEX_ENTRY_SIZE,
+    FONT_RESOURCE_INDEX_ENTRY_SIZE,
     HEADER_SIZE,
     NAV_INDEX_ENTRY_SIZE,
     PAGE_CHUNK_INDEX_ENTRY_SIZE,
@@ -197,6 +198,12 @@ def build_binbook(
         (SectionId.IMAGE_POLICY, _image_policy(profile, dither_method), 0, 0),
         (SectionId.COMPRESSION_POLICY, _compression_policy(), 0, 0),
         (SectionId.CHROME_POLICY, _chrome_policy(), 0, 0),
+        (
+            SectionId.FONT_RESOURCE_INDEX,
+            b"",
+            FONT_RESOURCE_INDEX_ENTRY_SIZE,
+            0,
+        ),
     ]
 
     page_index = _page_index(pages, profile)

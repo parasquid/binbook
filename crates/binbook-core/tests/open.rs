@@ -49,12 +49,12 @@ fn source_failures_remain_distinct_from_format_failures() {
 
 #[test]
 fn opening_reports_exact_section_scratch_requirement() {
-    let mut scratch = [0_u8; 719];
+    let mut scratch = [0_u8; 759];
     assert!(matches!(
         Book::open(SliceSource::new(FIXTURE), &mut scratch),
         Err(Error::BufferTooSmall {
-            required: 720,
-            provided: 719,
+            required: 760,
+            provided: 759,
         })
     ));
 }
@@ -95,6 +95,14 @@ fn opening_rejects_versions_section_shapes_and_missing_sections() {
     assert!(matches!(
         Book::open(SliceSource::new(&missing), &mut scratch),
         Err(Error::Format(FormatError::MissingSection(10)))
+    ));
+
+    let mut missing_font_resources = FIXTURE.to_vec();
+    let font_entry = section_entry_offset(&missing_font_resources, 35);
+    missing_font_resources[font_entry..font_entry + 2].copy_from_slice(&60_u16.to_le_bytes());
+    assert!(matches!(
+        Book::open(SliceSource::new(&missing_font_resources), &mut scratch),
+        Err(Error::Format(FormatError::MissingSection(35)))
     ));
 }
 

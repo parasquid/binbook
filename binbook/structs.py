@@ -12,6 +12,7 @@ NAV_INDEX_ENTRY_SIZE = 48
 CHAPTER_INDEX_ENTRY_SIZE = 32
 PAGE_CHUNK_INDEX_ENTRY_SIZE = 24
 PAGE_TRANSITION_INDEX_ENTRY_SIZE = 24
+FONT_RESOURCE_INDEX_ENTRY_SIZE = 80
 
 _HEADER = struct.Struct("<8sHHHHQQIHHHHQQII")
 _STRING_REF = struct.Struct("<II")
@@ -21,6 +22,7 @@ _NAV_INDEX = struct.Struct("<IHH II II IIIIII")
 _CHAPTER_INDEX = struct.Struct("<II II IHHII")
 _PAGE_CHUNK_INDEX = struct.Struct("<IBBHHHIII")
 _PAGE_TRANSITION_INDEX = struct.Struct("<IIIHHHHI")
+_FONT_RESOURCE_INDEX = struct.Struct("<IHHHHBBHIIII32sII8s")
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,62 @@ class StringRef:
     @classmethod
     def unpack(cls, data: bytes, offset: int = 0) -> "StringRef":
         return cls(*_STRING_REF.unpack_from(data, offset))
+
+
+@dataclass(frozen=True)
+class FontResourceIndexEntry:
+    font_index: int
+    source_kind: int
+    flags: int
+    weight: int
+    stretch_milli: int
+    style: int
+    family_offset: int
+    family_length: int
+    source_path_offset: int
+    source_path_length: int
+    sha256: bytes
+    face_index: int
+
+    def pack(self) -> bytes:
+        return _FONT_RESOURCE_INDEX.pack(
+            self.font_index,
+            self.source_kind,
+            self.flags,
+            self.weight,
+            self.stretch_milli,
+            self.style,
+            0,
+            0,
+            self.family_offset,
+            self.family_length,
+            self.source_path_offset,
+            self.source_path_length,
+            self.sha256,
+            self.face_index,
+            0,
+            bytes(8),
+        )
+
+    @classmethod
+    def unpack(cls, data: bytes, offset: int = 0) -> "FontResourceIndexEntry":
+        values = _FONT_RESOURCE_INDEX.unpack_from(data, offset)
+        if values[6] != 0 or values[7] != 0 or values[14] != 0 or any(values[15]):
+            raise ValueError("FONT_RESOURCE_INDEX reserved fields must be zero")
+        return cls(
+            font_index=values[0],
+            source_kind=values[1],
+            flags=values[2],
+            weight=values[3],
+            stretch_milli=values[4],
+            style=values[5],
+            family_offset=values[8],
+            family_length=values[9],
+            source_path_offset=values[10],
+            source_path_length=values[11],
+            sha256=values[12],
+            face_index=values[13],
+        )
 
 
 @dataclass(frozen=True)

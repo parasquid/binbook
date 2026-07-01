@@ -24,6 +24,7 @@ from .sections import (
 from .structs import (
     HEADER_SIZE,
     CHAPTER_INDEX_ENTRY_SIZE,
+    FONT_RESOURCE_INDEX_ENTRY_SIZE,
     NAV_INDEX_ENTRY_SIZE,
     PAGE_CHUNK_INDEX_ENTRY_SIZE,
     PAGE_INDEX_ENTRY_SIZE,
@@ -168,6 +169,11 @@ class BinBookReader:
                 raise ValueError("chapter target page is out of range")
             if chapter.nav_type not in (3, 4):
                 raise ValueError("chapter index contains non-selectable nav type")
+        font_section = self.sections[SectionId.FONT_RESOURCE_INDEX]
+        if font_section.entry_size != FONT_RESOURCE_INDEX_ENTRY_SIZE:
+            raise ValueError("unsupported font resource index entry size")
+        if font_section.record_count != 0:
+            raise ValueError("font resource records are not supported yet")
         chunk_section = self.sections.get(SectionId.PAGE_CHUNK_INDEX)
         if chunk_section is not None:
             if chunk_section.entry_size != PAGE_CHUNK_INDEX_ENTRY_SIZE:

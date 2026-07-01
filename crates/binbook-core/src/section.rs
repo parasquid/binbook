@@ -14,6 +14,7 @@ pub(crate) const TYPOGRAPHY_POLICY: u16 = 31;
 pub(crate) const IMAGE_POLICY: u16 = 32;
 pub(crate) const COMPRESSION_POLICY: u16 = 33;
 pub(crate) const CHROME_POLICY: u16 = 34;
+pub(crate) const FONT_RESOURCE_INDEX: u16 = 35;
 pub(crate) const PAGE_INDEX: u16 = 40;
 pub(crate) const NAV_INDEX: u16 = 41;
 pub(crate) const CHAPTER_INDEX: u16 = 43;
@@ -21,7 +22,7 @@ pub(crate) const PAGE_CHUNK_INDEX: u16 = 44;
 pub(crate) const PAGE_TRANSITION_INDEX: u16 = 45;
 pub(crate) const PAGE_DATA: u16 = 50;
 
-const REQUIRED: [u16; 18] = [
+const REQUIRED: [u16; 19] = [
     STRING_TABLE,
     DISPLAY_PROFILE,
     LAYOUT_PROFILE,
@@ -34,6 +35,7 @@ const REQUIRED: [u16; 18] = [
     IMAGE_POLICY,
     COMPRESSION_POLICY,
     CHROME_POLICY,
+    FONT_RESOURCE_INDEX,
     PAGE_INDEX,
     NAV_INDEX,
     CHAPTER_INDEX,
@@ -63,12 +65,12 @@ impl Section {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SectionDirectory {
-    entries: [Section; 18],
+    entries: [Section; 19],
 }
 
 impl SectionDirectory {
     pub(crate) fn parse(table: &[u8], header: Header) -> Result<Self, FormatError> {
-        let mut entries = [Section::EMPTY; 18];
+        let mut entries = [Section::EMPTY; 19];
         for index in 0..usize::from(header.section_count) {
             let start = index
                 .checked_mul(ENTRY_SIZE)
@@ -110,12 +112,13 @@ impl SectionDirectory {
                 return Err(FormatError::MissingSection(required));
             }
         }
-        validate_record_section(entries[12], 128)?;
-        validate_record_section(entries[13], 48)?;
-        validate_record_section(entries[14], 32)?;
-        validate_record_section(entries[15], 24)?;
+        validate_record_section(entries[12], 80)?;
+        validate_record_section(entries[13], 128)?;
+        validate_record_section(entries[14], 48)?;
+        validate_record_section(entries[15], 32)?;
         validate_record_section(entries[16], 24)?;
-        let page_data = entries[17];
+        validate_record_section(entries[17], 24)?;
+        let page_data = entries[18];
         if page_data.entry_size != 0
             || page_data.record_count != 0
             || page_data.offset != header.page_data_offset
@@ -123,7 +126,7 @@ impl SectionDirectory {
         {
             return Err(FormatError::InvalidSection);
         }
-        if entries[12].record_count == 0 {
+        if entries[13].record_count == 0 {
             return Err(FormatError::InvalidPage);
         }
         Ok(Self { entries })
@@ -159,12 +162,13 @@ const fn required_slot(id: u16) -> Option<usize> {
         IMAGE_POLICY => Some(9),
         COMPRESSION_POLICY => Some(10),
         CHROME_POLICY => Some(11),
-        PAGE_INDEX => Some(12),
-        NAV_INDEX => Some(13),
-        CHAPTER_INDEX => Some(14),
-        PAGE_CHUNK_INDEX => Some(15),
-        PAGE_TRANSITION_INDEX => Some(16),
-        PAGE_DATA => Some(17),
+        FONT_RESOURCE_INDEX => Some(12),
+        PAGE_INDEX => Some(13),
+        NAV_INDEX => Some(14),
+        CHAPTER_INDEX => Some(15),
+        PAGE_CHUNK_INDEX => Some(16),
+        PAGE_TRANSITION_INDEX => Some(17),
+        PAGE_DATA => Some(18),
         _ => None,
     }
 }

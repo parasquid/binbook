@@ -117,6 +117,7 @@ All multi-byte integers are **little-endian**.
 ├── IMAGE_POLICY section
 ├── COMPRESSION_POLICY section
 ├── CHROME_POLICY section
+├── FONT_RESOURCE_INDEX section (80 bytes × record_count)
 ├── NAV_INDEX section (nav_index_entry_size × record_count bytes)
 ├── PAGE_INDEX section (page_index_entry_size × record_count bytes)
 ├── [optional zero padding for page_data alignment]
@@ -203,6 +204,7 @@ struct SectionEntry {
 | 32 | IMAGE_POLICY | Yes | No |
 | 33 | COMPRESSION_POLICY | Yes | No |
 | 34 | CHROME_POLICY | Yes | No |
+| 35 | FONT_RESOURCE_INDEX | Yes | Yes (80 bytes each) |
 | 40 | PAGE_INDEX | Yes | Yes (128 bytes each) |
 | 41 | NAV_INDEX | Yes | Yes (48 bytes each) |
 | 42 | PAGE_LABELS_RESERVED | No | Reserved |
@@ -597,7 +599,42 @@ struct ChromePolicy {
 
 **Note**: `dark_mode_negative` does NOT invert page blobs. Page blobs are always canonical (light mode). The firmware applies inversion at display time if needed.
 
-### 3.18 PAGE_INDEX Section (Record-Based)
+### 3.18 FONT_RESOURCE_INDEX Section (Record-Based)
+
+This required section records the exact font faces used to rasterize book
+content. Font bytes are not embedded because BinBook pages contain compiled
+pixels. Image-only books carry an empty section with `entry_size = 80` and
+`record_count = 0`.
+
+Records are sorted by normalized source path and then `face_index`.
+`font_index` values are contiguous from zero.
+
+```c
+struct FontResourceIndexEntry {
+    u32 font_index;
+    u16 source_kind;       // 1=bundled, 2=epub
+    u16 flags;             // bit0=used, bit1=primary, bit2=fallback, bit3=obfuscated
+    u16 weight;            // CSS numeric weight
+    u16 stretch_milli;     // 1000 = normal
+    u8  style;             // 0=normal, 1=italic, 2=oblique
+    u8  reserved0;
+    u16 reserved1;
+    StringRef family;
+    StringRef source_path;
+    u8  sha256[32];        // Decoded font bytes
+    u32 face_index;
+    u32 reserved2;
+    u8  reserved3[8];
+};
+```
+
+All reserved fields are zero. Only faces used during rasterization are listed,
+including bundled fallback faces. When EPUB fonts are preserved,
+`FONT_POLICY.font_sha256` is the SHA-256 digest of the complete
+`FONT_RESOURCE_INDEX` section bytes. When one bundled font is forced, the field
+is the SHA-256 digest of that font file.
+
+### 3.19 PAGE_INDEX Section (Record-Based)
 
 Array of `PageIndexEntry` records. Count = `section_entry.record_count`. Size per entry = `header.page_index_entry_size` (128 bytes).
 
@@ -650,7 +687,7 @@ Total: 128 bytes per entry.
 
 **Plane offsets**: `offset_plane_N` is relative to `header.page_data_offset`. Plane blob offsets must be 4-byte aligned within PAGE_DATA.
 
-### 3.19 NAV_INDEX Section (Record-Based)
+### 3.20 NAV_INDEX Section (Record-Based)
 
 Array of `NavIndexEntry` records. Count = `section_entry.record_count`. Size per entry = `header.nav_index_entry_size` (48 bytes).
 
@@ -676,7 +713,7 @@ struct NavIndexEntry {
 
 **Note**: UINT32_MAX = `0xFFFFFFFF`. Used for "none" or "no parent/child/sibling".
 
-### 3.20 CHAPTER_INDEX Section (Record-Based)
+### 3.21 CHAPTER_INDEX Section (Record-Based)
 
 Array of `ChapterIndexEntry` records. Count = `section_entry.record_count`. Size per entry = `section_entry.entry_size` (32 bytes).
 
@@ -711,7 +748,7 @@ Rules:
 - `title` must reference `STRING_TABLE` and may be reused from the matching
   `NAV_INDEX` entry.
 
-### 3.21 PAGE_CHUNK_INDEX Section (Record-Based)
+### 3.22 PAGE_CHUNK_INDEX Section (Record-Based)
 
 Array of `PageChunkIndexEntry` records. Count =
 `section_entry.record_count`. Size per entry = `section_entry.entry_size`
@@ -747,7 +784,7 @@ Rules:
 - For `xteink-x4-portrait`, `row_count` is 16, `uncompressed_size` is 1600,
   and each plane has chunk indices 0 through 29.
 
-### 3.22 PAGE_TRANSITION_INDEX Section (Record-Based)
+### 3.23 PAGE_TRANSITION_INDEX Section (Record-Based)
 
 Array of `PageTransitionIndexEntry` records. Count =
 `section_entry.record_count`. Size per entry = `section_entry.entry_size`
@@ -784,7 +821,7 @@ Rules:
 - Non-adjacent jumps need not have transition records. Firmware may fall back to
   full-screen BW differential partial refresh.
 
-### 3.23 PAGE_DATA Section
+### 3.24 PAGE_DATA Section
 
 Raw concatenated plane blobs. No page-local headers — the page index entry's
 plane directory is the authority.
@@ -1078,7 +1115,7 @@ for (i = 0; i < header.section_count; i++) {
 required = {STRING_TABLE, DISPLAY_PROFILE, LAYOUT_PROFILE, READER_REQUIREMENTS,
             SOURCE_IDENTITY, BOOK_METADATA, RENDITION_IDENTITY,
             FONT_POLICY, TYPOGRAPHY_POLICY, IMAGE_POLICY, COMPRESSION_POLICY,
-            CHROME_POLICY, PAGE_INDEX, NAV_INDEX, CHAPTER_INDEX,
+            CHROME_POLICY, FONT_RESOURCE_INDEX, PAGE_INDEX, NAV_INDEX, CHAPTER_INDEX,
             PAGE_CHUNK_INDEX, PAGE_TRANSITION_INDEX, PAGE_DATA};
 for (id in required) {
     if (id not in sections) error("missing required section");
@@ -1283,6 +1320,9 @@ Readers/firmware should validate:
 - [ ] All section offsets/lengths within file bounds
 - [ ] `PAGE_DATA` offset/length match header
 - [ ] Section CRC32s valid (if nonzero)
+- [ ] `FONT_RESOURCE_INDEX.entry_size` is 80
+- [ ] Font resource indices are contiguous and records are sorted by source path and face index
+- [ ] Font resource reserved fields are zero and all string references are in bounds
 
 ### Page-Level
 - [ ] `page_index_entry_size` is supported (128)

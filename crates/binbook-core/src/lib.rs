@@ -5,6 +5,7 @@ mod book_io;
 mod book_records;
 mod chunk;
 mod error;
+mod font_resource;
 mod header;
 mod navigation;
 mod page;
@@ -18,6 +19,9 @@ mod types;
 pub use book::Book;
 pub use chunk::PageChunk;
 pub use error::{Error, FormatError};
+pub use font_resource::{
+    FontResourceIndexEntry, FontSourceKind, FontStyle, FONT_RESOURCE_RECORD_SIZE,
+};
 pub use navigation::{ChapterEntry, NavEntry};
 pub use page::{PageInfo, PlaneDescriptor, PlaneDirectory, PAGE_RECORD_SIZE};
 pub use profile::{BookMetadata, DisplayProfile};

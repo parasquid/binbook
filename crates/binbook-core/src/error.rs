@@ -14,6 +14,7 @@ pub enum FormatError {
     InvalidChapter,
     InvalidChunk,
     InvalidTransition,
+    InvalidFontResource,
     InvalidDisplayProfile,
     InvalidBookMetadata,
     InvalidStringRef,
