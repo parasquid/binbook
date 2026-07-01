@@ -7,13 +7,13 @@ use xteink_x4_display::{
     render::{self, OverlayControl},
 };
 
-use binbook_fw::board::{BoardSpiDevice, DisplayDelay};
+use binbook_fw::board::DisplayDelay;
 use binbook_fw::runtime_engine::{RuntimeEvent, RuntimeEventKind};
 
 use super::{REQUEST_EPOCH, RUNTIME_EVENT_CHANNEL};
 
-pub(super) struct HardwareDisplayBackend<'a, SPI, CS, DC, RST, BUSY> {
-    pub(super) display: X4Panel<BoardSpiDevice<SPI, CS>, DC, RST, BUSY>,
+pub(super) struct HardwareDisplayBackend<'a, SPI: embedded_hal::spi::SpiDevice<u8>, DC, RST, BUSY> {
+    pub(super) display: X4Panel<SPI, DC, RST, BUSY>,
     pub(super) book: binbook_core::Book<binbook_core::SliceSource<'a>>,
     pub(super) delay: DisplayDelay,
     pub(super) compressed: [u8; 768],
@@ -22,11 +22,10 @@ pub(super) struct HardwareDisplayBackend<'a, SPI, CS, DC, RST, BUSY> {
     pub(super) red: [u8; 100],
 }
 
-impl<'a, SPI, CS, DC, RST, BUSY> DisplayBackend
-    for HardwareDisplayBackend<'a, SPI, CS, DC, RST, BUSY>
+impl<'a, SPI, DC, RST, BUSY> DisplayBackend
+    for HardwareDisplayBackend<'a, SPI, DC, RST, BUSY>
 where
-    SPI: embedded_hal::spi::SpiBus<u8>,
-    CS: embedded_hal::digital::OutputPin,
+    SPI: embedded_hal::spi::SpiDevice<u8>,
     DC: embedded_hal::digital::OutputPin,
     RST: embedded_hal::digital::OutputPin,
     BUSY: embedded_hal::digital::InputPin,

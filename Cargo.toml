@@ -14,6 +14,7 @@ members = [
     "crates/xteink-x4-display",
     "crates/binbook",
     "crates/binbook-storage",
+    "crates/embedded-sd-storage",
     "firmware/crates/binbook-diagnostic-protocol",
     "firmware/crates/binbook-fw",
 ]
@@ -38,6 +39,7 @@ binbook-decompress = { path = "crates/binbook-decompress" }
 gray2-render = { path = "crates/gray2-render" }
 ssd1677-driver = { path = "crates/ssd1677-driver" }
 binbook-storage = { path = "crates/binbook-storage" }
+embedded-sd-storage = { path = "crates/embedded-sd-storage" }
 xteink-x4-display = { path = "crates/xteink-x4-display" }
 binbook-diagnostic-protocol = { path = "firmware/crates/binbook-diagnostic-protocol" }
 clap = { version = "4", features = ["derive"] }

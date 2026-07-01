@@ -115,12 +115,13 @@ serial. Flash, capture 15 s serial, confirm both the display initializes and the
 card reports a nonzero size. Record the chosen strategy + exact esp-hal calls in
 the `## Task 0 outcome` section below. **This is the gate for Tasks 6–8.**
 
-```markdown
+```
 ## Task 0 outcome
-- nightly version: <fill>
-- embedded-sdmmc pinned: <0.9.0 | 0.8.2>
-- frequency strategy: <R1 | R2 | R3> — <one-line evidence>
-- esp-hal calls used to switch/set frequency: <fill>
+- nightly version: rustc 1.98.0-nightly (f28ac764c 2026-06-23) — ≥1.87 ✓
+- embedded-sdmmc pinned: 0.9.0 (confirmed compiles + links on riscv32imc target)
+- frequency strategy: R1 — `Spi::apply_config(&Config)` runtime frequency switch confirmed on esp-hal 1.1.1 (range 70 kHz–80 MHz)
+- esp-hal calls used to switch/set frequency: `bus.apply_config(&SpiConfig::default().with_frequency(Rate::from_hz(freq_hz)).with_mode(Mode::_0))` where `bus` is `&mut Spi<'static, Blocking>` obtained via `RefCell::borrow_mut()`
+- Hardware spike result: SD card (32 GB) detected at 400 kHz on shared SPI2 (MISO=GPIO7, CS=GPIO12), card size 31267487744 bytes. Display init launched on same bus at 20 MHz after SD release. `FreqManagedSpiDevice` wrapper (concrete on `Spi<'static, Blocking>`) with `RefCell` sharing proven.
 ```
 
 - [ ] **Step 4: Commit the dependency pins**

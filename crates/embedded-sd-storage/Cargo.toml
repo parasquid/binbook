@@ -1,0 +1,15 @@
+[package]
+name = "embedded-sd-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Generic SPI-mode SD + FAT16/32 storage over embedded-hal"
+
+[dependencies]
+embedded-hal.workspace = true
+embedded-hal-async.workspace = true
+embedded-sdmmc.workspace = true
+
+[lints]
+workspace = true

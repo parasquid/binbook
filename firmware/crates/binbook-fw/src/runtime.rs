@@ -74,7 +74,7 @@ static AGGREGATOR_COMPLETION_CHANNEL: Channel<
     { binbook_fw::async_refresh::DISPLAY_COMPLETION_CAPACITY },
 > = Channel::new();
 
-pub(crate) struct RuntimePeripherals {
+    pub(crate) struct RuntimePeripherals {
     pub(crate) adc1: esp_hal::peripherals::ADC1<'static>,
     pub(crate) gpio1: esp_hal::peripherals::GPIO1<'static>,
     pub(crate) gpio2: esp_hal::peripherals::GPIO2<'static>,
