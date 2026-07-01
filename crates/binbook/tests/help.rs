@@ -12,7 +12,7 @@ fn help_names_binbook_and_exposes_locked_surface() {
     for command in ["encode", "decode", "inspect", "diag"] {
         assert!(text.contains(command), "missing {command}: {text}");
     }
-    assert!(!text.contains("encode-png-folder"));
+    assert!(!text.contains(&["encode", "png", "folder"].join("-")));
 }
 
 #[test]

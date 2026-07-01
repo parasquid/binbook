@@ -53,13 +53,17 @@ Use the narrowest owner that has enough domain knowledge to implement the rule.
 | Behavior | Owning crate | Does not belong in |
 |---|---|---|
 | BinBook records, bounds, typed indices, random-access reads | `binbook-core` | codecs, display, firmware |
+| PackBits encoding and deterministic container assembly | `binbook-compress`, `binbook-encode` | CLI, firmware |
+| EPUB package/style parsing and styled-flow data | `binbook-epub`, `binbook-document` | CLI, binary writer |
+| Reflow, supplied fonts, static images, and page rasterization | `binbook-render`, `binbook-image` | CLI, firmware |
+| Path-free source dispatch and compile events | `binbook-compiler` | native paths, serial, firmware |
 | PackBits or LZ4 decoding | `binbook-decompress` | parser, display engine, firmware |
 | Canonical GRAY2, staged planes, dithering, row conversion | `gray2-render` | controller driver, firmware |
 | SSD1677 commands, windows, RAM writes, waits, controller power state | `ssd1677-driver` | X4 policy, firmware |
 | X4 geometry, rotation, page streaming, refresh policy, cancellation, probes | `xteink-x4-display` | generic driver, firmware |
 | Diagnostic frame types and codecs | `binbook-diagnostic-protocol` | display crates |
 | ESP32-C3 wiring, Embassy tasks, storage/input adapters, application lifecycle | `binbook-fw` | reusable crates |
-| Host commands, serial transport, human-readable output | `binbook-cli` | firmware and reusable crates |
+| Native paths, atomic output, host commands, serial transport, human-readable output | `binbook` | firmware and reusable crates |
 
 Dependencies point toward lower-level owners. Reusable crates must not depend on
 `binbook-fw`, the CLI, diagnostic protocol, Embassy, `esp-hal`, or repository
@@ -192,7 +196,7 @@ Run the relevant features by name. Common gates include:
 ```bash
 cargo test -p binbook-decompress --all-features
 cargo test -p binbook-fw --features diagnostic-console
-cargo test -p binbook-cli --features serial-device
+cargo test -p binbook --features serial-device
 ```
 
 Debug measurement and logging must use feature or compile-time guards and compile

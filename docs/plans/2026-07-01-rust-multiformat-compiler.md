@@ -434,18 +434,18 @@ All reserved fields must be zero. Include only faces actually used during raster
 - Create: `docs/reference/compiler-roadmap.md`
 - Modify: `HANDOFF.md`
 
-- [ ] Document `binbook encode` auto/override behavior, supported image types, EPUB subset/degradations, embedded-font policy, warnings, decode/inspect contracts, and `binbook-support` commands.
-- [ ] Document the new crate graph, WASM-safe restrictions, build/test commands, and section 35.
-- [ ] Roadmap entries must explicitly cover `binbook-wasm`, browser Blob/stream adapters, progress/warning bindings, browser UI, PDF, CBZ, and later source backends. Mark them aspirational, not completion blockers.
-- [ ] Update every current `cargo ... -p binbook-cli` or `target/debug/binbook-cli` reference to `binbook`. Leave `docs/historical/` unchanged.
-- [ ] Run stale-reference checks and fail on unexpected current hits:
+- [x] Document `binbook encode` auto/override behavior, supported image types, EPUB subset/degradations, embedded-font policy, warnings, decode/inspect contracts, and `binbook-support` commands.
+- [x] Document the new crate graph, WASM-safe restrictions, build/test commands, and section 35.
+- [x] Roadmap entries must explicitly cover `binbook-wasm`, browser Blob/stream adapters, progress/warning bindings, browser UI, PDF, CBZ, and later source backends. Mark them aspirational, not completion blockers.
+- [x] Update every current `cargo ... -p binbook-cli` or `target/debug/binbook-cli` reference to `binbook`. Leave `docs/historical/` unchanged.
+- [x] Run stale-reference checks and fail on unexpected current hits:
 
   ```bash
   rg -n 'binbook-cli|encode-png-folder|uv run binbook encode' \
     README.md AGENTS.md Cargo.toml pyproject.toml binbook crates firmware docs/reference
   ```
 
-- [ ] Commit `docs: document rust compiler and wasm roadmap`.
+- [x] Commit `docs: document rust compiler and wasm roadmap`.
 
 ## Task 14: Full Automated Verification
 

@@ -26,6 +26,8 @@ Firmware/reader (embedded):
 
 The firmware is responsible for: validation, decompression, pixel format conversion, and UI/chrome rendering.
 
+The repository's canonical implementation is the Rust `binbook` executable and its path-free compiler crates. The Python package is support-only and does not define encoder behavior. Static-image and EPUB compilation always emit the required section 35; image-only output uses a zero-record `FONT_RESOURCE_INDEX`.
+
 ---
 
 ## 2. Design Rationale

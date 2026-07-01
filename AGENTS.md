@@ -9,7 +9,7 @@
 
 - Treat [`BINBOOK_FORMAT_SPEC.md`](BINBOOK_FORMAT_SPEC.md) as the authoritative BinBook 0.1 candidate file-format specification.
 - Treat files under [`docs/historical/`](docs/historical/) as historical POC context only.
-- This repo is the Python reference implementation for BinBook 0.1, a compiled raster-book format for low-RAM e-ink/display devices.
+- This repo contains the Rust reference compiler, parser, CLI, and firmware libraries for BinBook 0.1. Python is retained only for the viewer, kerning proof, fixture source-image generation, and compatibility tests.
 - The first target profile is `xteink-x4-portrait`: logical `480x800`, physical `800x480`, `GRAY2_PACKED` by default, optional `GRAY1_PACKED` for explicit fast/lower-quality output, logical-to-physical rotation `270` degrees clockwise. This matches the verified SquidScript Xteink X4 target metadata.
 
 ### Firmware Context
@@ -91,24 +91,19 @@ cargo test --workspace
 cargo test -p binbook-fw --features diagnostic-console
 ```
 
-- Encode an EPUB with:
+- Encode an EPUB, static image, or image directory with:
 
 ```bash
-uv run binbook encode path/to/book.epub -o book.binbook
-```
-
-- Encode PNG pages with:
-
-```bash
-uv run binbook encode-png-folder ./pages -o test.binbook
+target/debug/binbook encode path/to/book.epub -o book.binbook
+target/debug/binbook encode ./pages -o test.binbook
 ```
 
 - Validate, decode, and view with:
 
 ```bash
-uv run binbook inspect test.binbook --validate
-uv run binbook decode test.binbook --page 0 -o page0.png
-uv run binbook view test.binbook
+target/debug/binbook inspect test.binbook --validate --strict
+target/debug/binbook decode test.binbook --page 0 -o page0.png
+uv run binbook-support view test.binbook
 ```
 
 ## Firmware Serial Monitor

@@ -213,15 +213,15 @@ SYSTEMD_PREFIX="$(brew --prefix systemd)"
 export PKG_CONFIG_PATH="$SYSTEMD_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 export LIBRARY_PATH="$SYSTEMD_PREFIX/lib:${LIBRARY_PATH:-}"
 export LD_LIBRARY_PATH="$SYSTEMD_PREFIX/lib:${LD_LIBRARY_PATH:-}"
-cargo build -p binbook-cli --features serial-device
-target/debug/binbook-cli diag hello --port /dev/ttyACM0
-target/debug/binbook-cli diag key --port /dev/ttyACM0 RIGHT
-target/debug/binbook-cli diag page --port /dev/ttyACM0 next
-target/debug/binbook-cli diag page --port /dev/ttyACM0 goto 3
-target/debug/binbook-cli diag status --port /dev/ttyACM0
-target/debug/binbook-cli diag logs --port /dev/ttyACM0 --since 0
-target/debug/binbook-cli diag logs --port /dev/ttyACM0 --clear
-target/debug/binbook-cli diag crash --port /dev/ttyACM0
-target/debug/binbook-cli diag crash --port /dev/ttyACM0 --clear
-target/debug/binbook-cli diag probe --port /dev/ttyACM0 window-corners
+cargo build -p binbook --features serial-device
+target/debug/binbook diag hello --port /dev/ttyACM0
+target/debug/binbook diag key --port /dev/ttyACM0 RIGHT
+target/debug/binbook diag page --port /dev/ttyACM0 next
+target/debug/binbook diag page --port /dev/ttyACM0 goto 3
+target/debug/binbook diag status --port /dev/ttyACM0
+target/debug/binbook diag logs --port /dev/ttyACM0 --since 0
+target/debug/binbook diag logs --port /dev/ttyACM0 --clear
+target/debug/binbook diag crash --port /dev/ttyACM0
+target/debug/binbook diag crash --port /dev/ttyACM0 --clear
+target/debug/binbook diag probe --port /dev/ttyACM0 window-corners
 ```

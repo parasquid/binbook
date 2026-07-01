@@ -2,11 +2,11 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 13 — current documentation and roadmap
+Current task: Task 14 — full automated verification
 
 ## Completed
 
-Tasks 1 through 12 are complete.
+Tasks 1 through 13 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
@@ -47,6 +47,9 @@ Tasks 1 through 12 are complete.
 - Extended the transitional Python reader to parse and validate section-35 font records, including contiguous indices, reserved fields, SHA-256 size, and font family/source string references.
 - Replaced the navigation-fixture Python compiler path with source-only PNG generation and an explicit `--compiler target/debug/binbook` invocation; the script copies one Rust-produced byte stream to all three fixture consumers.
 - Regenerated the canonical 16-page fixture through Rust with required empty section 35, 1,440 chunks, 30 transitions, persistent orientation frames, unique labels/patterns, and all four grayscale levels.
+- Rewrote current user/contributor documentation around the Rust `binbook` compiler and `binbook-support`, including auto/override input behavior, supported sources, EPUB degradation/font policy, warnings, atomic output, decode/inspect contracts, crate ownership, WASM restrictions, and section 35.
+- Added an explicitly aspirational compiler roadmap for `binbook-wasm`, browser Blob/stream adapters, progress/warning bindings, browser UI, PDF, CBZ, and later source backends.
+- Updated every current reference/runbook command from `binbook-cli` to `binbook` without modifying historical documentation.
 
 ## TDD evidence
 
@@ -204,6 +207,13 @@ Task 12 GREEN:
 - `uv run pytest -q`: 60 passed, 26 skipped.
 - All three fixture SHA-256 values are `3c87fbde1e05c1bc127083511a4353b3d400c292df92672dc6710e9bc2f7f31d`.
 
+Task 13 GREEN:
+
+- The mandated stale-reference scan reports no current hits for `binbook-cli`, the removed PNG-folder alias, or the old Python encode invocation.
+- `cargo test -p binbook --test help`: 2 passed after documentation/help alignment.
+- `cargo fmt --all -- --check` and `git diff --check`: passed after applying the one pending fixture-test formatting normalization.
+- `README.md`, `AGENTS.md`, `BINBOOK_FORMAT_SPEC.md`, all four specified current references, and `docs/reference/compiler-roadmap.md` describe current behavior and commands.
+
 ## Fixture evidence
 
 Baseline fixture SHA-256 before Task 1:
@@ -245,10 +255,11 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 - `pyproject.toml`, `binbook/cli.py`, `reader.py`, and `sections.py` now define the support-only Python surface and section-35 viewer compatibility
 - `tests/test_support_cli.py` and the active-plan migration table preserve the cutover evidence; obsolete compiler-only Python modules/tests are removed
 - `firmware/scripts/build-nav-probe-fixture.py`, the three canonical fixture copies, and their parser/display/firmware/Python tests now use the Rust compiler as source of truth
+- `README.md`, `AGENTS.md`, `BINBOOK_FORMAT_SPEC.md`, current Rust/firmware references, and `docs/reference/compiler-roadmap.md` now document the shipped compiler and aspirational backends
 
 ## Next exact action
 
-Start Task 13 by updating current README/reference/runbook/roadmap command surfaces and architecture facts to `binbook`, `binbook-support`, the Rust compiler crate graph, supported formats/degradations, and the new fixture workflow. Leave `docs/historical/` untouched and remove stale current references.
+Start Task 14 by running every focused, workspace, feature-gated, Python, Clippy, formatting, WASM, firmware-target, native E2E, and stale-reference gate exactly as listed in the plan. Save native image-directory and EPUB transcripts under `/tmp/binbook-compiler-acceptance/` and record any pre-existing failure separately from regressions.
 
 ## Hardware state
 

@@ -7,19 +7,28 @@ The Rust implementation uses the repository root `Cargo.toml` and `Cargo.lock`. 
 | Crate | Responsibility | Allowed direct dependencies |
 |---|---|---|
 | `binbook-core` | BinBook parsing, validation, typed records, random-access reads | none beyond small `no_std` utilities |
+| `binbook-compress` | Deterministic PackBits encoding | `binbook-core` |
+| `binbook-encode` | Deterministic container assembly and binary policy/index records | core and compression crates |
+| `binbook-image` | Static PNG/JPEG/WebP/SVG decoding, fitting, quantization, and page decoding | image codecs, core/render/encode crates |
+| `binbook-document` | Path-free styled document, navigation, resource, font, and diagnostic model | no source parser or renderer dependency |
+| `binbook-epub` | EPUB2/3 package, HTML/CSS, resources, navigation, and embedded fonts | document model and read-only parser dependencies |
+| `binbook-render` | Reflow pagination, supplied-font shaping, 2× rasterization, warnings, and anchors | document, image, encode, `cosmic-text` without system fonts |
+| `binbook-compiler` | Path-free image/EPUB dispatch and compile event API | compiler crates above; no paths or CLI types |
 | `binbook-decompress` | Exact PackBits and optional LZ4 decoding | `binbook-core`, optional `lz4_flex` |
 | `gray2-render` | Pure canonical/staged GRAY2 and ordered-dither row conversion | none beyond small `no_std` utilities |
 | `ssd1677-driver` | Generic SSD1677 command, window, RAM, refresh, reset, and wait operations | `embedded-hal`, `embedded-hal-async` |
 | `xteink-x4-display` | X4 profile, streaming, refresh/cancellation policy, display engine, probes | the four reusable crates above |
 | `binbook-diagnostic-protocol` | Diagnostic wire types and codecs | no firmware application dependency |
 | `binbook-fw` | ESP32-C3/Embassy/storage/input/diagnostic wiring | reusable display crate, diagnostics, `embedded-storage`, Embassy, `esp-hal` |
-| `binbook-cli` | Host inspection and diagnostic commands | core parser, diagnostic protocol, host-only dependencies |
+| `binbook` | Native encode/decode/inspect and diagnostic commands | compiler, core parser, diagnostic protocol, host-only dependencies |
 
 Dependencies point down this table. Reusable crates do not depend on firmware, CLI, diagnostics, Embassy, ESP HALs, or repository fixture paths.
 
+Compiler crates accept borrowed bytes/resources and caller-owned `Write + Seek` sinks. They do not own `Path`, `File`, serial APIs, firmware crates, system-font discovery, Rayon, or native services. `binbook-compiler`, `binbook-document`, `binbook-epub`, `binbook-render`, `binbook-image`, `binbook-encode`, and `binbook-compress` must continue to compile for `wasm32-unknown-unknown`; browser bindings belong in a future adapter crate.
+
 ## Ownership boundaries
 
-`binbook-core` owns binary structure, but does not decompress. `binbook-decompress` owns codecs, but does not select pages or planes. `gray2-render` owns pixel math, but does not issue controller commands. `ssd1677-driver` owns SSD1677 commands, but not X4 waveform policy. `xteink-x4-display` composes these pieces and owns X4 display policy. `binbook-fw` owns only platform integration and application coordination.
+`binbook-core` owns binary structure, but does not decompress. `binbook-decompress` owns decode codecs, while `binbook-compress` owns PackBits encoding. `binbook-document`, `binbook-epub`, `binbook-render`, `binbook-image`, `binbook-encode`, and `binbook-compiler` form a path-free compiler pipeline. `gray2-render` owns pixel math, but does not issue controller commands. `ssd1677-driver` owns SSD1677 commands, but not X4 waveform policy. `xteink-x4-display` composes these pieces and owns X4 display policy. `binbook-fw` owns only platform integration and application coordination.
 
 The old `rust/` package and `xteink-hal` custom transport crate are not part of the architecture. Hardware-facing reusable code uses `embedded-hal` 1.0, `embedded-hal-async`, and `embedded-storage` traits.
 
@@ -93,11 +102,15 @@ cargo test -p binbook-decompress --all-features
 cargo test -p gray2-render
 cargo test -p ssd1677-driver
 cargo test -p xteink-x4-display
+cargo test -p binbook-compiler
+cargo test -p binbook
 cargo clippy -p binbook-core --all-targets -- -D warnings
 cargo clippy -p binbook-decompress --all-targets --all-features -- -D warnings
 cargo clippy -p gray2-render --all-targets -- -D warnings
 cargo clippy -p ssd1677-driver --all-targets -- -D warnings
 cargo clippy -p xteink-x4-display --all-targets -- -D warnings
+cargo clippy -p binbook-compiler --all-targets -- -D warnings
+cargo clippy -p binbook --all-targets --features serial-device -- -D warnings
 ```
 
 Check reusable crates for the firmware target without default features:
