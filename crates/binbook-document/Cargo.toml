@@ -1,0 +1,10 @@
+[package]
+name = "binbook-document"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Path-free styled document model for BinBook compilers"
+
+[lints]
+workspace = true

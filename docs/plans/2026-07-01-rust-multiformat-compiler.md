@@ -307,14 +307,14 @@ All reserved fields must be zero. Include only faces actually used during raster
 - Create focused package, resources, navigation, html, css, fonts, and diagnostics modules
 - Create synthetic EPUB2/EPUB3 fixtures under `crates/binbook-epub/tests/fixtures/`
 
-- [ ] Add RED model tests for typed block/inline nodes, inherited/computed style, resolved resource IDs, navigation anchors, font-face declarations, and deterministic diagnostic ordering. Implement the smallest path-free `binbook-document` model needed to pass before starting EPUB parsing.
-- [ ] Run `cargo test -p binbook-document`; expected GREEN before adding `binbook-epub` as a dependent crate.
-- [ ] Build synthetic fixtures containing EPUB3 nav, EPUB2 NCX, nested relative paths, fragments, linked/internal/inline CSS, PNG/JPEG/WebP/SVG, TTF/OTF/WOFF/WOFF2, standard obfuscation, malformed optional resources, and an encrypted/DRM marker.
-- [ ] Add RED tests for metadata, hashes, linear spine, nav hierarchy, normalized resources, cascade specificity/order/inheritance, `display:none`, font-face resolution, obfuscation, unsupported-feature warning codes, and DRM rejection.
-- [ ] Wrap `rbook` behind BinBook-owned types; do not expose dependency types from public APIs. Use `Cursor<&[u8]>`, read-only/default-features-off configuration, and no filesystem calls.
-- [ ] Implement the locked CSS subset and emit only `binbook-document` types; `binbook-epub` must not depend on `binbook-render`.
-- [ ] Run package tests, Clippy, and `cargo test -p binbook-epub --target wasm32-unknown-unknown --no-run`.
-- [ ] Commit `feat(binbook-epub): parse styled epub documents`.
+- [x] Add RED model tests for typed block/inline nodes, inherited/computed style, resolved resource IDs, navigation anchors, font-face declarations, and deterministic diagnostic ordering. Implement the smallest path-free `binbook-document` model needed to pass before starting EPUB parsing.
+- [x] Run `cargo test -p binbook-document`; expected GREEN before adding `binbook-epub` as a dependent crate.
+- [x] Build synthetic fixtures containing EPUB3 nav, EPUB2 NCX, nested relative paths, fragments, linked/internal/inline CSS, PNG/JPEG/WebP/SVG, TTF/OTF/WOFF/WOFF2, standard obfuscation, malformed optional resources, and an encrypted/DRM marker.
+- [x] Add RED tests for metadata, hashes, linear spine, nav hierarchy, normalized resources, cascade specificity/order/inheritance, `display:none`, font-face resolution, obfuscation, unsupported-feature warning codes, and DRM rejection.
+- [x] Wrap `rbook` behind BinBook-owned types; do not expose dependency types from public APIs. Parsing remains path-free and uses read-only/default-features-off configuration with no filesystem calls. `rbook` 0.7.9 requires an owned `'static` reader, so the implementation uses `Cursor<Vec<u8>>` rather than the originally planned `Cursor<&[u8]>`.
+- [x] Implement the locked CSS subset and emit only `binbook-document` types; `binbook-epub` must not depend on `binbook-render`.
+- [x] Run package tests, Clippy, and `cargo test -p binbook-epub --target wasm32-unknown-unknown --no-run`.
+- [x] Commit `feat(binbook-epub): parse styled epub documents`.
 
 ## Task 8: Implement Common Reflow Rendering
 

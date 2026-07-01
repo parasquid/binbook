@@ -1,0 +1,24 @@
+[package]
+name = "binbook-epub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Path-free EPUB 2 and 3 source parser"
+
+[dependencies]
+binbook-document.workspace = true
+cssparser.workspace = true
+html5ever.workspace = true
+markup5ever_rcdom.workspace = true
+rbook.workspace = true
+sha2.workspace = true
+sha1.workspace = true
+wuff.workspace = true
+zip.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+zip.workspace = true

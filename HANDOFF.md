@@ -2,11 +2,11 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 7 — EPUB document model and source layer
+Current task: Task 8 — common reflow rendering
 
 ## Completed
 
-Tasks 1 through 6 are complete.
+Tasks 1 through 7 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
@@ -31,6 +31,9 @@ Tasks 1 through 6 are complete.
 - Added path-free PNG, JPEG, WebP, and SVG decoding with explicit codec features and no Rayon, system fonts, or OS font discovery.
 - Added APNG/animation rejection, white alpha flattening before Lanczos resampling, centered contain/padding, exact X4 orientation, GRAY1/GRAY2 compilation, and 30-chunk PackBits planes.
 - Added BinBook page decoding for NONE, PackBits, and host LZ4 plus PNG output and typed out-of-range rejection.
+- Added the path-free `binbook-document` model with typed block/inline nodes, computed styles, normalized resource IDs, navigation, fonts, and deterministically sorted diagnostics.
+- Added `binbook-epub` with EPUB2/EPUB3 metadata, linear spine, EPUB3 nav/EPUB2 NCX, nested resource resolution, HTML conversion, the locked CSS subset, `display:none`, embedded font-face resolution, IDPF/Adobe deobfuscation, WOFF/WOFF2 decoding, stable degradation diagnostics, and DRM rejection.
+- Kept all public EPUB APIs dependency-free and filesystem-free. `rbook` 0.7.9 requires an owned `'static` reader, so parsing copies the input into `Cursor<Vec<u8>>`; this is the only deviation from the plan's requested borrowed cursor.
 
 ## TDD evidence
 
@@ -110,6 +113,18 @@ Task 6 GREEN:
 - Python/Pillow regenerated the 7×5 Lanczos reference exactly; Rust test RMSE stays ≤3 and exact-size orientation pixels match exactly.
 - `cargo test --workspace`: passed.
 
+Task 7 RED:
+
+- `cargo test -p binbook-document --test model` initially failed because the document crate and typed model APIs did not exist.
+- `cargo test -p binbook-epub --test epub` initially failed because EPUB parsing, owned output types, and fixtures did not exist.
+
+Task 7 GREEN:
+
+- `cargo test -p binbook-document`: 2 model tests passed.
+- `cargo test -p binbook-epub`: 2 synthetic EPUB integration tests passed, covering EPUB2/3 navigation, resource types, CSS cascade/inline precedence, missing-resource degradation, standard font obfuscation, and DRM rejection.
+- `cargo clippy -p binbook-document -p binbook-epub --all-targets -- -D warnings`: passed.
+- `RUSTC="$(rustup which --toolchain stable rustc)" rustup run stable cargo test -p binbook-epub --target wasm32-unknown-unknown --no-run`: passed and produced all WASM test executables.
+
 ## Fixture evidence
 
 Baseline fixture SHA-256 before Task 1:
@@ -141,10 +156,12 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 - `crates/gray2-render/src/{quantize,pack,image}.rs` and focused tests
 - `crates/xteink-x4-display/src/profile.rs`, reusing the established X4 mapping
 - `crates/binbook-image/` codec, fit, compile, book decode, SVG fixture, and focused tests
+- `crates/binbook-document/` typed document, node, style, resource, navigation/font, diagnostic model, and tests
+- `crates/binbook-epub/` package parser, HTML/CSS/font handling, synthetic EPUB2/3 fixtures, and integration tests
 
 ## Next exact action
 
-Start Task 7 by implementing the smallest path-free `binbook-document` model under RED tests before adding EPUB parsing. Then add synthetic EPUB2/EPUB3 fixtures and wrap package/HTML/CSS/font parsing behind BinBook-owned types.
+Start Task 8 with RED pagination and line-layout tests for deterministic 480×800 reflow, widow/orphan handling, tables, fragments, and used-font tracking. Implement the smallest `binbook-render` surface needed to pass before integrating it into the compiler.
 
 ## Hardware state
 

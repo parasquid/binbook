@@ -4,6 +4,8 @@ members = [
     "crates/binbook-compress",
     "crates/binbook-encode",
     "crates/binbook-image",
+    "crates/binbook-document",
+    "crates/binbook-epub",
     "crates/binbook-decompress",
     "crates/gray2-render",
     "crates/ssd1677-driver",
@@ -25,6 +27,8 @@ binbook-core = { path = "crates/binbook-core" }
 binbook-compress = { path = "crates/binbook-compress" }
 binbook-encode = { path = "crates/binbook-encode" }
 binbook-image = { path = "crates/binbook-image" }
+binbook-document = { path = "crates/binbook-document" }
+binbook-epub = { path = "crates/binbook-epub" }
 binbook-decompress = { path = "crates/binbook-decompress" }
 gray2-render = { path = "crates/gray2-render" }
 ssd1677-driver = { path = "crates/ssd1677-driver" }
@@ -49,6 +53,13 @@ serde_json = "1"
 sha2 = { version = "0.10", default-features = false }
 image = { version = "0.25.8", default-features = false, features = ["png", "jpeg", "webp"] }
 resvg = { version = "0.47.0", default-features = false }
+rbook = { version = "0.7.9", default-features = false }
+html5ever = "0.39.0"
+markup5ever_rcdom = "0.39.0"
+cssparser = { version = "0.37.0", default-features = false }
+wuff = "0.2.5"
+sha1 = { version = "0.10", default-features = false }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 serialport = { version = "4", default-features = false }
 embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
