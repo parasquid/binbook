@@ -33,11 +33,14 @@ impl Default for CompileOptions {
 
 pub fn compile_image(bytes: &[u8], options: CompileOptions) -> Result<CompiledPage, ImageError> {
     let decoded = decode_image(bytes)?;
-    let logical = fit_luma(
-        &decoded,
-        u32::from(LOGICAL_WIDTH),
-        u32::from(LOGICAL_HEIGHT),
-    )?;
+    compile_decoded_image(&decoded, options)
+}
+
+pub fn compile_decoded_image(
+    decoded: &crate::DecodedImage,
+    options: CompileOptions,
+) -> Result<CompiledPage, ImageError> {
+    let logical = fit_luma(decoded, u32::from(LOGICAL_WIDTH), u32::from(LOGICAL_HEIGHT))?;
     let levels = quantize(&logical.pixels, options)?;
     let mut physical = vec![0_u8; usize::from(PHYSICAL_WIDTH) * usize::from(PHYSICAL_HEIGHT) / 4];
     logical_gray2_to_physical_packed(&levels, &mut physical).map_err(|_| ImageError::Format)?;

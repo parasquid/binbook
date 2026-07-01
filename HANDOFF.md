@@ -2,11 +2,11 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 8 — common reflow rendering
+Current task: Task 9 — path-free compiler composition
 
 ## Completed
 
-Tasks 1 through 7 are complete.
+Tasks 1 through 8 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
@@ -34,6 +34,9 @@ Tasks 1 through 7 are complete.
 - Added the path-free `binbook-document` model with typed block/inline nodes, computed styles, normalized resource IDs, navigation, fonts, and deterministically sorted diagnostics.
 - Added `binbook-epub` with EPUB2/EPUB3 metadata, linear spine, EPUB3 nav/EPUB2 NCX, nested resource resolution, HTML conversion, the locked CSS subset, `display:none`, embedded font-face resolution, IDPF/Adobe deobfuscation, WOFF/WOFF2 decoding, stable degradation diagnostics, and DRM rejection.
 - Kept all public EPUB APIs dependency-free and filesystem-free. `rbook` 0.7.9 requires an owned `'static` reader, so parsing copies the input into `Cursor<Vec<u8>>`; this is the only deviation from the plan's requested borrowed cursor.
+- Added `binbook-render` using `cosmic-text` 0.19 without default/system-font features, supplied font bytes only, styled rich-text shaping, word-or-glyph wrapping, deterministic pagination, page-break and anchor mapping, structural block rendering, equal-width table rows, and oversized-row degradation.
+- Rasterization occurs at 960×1600, then `binbook-image` downsamples with Lanczos and routes through the established GRAY2 quantization/X4 native-plane compiler.
+- Used-font records include only selected raster faces in deterministic order; forced-font mode is separate, and missing glyphs plus source diagnostics become stable context-bearing warnings.
 
 ## TDD evidence
 
@@ -125,6 +128,20 @@ Task 7 GREEN:
 - `cargo clippy -p binbook-document -p binbook-epub --all-targets -- -D warnings`: passed.
 - `RUSTC="$(rustup which --toolchain stable rustc)" rustup run stable cargo test -p binbook-epub --target wasm32-unknown-unknown --no-run`: passed and produced all WASM test executables.
 
+Task 8 RED:
+
+- `cargo test -p binbook-render --tests` initially failed because the renderer crate and its API did not exist.
+- The first deterministic reflow fixture took more than 60 seconds because it rasterized too many 2× pages twice; the fixture was reduced while preserving wrap, forced-pagination, and repeatability coverage.
+- The decoded-page golden test initially failed against a zero placeholder and reported the real stable GRAY2 digest before that digest was locked into the assertion.
+
+Task 8 GREEN:
+
+- `cargo test -p binbook-render`: 5 focused tests passed for reflow/structure, fonts/fallback, navigation, warnings/tables, and decoded-page golden output.
+- Golden decoded packed-page SHA-256: `88a74bd02c30c66093bc0a8420f714dbc5f9c0916475879b03a75a48cd96f825`.
+- `cargo clippy -p binbook-render -p binbook-image --all-targets -- -D warnings`: passed.
+- `RUSTC="$(rustup which --toolchain stable rustc)" rustup run stable cargo test -p binbook-render --target wasm32-unknown-unknown --no-run`: passed and produced all WASM test executables.
+- Dependency feature scan found no `fontconfig` or Rayon features.
+
 ## Fixture evidence
 
 Baseline fixture SHA-256 before Task 1:
@@ -158,10 +175,12 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 - `crates/binbook-image/` codec, fit, compile, book decode, SVG fixture, and focused tests
 - `crates/binbook-document/` typed document, node, style, resource, navigation/font, diagnostic model, and tests
 - `crates/binbook-epub/` package parser, HTML/CSS/font handling, synthetic EPUB2/3 fixtures, and integration tests
+- `crates/binbook-render/` document pagination, supplied-font loading, rich-text shaping, 2× rasterization, warnings, navigation mapping, and focused/golden tests
+- `crates/binbook-image/src/{lib,compile}.rs` path-free decoded-image compilation entry point used by the renderer
 
 ## Next exact action
 
-Start Task 8 with RED pagination and line-layout tests for deterministic 480×800 reflow, widow/orphan handling, tables, fragments, and used-font tracking. Implement the smallest `binbook-render` surface needed to pass before integrating it into the compiler.
+Start Task 9 with RED in-memory compiler tests for image and EPUB sources. Compose source detection, parse/layout/raster/compress/assemble/validate phases into the locked callback API and verify complete BinBook output through `binbook-core` and `binbook-image`.
 
 ## Hardware state
 

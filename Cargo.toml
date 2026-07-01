@@ -4,6 +4,7 @@ members = [
     "crates/binbook-compress",
     "crates/binbook-encode",
     "crates/binbook-image",
+    "crates/binbook-render",
     "crates/binbook-document",
     "crates/binbook-epub",
     "crates/binbook-decompress",
@@ -27,6 +28,7 @@ binbook-core = { path = "crates/binbook-core" }
 binbook-compress = { path = "crates/binbook-compress" }
 binbook-encode = { path = "crates/binbook-encode" }
 binbook-image = { path = "crates/binbook-image" }
+binbook-render = { path = "crates/binbook-render" }
 binbook-document = { path = "crates/binbook-document" }
 binbook-epub = { path = "crates/binbook-epub" }
 binbook-decompress = { path = "crates/binbook-decompress" }
@@ -60,6 +62,8 @@ cssparser = { version = "0.37.0", default-features = false }
 wuff = "0.2.5"
 sha1 = { version = "0.10", default-features = false }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+cosmic-text = { version = "0.19.0", default-features = false, features = ["std", "swash"] }
+thiserror = "2"
 serialport = { version = "4", default-features = false }
 embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"

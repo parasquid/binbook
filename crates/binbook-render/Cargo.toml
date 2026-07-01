@@ -1,0 +1,16 @@
+[package]
+name = "binbook-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+binbook-document.workspace = true
+binbook-encode.workspace = true
+binbook-image.workspace = true
+cosmic-text.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+binbook-core.workspace = true

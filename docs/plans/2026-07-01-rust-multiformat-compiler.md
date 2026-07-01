@@ -323,13 +323,13 @@ All reserved fields must be zero. Include only faces actually used during raster
 - Create focused document, style, font, inline, block, table, pagination, raster, and navigation modules
 - Create: `crates/binbook-render/tests/reflow.rs`, `fonts.rs`, `navigation.rs`, `golden.rs`
 
-- [ ] Add RED tests for paragraph wrapping, styled spans, headings, lists, blockquotes, preformatted text, bidi, soft hyphens, page breaks, images, equal-column tables, oversized-row degradation, anchor mapping, and missing-glyph fallback.
-- [ ] Add font-usage RED tests proving only actually rasterized faces enter `FONT_RESOURCE_INDEX`, with deterministic ordering and digest; test forced-font mode separately.
-- [ ] Implement `cosmic-text` with default features off, `std`+rasterization only, supplied font bytes only, and word-or-glyph wrapping.
-- [ ] Render at 2x, downsample with Lanczos, then call `binbook-image`/`gray2-render` for quantization and native page construction.
-- [ ] Ensure every warning has a stable code, resource/spine context, and deterministic ordering.
-- [ ] Run focused tests, Clippy, WASM no-run test, and golden decoded-page comparisons.
-- [ ] Commit `feat(binbook-render): add epub reflow pagination`.
+- [x] Add RED tests for paragraph wrapping, styled spans, headings, lists, blockquotes, preformatted text, bidi, soft hyphens, page breaks, images, equal-column tables, oversized-row degradation, anchor mapping, and missing-glyph fallback.
+- [x] Add font-usage RED tests proving only actually rasterized faces enter `FONT_RESOURCE_INDEX`, with deterministic ordering and digest; test forced-font mode separately.
+- [x] Implement `cosmic-text` with default features off, `std`+rasterization only, supplied font bytes only, and word-or-glyph wrapping.
+- [x] Render at 2x, downsample with Lanczos, then call `binbook-image`/`gray2-render` for quantization and native page construction.
+- [x] Ensure every warning has a stable code, resource/spine context, and deterministic ordering.
+- [x] Run focused tests, Clippy, WASM no-run test, and golden decoded-page comparisons.
+- [x] Commit `feat(binbook-render): add epub reflow pagination`.
 
 ## Task 9: Compose the Path-Free Compiler
 
