@@ -5,6 +5,7 @@ The authoritative BinBook 0.1 candidate file-format specification lives at
 
 ## Current Reference
 
+- [`reference/rust-development-standards.md`](reference/rust-development-standards.md) - operational Rust and firmware standards for crate placement, APIs, constrained memory, testing, hardware evidence, and completion review.
 - [`reference/rust-crate-architecture.md`](reference/rust-crate-architecture.md) - implemented Rust workspace boundaries, external-consumer dependencies, buffer contracts, and quality gates.
 - [`specs/2026-06-30-rust-modular-foundation-design.md`](specs/2026-06-30-rust-modular-foundation-design.md) - approved modular-foundation architecture and acceptance constraints.
 - [`reference/xteink-x4-firmware-flashing.md`](reference/xteink-x4-firmware-flashing.md) - pinned X4 firmware build and flashing procedure.

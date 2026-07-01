@@ -17,6 +17,7 @@
 - A lean `no_std` Rust firmware for the Xteink X4 is under development (or planned) in this repo.
 - The firmware references the SquidScript project (`../SquidScript`) for hardware details (SSD1677 driver, SPI pins, button ADC ladder, power management) but has its own architecture.
 - Reference doc: [`docs/reference/squidscript-and-xteink-reference.md`](docs/reference/squidscript-and-xteink-reference.md)
+- Follow [`docs/reference/rust-development-standards.md`](docs/reference/rust-development-standards.md) for Rust crate placement, API and memory rules, required tests, firmware hardware gates, and completion evidence.
 
 ### Firmware Build Commands
 
