@@ -2,11 +2,11 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 9 — path-free compiler composition
+Current task: Task 10 — native CLI rename and extension
 
 ## Completed
 
-Tasks 1 through 8 are complete.
+Tasks 1 through 9 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
@@ -37,6 +37,8 @@ Tasks 1 through 8 are complete.
 - Added `binbook-render` using `cosmic-text` 0.19 without default/system-font features, supplied font bytes only, styled rich-text shaping, word-or-glyph wrapping, deterministic pagination, page-break and anchor mapping, structural block rendering, equal-width table rows, and oversized-row degradation.
 - Rasterization occurs at 960×1600, then `binbook-image` downsamples with Lanczos and routes through the established GRAY2 quantization/X4 native-plane compiler.
 - Used-font records include only selected raster faces in deterministic order; forced-font mode is separate, and missing glyphs plus source diagnostics become stable context-bearing warnings.
+- Added the path-free `binbook-compiler` API with locked source/options/event/summary types, exhaustive image-sequence/EPUB dispatch, typed failure categories, built-in font selection, strict in-memory validation before output, and no path or CLI ownership.
+- Image and EPUB compilation now compose decode/parse, layout, 2× raster, compression, assembly, validation, metadata/navigation/font records, warning callbacks, and phase progress into a caller-owned `Write + Seek` sink.
 
 ## TDD evidence
 
@@ -142,6 +144,19 @@ Task 8 GREEN:
 - `RUSTC="$(rustup which --toolchain stable rustc)" rustup run stable cargo test -p binbook-render --target wasm32-unknown-unknown --no-run`: passed and produced all WASM test executables.
 - Dependency feature scan found no `fontconfig` or Rayon features.
 
+Task 9 RED:
+
+- `cargo test -p binbook-compiler --tests` initially failed because the compiler crate and locked public API did not exist.
+- The first image E2E fixture failed with `CompileError::Image` because its hand-written PNG was malformed; the test now uses a valid in-memory SVG fixture and retains end-to-end image-source coverage.
+
+Task 9 GREEN:
+
+- `cargo test -p binbook-compiler`: 4 E2E tests passed for image compilation, EPUB compilation, warnings/progress, empty input, and injected output failure.
+- Both outputs pass `binbook-core` strict validation and decode through `binbook-image`; EPUB output exposes the expected title and navigation count.
+- `cargo clippy -p binbook-compiler --all-targets -- -D warnings`: passed.
+- Stable-rustc WASM `cargo check` and `cargo test --no-run` passed for the crate and all integration tests.
+- `cargo tree -p binbook-compiler` contains no fontconfig, Rayon, serial, firmware, ESP HAL, or Embassy dependencies.
+
 ## Fixture evidence
 
 Baseline fixture SHA-256 before Task 1:
@@ -177,10 +192,11 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 - `crates/binbook-epub/` package parser, HTML/CSS/font handling, synthetic EPUB2/3 fixtures, and integration tests
 - `crates/binbook-render/` document pagination, supplied-font loading, rich-text shaping, 2× rasterization, warnings, navigation mapping, and focused/golden tests
 - `crates/binbook-image/src/{lib,compile}.rs` path-free decoded-image compilation entry point used by the renderer
+- `crates/binbook-compiler/` locked public API, dispatch/composition, validation, bundled-font policy, E2E fixtures, callback tests, and failing-sink test
 
 ## Next exact action
 
-Start Task 9 with RED in-memory compiler tests for image and EPUB sources. Compose source detection, parse/layout/raster/compress/assemble/validate phases into the locked callback API and verify complete BinBook output through `binbook-core` and `binbook-image`.
+Start Task 10 by moving the current Rust CLI package to `crates/binbook`, renaming the package/executable to `binbook`, and adding RED process-level tests for the locked encode/decode/inspect/diag surface before implementing source discovery and atomic output.
 
 ## Hardware state
 

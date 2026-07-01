@@ -5,6 +5,7 @@ members = [
     "crates/binbook-encode",
     "crates/binbook-image",
     "crates/binbook-render",
+    "crates/binbook-compiler",
     "crates/binbook-document",
     "crates/binbook-epub",
     "crates/binbook-decompress",
@@ -29,6 +30,7 @@ binbook-compress = { path = "crates/binbook-compress" }
 binbook-encode = { path = "crates/binbook-encode" }
 binbook-image = { path = "crates/binbook-image" }
 binbook-render = { path = "crates/binbook-render" }
+binbook-compiler = { path = "crates/binbook-compiler" }
 binbook-document = { path = "crates/binbook-document" }
 binbook-epub = { path = "crates/binbook-epub" }
 binbook-decompress = { path = "crates/binbook-decompress" }

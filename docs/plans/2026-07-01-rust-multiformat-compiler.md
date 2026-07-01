@@ -338,10 +338,10 @@ All reserved fields must be zero. Include only faces actually used during raster
 - Create modules matching the locked public API
 - Create: `crates/binbook-compiler/tests/compile_images.rs`, `compile_epub.rs`, `warnings.rs`
 
-- [ ] Add RED E2E library tests that compile image and EPUB sources into `Cursor<Vec<u8>>`, validate the result through `binbook-core`, decode pages, inspect metadata/navigation/font records, and verify progress/warning events.
-- [ ] Test a failing output sink and confirm the error category is preserved.
-- [ ] Implement exhaustive dispatch with no paths or CLI types in the compiler crate.
-- [ ] Run:
+- [x] Add RED E2E library tests that compile image and EPUB sources into `Cursor<Vec<u8>>`, validate the result through `binbook-core`, decode pages, inspect metadata/navigation/font records, and verify progress/warning events.
+- [x] Test a failing output sink and confirm the error category is preserved.
+- [x] Implement exhaustive dispatch with no paths or CLI types in the compiler crate.
+- [x] Run:
 
   ```bash
   cargo test -p binbook-compiler
@@ -352,7 +352,7 @@ All reserved fields must be zero. Include only faces actually used during raster
   ```
 
   Inspect the tree and reject OS-font, serial, firmware, Rayon, or native-only dependencies.
-- [ ] Commit `feat(binbook-compiler): add path-free compile API`.
+- [x] Commit `feat(binbook-compiler): add path-free compile API`.
 
 ## Task 10: Rename and Extend the Rust CLI
 

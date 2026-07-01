@@ -118,6 +118,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "binbook-compiler"
+version = "0.1.0"
+dependencies = [
+ "binbook-core",
+ "binbook-document",
+ "binbook-encode",
+ "binbook-epub",
+ "binbook-image",
+ "binbook-render",
+ "sha2",
+ "thiserror",
+ "zip",
+]
+
+[[package]]
 name = "binbook-compress"
 version = "0.1.0"
 dependencies = [
