@@ -363,13 +363,13 @@ All reserved fields must be zero. Include only faces actually used during raster
 - Create CLI modules for args, encode, decode, inspect, input discovery, diagnostics, and atomic output
 - Create: `crates/binbook/tests/compiler_cli.rs`, `help.rs`
 
-- [ ] Add RED help snapshots/semantic assertions proving the executable is `binbook`, includes examples, exposes `encode/decode/inspect/diag`, and does not expose `encode-png-folder`.
-- [ ] Add RED process-level tests for image file, mixed directory, EPUB, explicit format mismatch, unsupported single input, all-skipped directory, strict invalid-book inspection, JSON-only stdout, out-of-range decode, warnings on stderr, and no partial output.
-- [ ] Move the crate and preserve every diagnostic command/feature behavior. Rename Rust imports from `binbook_cli` to `binbook`.
-- [ ] Implement auto detection by file signature plus path shape; extensions are hints, not sole trust boundaries.
-- [ ] Implement atomic sibling-temp output and cleanup on every error.
-- [ ] Run default and `serial-device` CLI tests plus all existing protocol/transport tests.
-- [ ] Commit `feat(binbook): add multiformat compiler commands`.
+- [x] Add RED help snapshots/semantic assertions proving the executable is `binbook`, includes examples, exposes `encode/decode/inspect/diag`, and does not expose `encode-png-folder`.
+- [x] Add RED process-level tests for image file, mixed directory, EPUB, explicit format mismatch, unsupported single input, all-skipped directory, strict invalid-book inspection, JSON-only stdout, out-of-range decode, warnings on stderr, and no partial output.
+- [x] Move the crate and preserve every diagnostic command/feature behavior. Rename Rust imports from `binbook_cli` to `binbook`.
+- [x] Implement auto detection by file signature plus path shape; extensions are hints, not sole trust boundaries.
+- [x] Implement atomic sibling-temp output and cleanup on every error.
+- [x] Run default and `serial-device` CLI tests plus all existing protocol/transport tests.
+- [x] Commit `feat(binbook): add multiformat compiler commands`.
 
 ## Task 11: Cut Python Back to Support-Only Tools
 

@@ -12,7 +12,7 @@ members = [
     "crates/gray2-render",
     "crates/ssd1677-driver",
     "crates/xteink-x4-display",
-    "cli",
+    "crates/binbook",
     "firmware/crates/binbook-diagnostic-protocol",
     "firmware/crates/binbook-fw",
 ]

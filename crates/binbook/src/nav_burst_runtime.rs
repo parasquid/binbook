@@ -78,11 +78,13 @@ pub fn run_nav_burst_io<T: Read + Write>(
             io,
             evidence,
             &mut sequence,
-            round,
-            8,
-            &INTERIOR_BURST,
-            options.inter_key_ms,
-            0,
+            Case {
+                round,
+                start_page: 8,
+                keys: &INTERIOR_BURST,
+                inter_key_ms: options.inter_key_ms,
+                expected_noops: 0,
+            },
         ) {
             write_json(
                 evidence,
@@ -95,11 +97,13 @@ pub fn run_nav_burst_io<T: Read + Write>(
         io,
         evidence,
         &mut sequence,
-        options.rounds + 1,
-        0,
-        &BOUNDARY_BURST,
-        options.inter_key_ms,
-        2,
+        Case {
+            round: options.rounds + 1,
+            start_page: 0,
+            keys: &BOUNDARY_BURST,
+            inter_key_ms: options.inter_key_ms,
+            expected_noops: 2,
+        },
     ) {
         write_json(
             evidence,
@@ -117,12 +121,15 @@ fn run_case<T: Read + Write>(
     io: &mut T,
     evidence: &mut dyn Write,
     sequence: &mut Sequence,
-    round: u16,
-    start_page: u32,
-    keys: &[KeyCode],
-    inter_key_ms: u64,
-    expected_noops: usize,
+    case: Case<'_>,
 ) -> Result<(), String> {
+    let Case {
+        round,
+        start_page,
+        keys,
+        inter_key_ms,
+        expected_noops,
+    } = case;
     let goto_sequence = sequence.next();
     let goto = diag_protocol::page_goto_request(goto_sequence, start_page);
     let response = serial_transport::send_and_receive_io(
@@ -165,13 +172,15 @@ fn run_case<T: Read + Write>(
     )?;
     write_keys(
         evidence,
-        round,
-        start_page,
-        keys,
-        &key_sequences,
-        &expected,
-        &observed,
-        batch_unix_ms,
+        KeyEvidence {
+            round,
+            start: start_page,
+            keys,
+            sequences: &key_sequences,
+            expected: &expected,
+            observed: &observed,
+            batch_ms: batch_unix_ms,
+        },
     )?;
 
     let status_sequence = sequence.next();
@@ -223,4 +232,12 @@ fn run_case<T: Read + Write>(
         evidence,
         json!({"kind":"round_result","schema_version":1,"round":round,"expected_page":expected_page,"status_page":status.current_page,"key_count":keys.len(),"error_count":0}),
     )
+}
+
+struct Case<'a> {
+    round: u16,
+    start_page: u32,
+    keys: &'a [KeyCode],
+    inter_key_ms: u64,
+    expected_noops: usize,
 }

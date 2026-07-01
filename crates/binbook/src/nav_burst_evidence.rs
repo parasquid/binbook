@@ -12,33 +12,41 @@ use serde_json::json;
 
 use crate::serial_transport::ObservedResponse;
 
-pub(super) fn write_keys(
-    output: &mut dyn Write,
-    round: u16,
-    start: u32,
-    keys: &[KeyCode],
-    sequences: &[u16],
-    expected: &[u32],
-    observed: &[ObservedResponse],
-    batch_ms: u128,
-) -> Result<(), String> {
-    for (index, ((key, sequence), target)) in keys.iter().zip(sequences).zip(expected).enumerate() {
-        let order = observed
+pub(super) fn write_keys(output: &mut dyn Write, evidence: KeyEvidence<'_>) -> Result<(), String> {
+    for (index, ((key, sequence), target)) in evidence
+        .keys
+        .iter()
+        .zip(evidence.sequences)
+        .zip(evidence.expected)
+        .enumerate()
+    {
+        let order = evidence
+            .observed
             .iter()
             .position(|item| item.sequence == *sequence)
             .ok_or_else(|| format!("missing observed response sequence {sequence}"))?;
-        let response = &observed[order];
+        let response = &evidence.observed[order];
         let from = if index == 0 {
-            start
+            evidence.start
         } else {
-            expected[index - 1]
+            evidence.expected[index - 1]
         };
         write_json(
             output,
-            json!({"kind":"key","schema_version":1,"round":round,"sequence":sequence,"key":format!("{key:?}"),"expected_from":from,"expected_to":target,"response_order":order,"response_elapsed_ms":response.elapsed_ms,"host_unix_ms":batch_ms+response.elapsed_ms}),
+            json!({"kind":"key","schema_version":1,"round":evidence.round,"sequence":sequence,"key":format!("{key:?}"),"expected_from":from,"expected_to":target,"response_order":order,"response_elapsed_ms":response.elapsed_ms,"host_unix_ms":evidence.batch_ms+response.elapsed_ms}),
         )?;
     }
     Ok(())
+}
+
+pub(super) struct KeyEvidence<'a> {
+    pub round: u16,
+    pub start: u32,
+    pub keys: &'a [KeyCode],
+    pub sequences: &'a [u16],
+    pub expected: &'a [u32],
+    pub observed: &'a [ObservedResponse],
+    pub batch_ms: u128,
 }
 
 pub(super) fn validate_records(

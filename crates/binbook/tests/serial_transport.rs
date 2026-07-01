@@ -3,7 +3,7 @@
 use std::io::{self, Read, Write};
 use std::time::Duration;
 
-use binbook_cli::serial_transport::{
+use binbook::serial_transport::{
     send_and_receive_io, send_batch_and_receive_io, send_batch_observed_io,
 };
 use binbook_diagnostic_protocol::{
@@ -54,7 +54,7 @@ fn response(opcode: Opcode, sequence: u16, status: Status) -> Vec<u8> {
 fn key_batch(requests: &[(u16, KeyCode)]) -> Vec<u8> {
     let mut batch = Vec::new();
     for &(sequence, key) in requests {
-        batch.extend_from_slice(&binbook_cli::diag_protocol::key_request(sequence, key));
+        batch.extend_from_slice(&binbook::diag_protocol::key_request(sequence, key));
     }
     batch
 }

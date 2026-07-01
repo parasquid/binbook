@@ -1,19 +1,19 @@
-use binbook_cli::{Cli, Commands, DiagCommand};
+use binbook::{Cli, Commands, DiagCommand};
 #[cfg(feature = "serial-device")]
-use binbook_cli::{ExerciseCommand, PageAction, ProbeCommand};
+use binbook::{ExerciseCommand, PageAction, ProbeCommand};
 use clap::Parser;
 
 #[cfg(feature = "serial-device")]
 fn run_diag(cmd: DiagCommand) {
-    use binbook_cli::diag_protocol;
-    use binbook_cli::serial_transport::SerialSession;
+    use binbook::diag_protocol;
+    use binbook::serial_transport::SerialSession;
     use binbook_diagnostic_protocol::{KeyCode, Opcode};
     use std::time::Duration;
 
     if let DiagCommand::Exercise { exercise } = &cmd {
         match exercise {
             ExerciseCommand::StagedGray { port } => {
-                if let Err(error) = binbook_cli::exercise::run_staged_gray(port) {
+                if let Err(error) = binbook::exercise::run_staged_gray(port) {
                     eprintln!("Communication error: {error}");
                     std::process::exit(1);
                 }
@@ -25,7 +25,7 @@ fn run_diag(cmd: DiagCommand) {
                 inter_key_ms,
                 output,
             } => {
-                if let Err(error) = binbook_cli::nav_burst::run_nav_burst(
+                if let Err(error) = binbook::nav_burst::run_nav_burst(
                     port,
                     *rounds,
                     *inter_key_ms,
@@ -141,7 +141,7 @@ fn run_diag(cmd: DiagCommand) {
                 port.clone(),
                 diag_protocol::display_probe_request(1, choice),
                 Opcode::DisplayProbe,
-                binbook_cli::DISPLAY_PROBE_TIMEOUT,
+                binbook::DISPLAY_PROBE_TIMEOUT,
             )
         }
         DiagCommand::Exercise { .. } => unreachable!("exercise handled above"),
@@ -181,6 +181,32 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Encode {
+            input,
+            output,
+            input_format,
+            profile,
+            pixel_format,
+            no_dither,
+            font_family,
+        } => exit_on_error(binbook::run_encode(
+            &input,
+            &output,
+            input_format,
+            profile,
+            pixel_format,
+            no_dither,
+            font_family,
+        )),
+        Commands::Decode { book, page, output } => {
+            exit_on_error(binbook::run_decode(&book, page, &output));
+        }
+        Commands::Inspect {
+            book,
+            validate,
+            strict,
+            json,
+        } => exit_on_error(binbook::run_inspect(&book, validate, strict, json)),
         Commands::Flash { port, firmware } => {
             println!("Flashing {} to {}...", firmware.display(), port);
         }
@@ -194,5 +220,12 @@ fn main() {
             println!("Deleting {} from {}...", name, port);
         }
         Commands::Diag(cmd) => run_diag(cmd),
+    }
+}
+
+fn exit_on_error(result: Result<(), binbook::CliError>) {
+    if let Err(error) = result {
+        eprintln!("error: {error}");
+        std::process::exit(1);
     }
 }

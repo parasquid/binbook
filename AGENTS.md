@@ -26,7 +26,7 @@
 - Build firmware binary with rustup's pinned nightly `cargo` and `rustc`, not arbitrary tools from `PATH`:
   `cd firmware && RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin --target riscv32imc-unknown-none-elf --release`
 - Firmware builds use `firmware/.cargo/config.toml` but write artifacts to the root workspace `target/` directory.
-- Build CLI from the root workspace: `cargo build -p binbook-cli`
+- Build CLI from the root workspace: `cargo build -p binbook`
 
 ### Modularity Constraint
 

@@ -34,7 +34,7 @@ def commands(args: argparse.Namespace) -> tuple[list[str], list[str]]:
         "-c:v", "libx264", "-preset", "veryfast", str(video),
     ]
     exercise = [
-        "cargo", "run", "--manifest-path", "cli/Cargo.toml", "--features", "serial-device",
+        "cargo", "run", "--manifest-path", "crates/binbook/Cargo.toml", "--features", "serial-device",
         "--", "diag", "exercise", "nav-burst", "--port", args.port, "--rounds",
         str(args.rounds), "--inter-key-ms", str(args.inter_key_ms), "--output", str(evidence),
     ]

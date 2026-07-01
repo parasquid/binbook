@@ -68,7 +68,7 @@ fn staged_gray_exercise_uses_the_planned_transport_script() {
     let reads = staged_gray_responses();
     let mut io = ScriptedExerciseIo::new(reads);
 
-    let result = binbook_cli::exercise::run_staged_gray_io(&mut io, PORT);
+    let result = binbook::exercise::run_staged_gray_io(&mut io, PORT);
 
     assert!(
         result.is_ok(),
@@ -97,9 +97,9 @@ fn staged_gray_exercise_uses_the_planned_transport_script() {
 fn nav_burst_exercise_uses_key_batches_and_validates_logs() {
     let mut io = ScriptedExerciseIo::new(nav_burst_responses());
     let mut evidence = Vec::new();
-    let result = binbook_cli::nav_burst::run_nav_burst_io(
+    let result = binbook::nav_burst::run_nav_burst_io(
         &mut io,
-        binbook_cli::nav_burst::NavBurstOptions {
+        binbook::nav_burst::NavBurstOptions {
             port: PORT,
             rounds: 1,
             inter_key_ms: 0,
@@ -120,7 +120,7 @@ fn nav_burst_exercise_uses_key_batches_and_validates_logs() {
 }
 
 fn nav_burst_responses() -> Vec<Vec<u8>> {
-    let expected = binbook_cli::nav_burst::INTERIOR_EXPECTED;
+    let expected = binbook::nav_burst::INTERIOR_EXPECTED;
     let mut records = Vec::new();
     let mut from = 8;
     let mut record_sequence = 1;
@@ -395,27 +395,21 @@ fn valid_evidence() -> Vec<LogRecordPayload> {
 fn staged_gray_script_rejects_premature_grayscale() {
     let mut records = valid_evidence();
     records[1].tick_ms = 449;
-    assert!(
-        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
-    );
+    assert!(binbook::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err());
 }
 
 #[test]
 fn staged_gray_script_rejects_false_sync_markers() {
     let mut records = valid_evidence();
     records[17].arg0 = 3;
-    assert!(
-        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
-    );
+    assert!(binbook::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err());
 }
 
 #[test]
 fn staged_gray_script_rejects_wrong_page_order() {
     let mut records = valid_evidence();
     records[10].arg1 = 2;
-    assert!(
-        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
-    );
+    assert!(binbook::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err());
 }
 
 #[test]
@@ -428,27 +422,21 @@ fn staged_gray_script_rejects_dropped_turns() {
         1,
         0,
     ));
-    assert!(
-        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
-    );
+    assert!(binbook::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err());
 }
 
 #[test]
 fn staged_gray_script_rejects_mismatched_completion_sequences() {
     let mut records = valid_evidence();
     records[11].arg0 = 99;
-    assert!(
-        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
-    );
+    assert!(binbook::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err());
 }
 
 #[test]
 fn staged_gray_script_rejects_missing_waveform_revision() {
     let mut records = valid_evidence();
     records[2].arg1 = 2;
-    assert!(
-        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
-    );
+    assert!(binbook::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err());
 }
 
 #[test]
@@ -461,9 +449,7 @@ fn staged_gray_script_rejects_absolute_refresh_activation() {
         0xC7,
         0,
     ));
-    assert!(
-        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
-    );
+    assert!(binbook::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err());
 }
 
 #[test]
@@ -479,15 +465,13 @@ fn staged_gray_script_rejects_completion_for_cancelled_attempt() {
             0,
         ),
     );
-    assert!(
-        binbook_cli::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err()
-    );
+    assert!(binbook::exercise::validate_staged_gray_evidence(valid_status(), &records).is_err());
 }
 
 #[test]
 #[ignore]
 fn hardware_staged_gray_exercise() {
-    let result = binbook_cli::exercise::run_staged_gray(PORT);
+    let result = binbook::exercise::run_staged_gray(PORT);
     assert!(
         result.is_ok(),
         "hardware staged-gray exercise should run: {:?}",

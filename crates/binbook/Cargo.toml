@@ -1,5 +1,5 @@
 [package]
-name = "binbook-cli"
+name = "binbook"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,12 +9,18 @@ description = "CLI tool for BinBook device management"
 [dependencies]
 clap.workspace = true
 binbook-core.workspace = true
+binbook-compiler.workspace = true
+binbook-image.workspace = true
 binbook-diagnostic-protocol.workspace = true
 serialport = { workspace = true, optional = true }
 serde_json.workspace = true
+thiserror.workspace = true
 
 [features]
 serial-device = ["dep:serialport"]
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+zip.workspace = true

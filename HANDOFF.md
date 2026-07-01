@@ -2,11 +2,11 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 10 — native CLI rename and extension
+Current task: Task 11 — Python support-only cutover
 
 ## Completed
 
-Tasks 1 through 9 are complete.
+Tasks 1 through 10 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
@@ -39,6 +39,9 @@ Tasks 1 through 9 are complete.
 - Used-font records include only selected raster faces in deterministic order; forced-font mode is separate, and missing glyphs plus source diagnostics become stable context-bearing warnings.
 - Added the path-free `binbook-compiler` API with locked source/options/event/summary types, exhaustive image-sequence/EPUB dispatch, typed failure categories, built-in font selection, strict in-memory validation before output, and no path or CLI ownership.
 - Image and EPUB compilation now compose decode/parse, layout, 2× raster, compression, assembly, validation, metadata/navigation/font records, warning callbacks, and phase progress into a caller-owned `Write + Seek` sink.
+- Moved `cli/` to `crates/binbook/`, renamed the package/library/executable to `binbook`, and preserved all diagnostic commands, protocol builders, serial transport, staged-gray exercise, and navigation-burst behavior.
+- Added native `encode`, `decode`, and strict/JSON `inspect` commands with signature-based input detection, lexical non-recursive image-directory discovery, warning-and-skip behavior, locked profile/pixel/font options, logical PNG decoding, and atomic sibling-temp writes that preserve existing output and clean up every failure path.
+- Split the former 1,157-line CLI library into responsibility-focused modules; every Rust source module is now below 250 logical lines.
 
 ## TDD evidence
 
@@ -157,6 +160,19 @@ Task 9 GREEN:
 - Stable-rustc WASM `cargo check` and `cargo test --no-run` passed for the crate and all integration tests.
 - `cargo tree -p binbook-compiler` contains no fontconfig, Rayon, serial, firmware, ESP HAL, or Embassy dependencies.
 
+Task 10 RED:
+
+- New help/process tests initially failed because the renamed executable did not expose `encode`, `decode`, or `inspect`.
+- Serial-feature Clippy exposed pre-existing oversized diagnostic functions after the library split; argument groups were converted to typed context structs and an unnecessary explicit lifetime was removed.
+
+Task 10 GREEN:
+
+- `cargo test -p binbook`: all compiler CLI, help, and 35 protocol tests passed.
+- `cargo test -p binbook --features serial-device`: all tests passed; 10 hardware-orchestration tests and 11 serial-transport tests passed, with 4 live-device tests still intentionally ignored until Task 15.
+- `cargo clippy -p binbook --all-targets --features serial-device -- -D warnings`: passed.
+- Process tests cover image file, mixed directory skip warnings, EPUB, explicit mismatch, unsupported/all-skipped input, strict invalid inspection, JSON-only stdout, out-of-range decode, atomic cleanup, and preservation of an existing destination after an in-compiler failure.
+- Manual native round trip passed: encoded `two-color.svg`, strict-inspected one valid page, and decoded `/tmp/binbook-task10.png` as an 800×480 grayscale PNG.
+
 ## Fixture evidence
 
 Baseline fixture SHA-256 before Task 1:
@@ -193,10 +209,12 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 - `crates/binbook-render/` document pagination, supplied-font loading, rich-text shaping, 2× rasterization, warnings, navigation mapping, and focused/golden tests
 - `crates/binbook-image/src/{lib,compile}.rs` path-free decoded-image compilation entry point used by the renderer
 - `crates/binbook-compiler/` locked public API, dispatch/composition, validation, bundled-font policy, E2E fixtures, callback tests, and failing-sink test
+- `crates/binbook/` renamed native CLI, focused argument/input/encode/decode/inspect/atomic-output modules, preserved diagnostic modules, and process/help tests
+- `AGENTS.md` and `firmware/scripts/run-x4-nav-burst-diagnostic.py` now invoke the renamed package/path
 
 ## Next exact action
 
-Start Task 10 by moving the current Rust CLI package to `crates/binbook`, renaming the package/executable to `binbook`, and adding RED process-level tests for the locked encode/decode/inspect/diag surface before implementing source discovery and atomic output.
+Start Task 11 with RED Python help/viewer tests, then rename the Python entrypoint to `binbook-support`, remove compiler/decode/inspect commands and imports, and map every removed Python assertion to an existing named Rust test before deleting compiler-only modules.
 
 ## Hardware state
 
