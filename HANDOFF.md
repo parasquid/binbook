@@ -2,11 +2,11 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 12 — Rust canonical navigation fixture
+Current task: Task 13 — current documentation and roadmap
 
 ## Completed
 
-Tasks 1 through 11 are complete.
+Tasks 1 through 12 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
@@ -45,6 +45,8 @@ Tasks 1 through 11 are complete.
 - Renamed the Python console entrypoint to `binbook-support` and reduced its command surface to `view` and `kerning-proof`; Python no longer exposes encode, decode, or inspect commands.
 - Removed Python EPUB/package/flow, compiler, writer, inspector, and string-builder modules after mapping their deleted test assertions to named Rust replacements in the active plan.
 - Extended the transitional Python reader to parse and validate section-35 font records, including contiguous indices, reserved fields, SHA-256 size, and font family/source string references.
+- Replaced the navigation-fixture Python compiler path with source-only PNG generation and an explicit `--compiler target/debug/binbook` invocation; the script copies one Rust-produced byte stream to all three fixture consumers.
+- Regenerated the canonical 16-page fixture through Rust with required empty section 35, 1,440 chunks, 30 transitions, persistent orientation frames, unique labels/patterns, and all four grayscale levels.
 
 ## TDD evidence
 
@@ -189,17 +191,30 @@ Task 11 GREEN:
 - `uv run pytest -q tests/test_kerning_proof.py --run-proof`: 26 passed.
 - Source scan found no remaining Python imports or CLI parsers for removed encoder/decoder/inspector modules.
 
+Task 12 RED:
+
+- The new builder-contract test failed because `build-nav-probe-fixture.py` still imported the deleted Python page compiler and writer and had no `--compiler` argument.
+- The first Rust fixture parser run exposed one stale Python-era expectation that optional book title metadata was `nav-probe`; the path-free image compiler correctly emits an empty optional title, and the fixture test now asserts that canonical value.
+
+Task 12 GREEN:
+
+- Exact regeneration command passed: `cargo build -p binbook` followed by `UV_CACHE_DIR=/tmp/binbook-uv-cache uv run --offline python firmware/scripts/build-nav-probe-fixture.py --compiler target/debug/binbook`.
+- `tests/test_nav_probe_fixture.py`: 10 passed, including section 35, page/chunk/transition counts, copy identity, orientation frame, labels/patterns, four grayscale levels, and transition masks.
+- `cargo test -p binbook-core`, `cargo test -p xteink-x4-display`, and `cargo test -p binbook-fw --features diagnostic-console`: passed.
+- `uv run pytest -q`: 60 passed, 26 skipped.
+- All three fixture SHA-256 values are `3c87fbde1e05c1bc127083511a4353b3d400c292df92672dc6710e9bc2f7f31d`.
+
 ## Fixture evidence
 
 Baseline fixture SHA-256 before Task 1:
 
 `a8c2c7d935ce6ec6376139153e91a54111a59440dd85b62270fd072d8e47766d`
 
-Current SHA-256 for all three copies:
+Current Rust-generated SHA-256 for all three copies:
 
-`96fdfa2d8d9583e91c2f868c00c0c5863788e500dc264f77c73cbe5cd404f135`
+`3c87fbde1e05c1bc127083511a4353b3d400c292df92672dc6710e9bc2f7f31d`
 
-The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash includes the required empty section-35 entry and four-byte plane padding.
+The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash is compiled by Rust and includes the required empty section-35 entry and four-byte plane padding.
 
 ## Files changed through Task 2
 
@@ -229,10 +244,11 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 - `AGENTS.md` and `firmware/scripts/run-x4-nav-burst-diagnostic.py` now invoke the renamed package/path
 - `pyproject.toml`, `binbook/cli.py`, `reader.py`, and `sections.py` now define the support-only Python surface and section-35 viewer compatibility
 - `tests/test_support_cli.py` and the active-plan migration table preserve the cutover evidence; obsolete compiler-only Python modules/tests are removed
+- `firmware/scripts/build-nav-probe-fixture.py`, the three canonical fixture copies, and their parser/display/firmware/Python tests now use the Rust compiler as source of truth
 
 ## Next exact action
 
-Start Task 12 with a RED cross-language fixture test for section 35, exact page/chunk/transition counts, orientation markers, unique labels, four grayscale levels, and byte-identical copies. Then make `build-nav-probe-fixture.py` generate only source images and invoke `target/debug/binbook` explicitly.
+Start Task 13 by updating current README/reference/runbook/roadmap command surfaces and architecture facts to `binbook`, `binbook-support`, the Rust compiler crate graph, supported formats/degradations, and the new fixture workflow. Leave `docs/historical/` untouched and remove stale current references.
 
 ## Hardware state
 

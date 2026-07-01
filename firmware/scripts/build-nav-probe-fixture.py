@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -11,14 +15,23 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from binbook.constants import PixelFormat, SectionId, WaveformHint
-from binbook.images import pil_image_to_packed
-from binbook.page_compiler import encoded_page
 from binbook.profiles import DisplayProfile, get_profile
 from binbook.reader import BinBookReader
-from binbook.writer import build_binbook
 
-OUTPUT_FIXTURE = (
-    REPO_ROOT / "firmware" / "crates" / "binbook-fw" / "fixtures" / "nav_probe.binbook"
+OUTPUT_FIXTURES = (
+    REPO_ROOT
+    / "firmware"
+    / "crates"
+    / "binbook-fw"
+    / "fixtures"
+    / "nav_probe.binbook",
+    REPO_ROOT / "crates" / "binbook-core" / "tests" / "fixtures" / "nav_probe.binbook",
+    REPO_ROOT
+    / "crates"
+    / "xteink-x4-display"
+    / "tests"
+    / "fixtures"
+    / "nav_probe.binbook",
 )
 FONT_PATH = REPO_ROOT / "binbook" / "assets" / "fonts" / "Literata" / "Literata.ttf"
 PROFILE_NAME = "xteink-x4-portrait"
@@ -185,17 +198,43 @@ def _pattern_page(page_number: int, profile: DisplayProfile) -> Image.Image:
     return image
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--compiler", required=True, type=Path)
+    args = parser.parse_args(argv)
+    compiler = args.compiler
+    if not compiler.is_absolute():
+        compiler = REPO_ROOT / compiler
     profile = get_profile(PROFILE_NAME)
     images = [_pattern_page(page_number, profile) for page_number in range(16)]
-    pages = [
-        encoded_page(pil_image_to_packed(image, profile, dither=False), 0, 0)
-        for image in images
-    ]
-    OUTPUT_FIXTURE.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_FIXTURE.write_bytes(build_binbook(pages, profile, source_name="nav-probe"))
+    with tempfile.TemporaryDirectory(prefix="binbook-nav-probe-") as temporary:
+        root = Path(temporary)
+        pages = root / "pages"
+        pages.mkdir()
+        for page_number, image in enumerate(images):
+            image.save(pages / f"{page_number:02d}.png")
+        generated = root / "nav_probe.binbook"
+        subprocess.run(
+            [
+                str(compiler),
+                "encode",
+                str(pages),
+                "-o",
+                str(generated),
+                "--profile",
+                PROFILE_NAME,
+                "--pixel-format",
+                "gray2",
+                "--no-dither",
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+        )
+        for output in OUTPUT_FIXTURES:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(generated, output)
 
-    reader = BinBookReader.open(OUTPUT_FIXTURE, validate=True)
+    reader = BinBookReader.open(OUTPUT_FIXTURES[0], validate=True)
     assert len(reader.pages) == 16
     assert len(reader.page_chunks) == 1_440
     assert len(reader.page_transitions) == 30

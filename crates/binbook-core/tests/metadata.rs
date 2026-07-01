@@ -22,7 +22,7 @@ fn reads_real_profile_and_book_metadata_strings() {
     let metadata: BookMetadata = book.book_metadata(&mut record).unwrap();
     assert_eq!(
         book.read_string(metadata.title, &mut text).unwrap(),
-        b"nav-probe"
+        b""
     );
     assert_eq!(metadata.series_index_milli, 0);
 }

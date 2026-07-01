@@ -412,9 +412,9 @@ All reserved fields must be zero. Include only faces actually used during raster
 - Regenerate: all three `nav_probe.binbook` fixture copies
 - Modify: fixture tests under `tests/`, `binbook-core`, `xteink-x4-display`, and `binbook-fw` as required for section 35
 
-- [ ] Add a RED fixture test that checks required section 35, 16 pages, 1,440 chunks, 30 transitions, orientation markers, unique page labels, all four gray levels, and byte-identical fixture copies.
-- [ ] Change the Python script to generate source PNGs in a temporary directory and invoke an explicit Rust compiler path. Add `--compiler target/debug/binbook`; do not import the Python writer.
-- [ ] Build and regenerate:
+- [x] Add a RED fixture test that checks required section 35, 16 pages, 1,440 chunks, 30 transitions, orientation markers, unique page labels, all four gray levels, and byte-identical fixture copies.
+- [x] Change the Python script to generate source PNGs in a temporary directory and invoke an explicit Rust compiler path. Add `--compiler target/debug/binbook`; do not import the Python writer.
+- [x] Build and regenerate:
 
   ```bash
   cargo build -p binbook
@@ -423,8 +423,8 @@ All reserved fields must be zero. Include only faces actually used during raster
     --compiler target/debug/binbook
   ```
 
-- [ ] Run fixture, parser, display, firmware, and full Python tests. Confirm the three fixture hashes match.
-- [ ] Commit the script, tests, and exact three fixture paths with `build(fixtures): compile nav probe with rust`.
+- [x] Run fixture, parser, display, firmware, and full Python tests. Confirm the three fixture hashes match.
+- [x] Commit the script, tests, and exact three fixture paths with `build(fixtures): compile nav probe with rust`.
 
 ## Task 13: Update Current Documentation and Roadmap
 

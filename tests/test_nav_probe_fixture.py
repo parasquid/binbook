@@ -1,5 +1,6 @@
 import hashlib
 from pathlib import Path
+import subprocess
 
 from PIL import Image
 
@@ -10,6 +11,11 @@ from binbook.rle import decode_packbits
 
 
 FIXTURE = Path("firmware/crates/binbook-fw/fixtures/nav_probe.binbook")
+FIXTURE_COPIES = (
+    FIXTURE,
+    Path("crates/binbook-core/tests/fixtures/nav_probe.binbook"),
+    Path("crates/xteink-x4-display/tests/fixtures/nav_probe.binbook"),
+)
 PAGE_LABEL_BOX = (70, 170, 410, 360)
 
 
@@ -61,6 +67,22 @@ def test_nav_probe_has_sixteen_numbered_pages():
     assert len(reader.page_chunks) == 16 * 3 * 30
     assert len(reader.page_transitions) == 2 * (16 - 1)
     assert [page.page_number for page in reader.pages] == list(range(16))
+    assert SectionId.FONT_RESOURCE_INDEX in reader.sections
+
+
+def test_nav_probe_fixture_copies_are_byte_identical():
+    payloads = [path.read_bytes() for path in FIXTURE_COPIES]
+    assert payloads[1:] == payloads[:-1]
+
+
+def test_nav_probe_builder_requires_an_explicit_rust_compiler():
+    result = subprocess.run(
+        ["python", "firmware/scripts/build-nav-probe-fixture.py", "--help"],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--compiler" in result.stdout
 
 
 def test_every_nav_probe_page_keeps_orientation_and_gray_frame():
