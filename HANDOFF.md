@@ -2,11 +2,11 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 16 — final adversarial completion audit
+Current task: None — implementation plan complete
 
 ## Completed
 
-Tasks 1 through 15 are complete.
+Tasks 1 through 16 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
@@ -237,6 +237,17 @@ Task 15 HARDWARE GREEN:
 - Both files were inspected at original detail. The panel visibly shows PAGE 00 in portrait; TL triangle, TR circle, BL square, BR diamond; TOP/RIGHT/BOTTOM/LEFT labels; center crosshair and rulers; edge ticks; the asymmetric top-left triangle; complete unclipped border; and distinct black, dark-gray, light-gray, and white swatches. No stale page-3 region or unintended blank region is visible. The bezel was excluded from content assessment.
 - Known hardware failures: none observed. The first `logs --since 0` response was page-limited at cursor 20; sequential cursor 20, 40, and 60 queries retrieved the complete navigation evidence rather than treating the first response as absence of events.
 
+Task 16 ADVERSARIAL GREEN:
+
+- Corrupted the section-35 `entry_size` byte from 80 to 79 in a `/tmp` fixture copy. `binbook inspect --validate --strict --json` rejected it with exit 1 and `error: invalid BinBook`.
+- Temporarily changed the PackBits two-byte repeat threshold from 2 to 3. The exact golden boundary test failed (`left: 3`, `right: 2`, exit 101). The source was restored, all five PackBits tests passed, and `git diff --exit-code` proved no mutation remained.
+- Added unsupported `float: left` CSS to a `/tmp` EPUB. Compilation emitted stable `warning[UnsupportedContent]`, strict inspection reported a valid one-page book with intact metadata/navigation, and page 0 decoded to an 800×480 grayscale PNG.
+- Compiled a directory containing one SVG and one `.txt` file. The CLI emitted `warning: skipping unsupported input unsupported.txt`; strict inspection reported exactly one valid page.
+- Repeated the discriminating page 3→0 sequence. Immediate STATUS correctly exposed the intermediate `panel_mode=Bw`, so acknowledgement was not treated as completion. A settled STATUS independently reported page 0, Grayscale, 16 pages, zero drops/protocol errors, and `last_error=0`; logs 85–97 proved overlay and base-sync completion.
+- Webcam provenance recheck recorded the current file birth/mtime, 1920×1080 source and 440×770 crop, and `/dev/video1` as the USB UVC Insta360 One RS capture device. Evidence: `/tmp/binbook-compiler-acceptance/adversarial-webcam-provenance.txt`.
+- Final pre-documentation `git status --short` and diff were empty. No historical docs changed. Python/pytest cache directories are ignored runtime artifacts and are not included in Git.
+- Final verification after restoring all mutations: formatting check passed; all 5 PackBits tests passed; `binbook` serial-feature tests passed (61 automated, 4 intentionally ignored live-device tests); Python reported 60 passed and 26 skipped; all-features workspace Clippy passed with warnings denied; current-reference stale-alias scan and `git diff --check` passed.
+
 ## Acceptance matrix before hardware
 
 | Requirement | Implementation path | Automated test/evidence | Serial/query applicability | Webcam applicability |
@@ -250,6 +261,20 @@ Task 15 HARDWARE GREEN:
 | Rust-generated canonical fixture | `firmware/scripts/build-nav-probe-fixture.py --compiler target/debug/binbook` | fixture tests; SHA-256 `3c87fbde1e05c1bc127083511a4353b3d400c292df92672dc6710e9bc2f7f31d` | Must report 16 pages and render page transitions | Must show orientation frame and four grays |
 | Live diagnostic protocol and state transition | `binbook-fw` diagnostic console and `binbook diag` | host protocol/orchestration/transport tests | Observed protocol 1, 512-byte frame, correct identity, clean STATUS, page 3→0, complete logs | PAGE 00 independently visible after transition |
 | Physical X4 output correctness | `xteink-x4-display`, `ssd1677-driver`, fixture orientation frame | host rendering/driver tests | Observed complete overlays/base sync for pages 3 and 0; no errors/drops | Observed all labels/shapes/rulers, unclipped border, no stale regions, and four grays |
+
+## Final Must Ship matrix
+
+| Must Ship requirement | Implementation path | Automated test | Observed evidence |
+|---|---|---|---|
+| Rust package/library/executable named `binbook` | `crates/binbook`, workspace manifest | help and CLI process tests | Native E2E and hardware diagnostics invoked `target/debug/binbook` |
+| Stable encode/decode/inspect/diag commands | `crates/binbook/src/args.rs` and command modules | help, protocol, compiler CLI tests | Image/EPUB E2E plus live HELLO/STATUS/page/log commands |
+| Static PNG/JPEG/WebP/SVG and non-recursive image directory | `binbook-image`, native input discovery | codec, directory, CLI tests | 2-page SVG directory and mixed-directory acceptance |
+| EPUB 2/3 metadata, spine, nav/NCX, reflow, fonts, images, warnings | `binbook-epub`, `binbook-document`, `binbook-render` | EPUB2/3 and render/font/navigation/golden tests | Metadata/nav E2E and unsupported-CSS degradation audit |
+| GRAY1 and staged GRAY2 output | `gray2-render`, `binbook-image` | quantization, plane, orientation, compiler tests | Decodes contain exact 0/85/170/255 levels; X4 visibly shows four swatches |
+| Strict Rust validation and logical PNG decode | `binbook-core`, native inspect/decode | strict validation and CLI error tests | Both E2E books strict-valid; corrupted section 35 rejected; 800×480 decoded pages |
+| Required `FONT_RESOURCE_INDEX` migration | spec, `binbook-core`, `binbook-encode`, Python support reader | Rust/Python section-35 and fixture tests | Canonical fixture strict-valid; corrupt entry size rejected |
+| Compiler crates support WASM target | path-free compiler crate graph | WASM check and test no-run | Task 14 commands produced all compiler test WASM executables |
+| Rust canonical fixture proven on X4 | Rust fixture builder, firmware release, diagnostic/display crates | fixture, firmware, protocol/display tests | Exact hash flashed; 16 pages queried; page 3→0 logs; fresh webcam proof |
 
 ## Fixture evidence
 
@@ -296,7 +321,7 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 
 ## Next exact action
 
-Run Task 16's adversarial checks, restore every deliberate mutation, inspect the final diff/status for unrelated or generated files, update the final acceptance matrix, and rerun the relevant verification before making any completion claim.
+No implementation task remains. Preserve `/tmp/binbook-compiler-acceptance/` and the two webcam JPEGs while their local evidence is useful; they are intentionally not tracked.
 
 ## Hardware state
 

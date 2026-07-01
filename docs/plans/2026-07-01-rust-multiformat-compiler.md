@@ -533,16 +533,16 @@ Hardware commands own `/dev/ttyACM0` exclusively and must run sequentially. Do n
 
 ## Task 16: Final Adversarial Completion Audit
 
-- [ ] Re-read this plan and map every Must Ship requirement to implementation, automated test, and observed evidence.
-- [ ] Attempt to disprove completion by:
+- [x] Re-read this plan and map every Must Ship requirement to implementation, automated test, and observed evidence.
+- [x] Attempt to disprove completion by:
   - corrupting section 35 and verifying strict inspect fails;
   - reverting one PackBits branch in a local patch and confirming its test fails, then restoring the patch;
   - running EPUB compilation with an unsupported CSS feature and confirming a stable warning plus usable output;
   - compiling from a directory containing one valid and one unsupported file and confirming one page plus warning;
   - running `goto 0` from page 3 and checking STATUS/log rather than trusting acknowledgement;
   - verifying the webcam file timestamp and source are from the current `/dev/video1` run.
-- [ ] Run `git status --short`, inspect the full diff, and verify no unrelated user changes, generated caches, temporary assets, or historical-doc edits are included.
-- [ ] Do not write “complete”, “passed”, or “all commands work” while any acceptance cell is missing, hardware is unobserved, a response is placeholder-only, or source contradicts the claim.
+- [x] Run `git status --short`, inspect the full diff, and verify no unrelated user changes, generated caches, temporary assets, or historical-doc edits are included.
+- [x] Do not write “complete”, “passed”, or “all commands work” while any acceptance cell is missing, hardware is unobserved, a response is placeholder-only, or source contradicts the claim.
 
 ## Completion Criteria
 
