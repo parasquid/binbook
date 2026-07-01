@@ -21,3 +21,11 @@ Split command models, serial transport, response formatting, exercise evidence, 
 ## SquidScript Rust-native BinBook/display adoption
 
 After SquidScript chooses its post-Zephyr firmware architecture, consume `binbook-core`, `binbook-decompress`, `gray2-render`, `ssd1677-driver`, and `xteink-x4-display` directly. Do not add a C ABI or compatibility facade before that architecture is selected.
+
+## Internal Flash LittleFS
+
+After the SD card path is working, evaluate `littlefs2` on the existing 192 KB internal flash region for storing a small number of binbooks (tens of KB each). FAT is unsuitable for internal flash due to sector-erase wear, so this would use a wear-leveling filesystem (LittleFS) as a separate path.
+
+- **Depends on:** completion of A (storage abstraction) — LittleFS would implement the same `Filesystem` trait from `binbook-storage`.
+- **Hardware:** same internal flash already backing `FlashStorage` (0x40E90000, 192 KB).
+- **Gate:** requires LittleFS on-device writes verified before adoption; read-only use of LittleFS is strictly out of scope.
