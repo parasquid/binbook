@@ -2,11 +2,11 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 4 — deterministic container writer
+Current task: Task 5 — reusable quantization and X4 plane APIs
 
 ## Completed
 
-Tasks 1 through 3 are complete.
+Tasks 1 through 4 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
@@ -21,6 +21,10 @@ Tasks 1 through 3 are complete.
 - Added `binbook-compress`, with a no-std caller-buffer PackBits encoder and an alloc-gated `Vec` convenience API.
 - Matched the transitional Python encoder's deterministic run selection, including 127/128 boundaries and split-run behavior.
 - Required all PackBits test vectors, including a 9,217-byte mixed-pattern input, to decode through `binbook-decompress`.
+- Added path-free `binbook-encode` with a `BookBuilder` that targets any `Write + Seek` sink.
+- Added typed page/plane/chunk, metadata, source, navigation, font-policy, and used-font models.
+- Emit all 19 required sections in canonical order with 64 KiB page-data alignment, deterministic string deduplication, section/page CRCs, policy/font/rendition SHA-256 hashes, progress ranges, aligned planes, chunk indices, and bidirectional adjacent transitions.
+- Source and decoded-font constructors compute their SHA-256 digests directly from caller-provided bytes. Reproducible timestamp and optional header/file CRC fields remain zero.
 
 ## TDD evidence
 
@@ -64,6 +68,18 @@ Task 3 GREEN:
 - `cargo clippy -p binbook-compress --all-targets -- -D warnings`: passed.
 - Default and no-default-feature WASM checks passed using the rustup compiler explicitly.
 
+Task 4 RED:
+
+- `cargo test -p binbook-encode --test layout --test roundtrip` failed because `BookBuilder` and the writer model did not exist.
+
+Task 4 GREEN:
+
+- `cargo test -p binbook-encode`: deterministic layout and strict round-trip tests passed.
+- `cargo clippy -p binbook-encode --all-targets -- -D warnings`: passed.
+- `cargo check -p binbook-encode --target wasm32-unknown-unknown`: passed using the rustup compiler explicitly.
+- `cargo test -p binbook-core`: passed.
+- `cargo test --workspace`: passed.
+
 ## Fixture evidence
 
 Baseline fixture SHA-256 before Task 1:
@@ -91,10 +107,11 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 - `crates/binbook-core/tests/{encoding,strict_validation}.rs`
 - `crates/binbook-compress/{Cargo.toml,src/lib.rs,src/packbits.rs,tests/packbits.rs}`
 - Root workspace manifest and lockfile
+- `crates/binbook-encode/` model, policies, hashing, strings, indices, writer, and tests
 
 ## Next exact action
 
-Start Task 4 with exact-layout and strict-validation RED tests for a `BookBuilder` that writes to `Write + Seek`. Keep the writer model independent of image/EPUB parsing and require byte-for-byte deterministic output plus a `binbook_core::validate_all` round trip.
+Start Task 5 in `gray2-render` with RED quantization/orientation/chunk tests. Preserve caller-owned row/error buffers, reuse `canonical_row_to_staged`, and include dimensions larger than scratch buffers so accidental whole-image buffering cannot pass.
 
 ## Hardware state
 
