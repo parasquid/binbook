@@ -2,11 +2,11 @@
 
 Date: 2026-07-01
 Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: Task 15 — mandatory live Xteink X4 verification
+Current task: Task 16 — final adversarial completion audit
 
 ## Completed
 
-Tasks 1 through 14 are complete.
+Tasks 1 through 15 are complete.
 
 - Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
 - Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
@@ -223,6 +223,20 @@ Task 14 GREEN:
 - Both decoded pages are 800×480 grayscale PNGs with exactly the canonical values 0, 85, 170, and 255. Full transcripts are `/tmp/binbook-compiler-acceptance/images-transcript.txt`, `/tmp/binbook-compiler-acceptance/epub-transcript.txt`, and `/tmp/binbook-compiler-acceptance/pixel-verification.txt`.
 - `inspect --json` now exposes title, author, and language; the EPUB CLI integration test locks the title result.
 
+Task 15 HARDWARE GREEN:
+
+- Starting inputs: canonical fixture SHA-256 `3c87fbde1e05c1bc127083511a4353b3d400c292df92672dc6710e9bc2f7f31d`; release firmware SHA-256 `ff52cab7e1312f9db4ecbdd6a917898ac259486ba612f638cbeb61dff1080d6a`.
+- Flash command: `FW_FEATURES="firmware-bin,diagnostic-console" firmware/scripts/flash-xteink-x4-nav-probe.sh`. Observed ESP32-C3 revision v0.4, 16 MB flash, application 1,122,768/16,384,000 bytes (6.85%), and `Flashing has completed!` on `/dev/ttyACM0`. Full output: `/tmp/binbook-compiler-acceptance/flash-transcript.txt`.
+- The exact `AGENTS.md` pyserial reset/read command captured 15 seconds. It recorded ESP-IDF boot, 16 MB DIO flash, all application segments, `Loaded app from partition at offset 0x10000`, and no boot error. Binary diagnostic mode intentionally emits no textual application log. Full output: `/tmp/binbook-compiler-acceptance/boot-serial.txt`.
+- `diag hello` returned `protocol=1 max_frame=512 capabilities=KEY,PAGE,STATUS,LOG,CRASH,DISPLAY_PROBE firmware=binbook-fw target=xteink-x4`.
+- Initial STATUS returned `current_page=0 page_count=16 panel_mode=Grayscale dropped_log_count=0 protocol_error_count=0 last_error=0`.
+- `diag page ... goto 3` returned `current_page=3`; an independent STATUS confirmed page 3 with 16 pages, Grayscale mode, zero drops/protocol errors, and `last_error=0`.
+- `diag page ... goto 0` returned `current_page=0`; an independent STATUS confirmed the same clean state at page 0.
+- Logs independently recorded `TURN_STARTED`, `PAGE_TURN arg0=0 arg1=3`, grayscale overlay activation/completion and base-sync completion for page 3, followed by `PAGE_TURN arg0=3 arg1=0` and the same complete render sequence for page 0. Cursor ended at 68 with zero dropped records. Full query outputs: `/tmp/binbook-compiler-acceptance/diag-*.txt`.
+- Fresh `/dev/video1` capture: `/tmp/binbook-rust-compiler-webcam.jpg`, 1920×1080, 2026-07-01 17:48:17.383334134 +0800. Prescribed crop: `/tmp/binbook-rust-compiler-panel.jpg`, 440×770, 2026-07-01 17:48:17.425441832 +0800.
+- Both files were inspected at original detail. The panel visibly shows PAGE 00 in portrait; TL triangle, TR circle, BL square, BR diamond; TOP/RIGHT/BOTTOM/LEFT labels; center crosshair and rulers; edge ticks; the asymmetric top-left triangle; complete unclipped border; and distinct black, dark-gray, light-gray, and white swatches. No stale page-3 region or unintended blank region is visible. The bezel was excluded from content assessment.
+- Known hardware failures: none observed. The first `logs --since 0` response was page-limited at cursor 20; sequential cursor 20, 40, and 60 queries retrieved the complete navigation evidence rather than treating the first response as absence of events.
+
 ## Acceptance matrix before hardware
 
 | Requirement | Implementation path | Automated test/evidence | Serial/query applicability | Webcam applicability |
@@ -234,8 +248,8 @@ Task 14 GREEN:
 | Native inspect/decode and atomic output | `crates/binbook/src/{inspect,decode,atomic_output}.rs` | CLI process tests and both E2E transcripts | Diagnostic commands are separately verified below | Not applicable |
 | Portable compiler and reusable firmware crates | crate feature/target boundaries and target-gated `binbook-fw` dependencies | all-features Clippy; RISC-V checks; WASM check/no-run; pinned release build | Firmware identity/protocol query required | Not applicable |
 | Rust-generated canonical fixture | `firmware/scripts/build-nav-probe-fixture.py --compiler target/debug/binbook` | fixture tests; SHA-256 `3c87fbde1e05c1bc127083511a4353b3d400c292df92672dc6710e9bc2f7f31d` | Must report 16 pages and render page transitions | Must show orientation frame and four grays |
-| Live diagnostic protocol and state transition | `binbook-fw` diagnostic console and `binbook diag` | host protocol/orchestration/transport tests | Required: HELLO, STATUS, page 3→0, logs | Page 0 must be independently visible |
-| Physical X4 output correctness | `xteink-x4-display`, `ssd1677-driver`, fixture orientation frame | host rendering/driver tests only | Logs must show successful render and no display error | Required: labels, shapes, crosshair, border, no stale regions, four grays |
+| Live diagnostic protocol and state transition | `binbook-fw` diagnostic console and `binbook diag` | host protocol/orchestration/transport tests | Observed protocol 1, 512-byte frame, correct identity, clean STATUS, page 3→0, complete logs | PAGE 00 independently visible after transition |
+| Physical X4 output correctness | `xteink-x4-display`, `ssd1677-driver`, fixture orientation frame | host rendering/driver tests | Observed complete overlays/base sync for pages 3 and 0; no errors/drops | Observed all labels/shapes/rulers, unclipped border, no stale regions, and four grays |
 
 ## Fixture evidence
 
@@ -282,8 +296,8 @@ The fixture remains 16 pages, 1,440 chunks, and 30 transitions. The latest hash 
 
 ## Next exact action
 
-Start Task 15 by recording the fixture and release-binary hashes, then run the flash, 15-second boot capture, HELLO/STATUS, discriminating page 3→0 state sequence, logs query, and fresh `/dev/video1` webcam capture sequentially. Record each command and complete output immediately.
+Run Task 16's adversarial checks, restore every deliberate mutation, inspect the final diff/status for unrelated or generated files, update the final acceptance matrix, and rerun the relevant verification before making any completion claim.
 
 ## Hardware state
 
-No hardware commands have run for this plan yet. Starting hashes are fixture `3c87fbde1e05c1bc127083511a4353b3d400c292df92672dc6710e9bc2f7f31d` and firmware release binary `ff52cab7e1312f9db4ecbdd6a917898ac259486ba612f638cbeb61dff1080d6a`. Task 15 remains a mandatory completion gate.
+Hardware verification is complete with the exact commands and observed evidence above. Device ended on page 0 in Grayscale mode with 16 pages, zero dropped logs, zero protocol errors, and `last_error=0`. The current webcam files prove the final visible page and physical rendering criteria.

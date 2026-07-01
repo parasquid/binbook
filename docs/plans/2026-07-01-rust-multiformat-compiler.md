@@ -484,8 +484,8 @@ All reserved fields must be zero. Include only faces actually used during raster
 
 Hardware commands own `/dev/ttyACM0` exclusively and must run sequentially. Do not parallelize flash, serial, diagnostic, or webcam work. A failed flash/serial/camera command is evidence to record, not a reason to skip the gate.
 
-- [ ] Record the starting fixture SHA and build binary SHA in `HANDOFF.md`.
-- [ ] Flash the Rust-compiled canonical fixture:
+- [x] Record the starting fixture SHA and build binary SHA in `HANDOFF.md`.
+- [x] Flash the Rust-compiled canonical fixture:
 
   ```bash
   FW_FEATURES="firmware-bin,diagnostic-console" \
@@ -494,8 +494,8 @@ Hardware commands own `/dev/ttyACM0` exclusively and must run sequentially. Do n
 
   Record chip, flash size, application size, final flash result, and USB re-enumeration.
 
-- [ ] Capture at least 15 seconds of boot serial using the exact pyserial command from `AGENTS.md`. Record the complete relevant output; do not substitute `espflash monitor`.
-- [ ] Establish independent baselines, one command at a time:
+- [x] Capture at least 15 seconds of boot serial using the exact pyserial command from `AGENTS.md`. Record the complete relevant output; do not substitute `espflash monitor`.
+- [x] Establish independent baselines, one command at a time:
 
   ```bash
   cargo run -p binbook --features serial-device -- diag hello --port /dev/ttyACM0
@@ -504,7 +504,7 @@ Hardware commands own `/dev/ttyACM0` exclusively and must run sequentially. Do n
 
   Require protocol 1, max frame 512, firmware `binbook-fw`, target `xteink-x4`, `page_count=16`, zero protocol errors, and `last_error=0`.
 
-- [ ] Use a discriminating non-default state and independently confirm it:
+- [x] Use a discriminating non-default state and independently confirm it:
 
   ```bash
   cargo run -p binbook --features serial-device -- diag page --port /dev/ttyACM0 goto 3
@@ -516,7 +516,7 @@ Hardware commands own `/dev/ttyACM0` exclusively and must run sequentially. Do n
 
   Verify response opcode/sequence/status/payload, `3 -> 0` state change, render success events, no display error, and follow-up STATUS confirmation.
 
-- [ ] Capture a fresh native-resolution webcam image:
+- [x] Capture a fresh native-resolution webcam image:
 
   ```bash
   ffmpeg -hide_banner -loglevel error -f video4linux2 \
@@ -527,9 +527,9 @@ Hardware commands own `/dev/ttyACM0` exclusively and must run sequentially. Do n
     /tmp/binbook-rust-compiler-panel.jpg
   ```
 
-- [ ] Inspect both actual files, show the user both paths, and record what is visibly present. Require correct TL/TR/BL/BR markers and unique shapes, TOP/RIGHT/BOTTOM/LEFT labels, center crosshair/rulers, asymmetric top-left triangle, page number/orientation, unclipped border, no stale regions, and distinct black/dark-gray/light-gray/white swatches. The bezel is not rendered content.
-- [ ] If visible output fails, do not claim completion. Record the exact first divergence, serial/log evidence, capture paths, and leave the acceptance row failed.
-- [ ] Replace `HANDOFF.md` with the current final state, including exact commands/output, starting/ending state, hashes, serial transcript, webcam paths, observed panel result, known failures, and the completed acceptance matrix.
+- [x] Inspect both actual files, show the user both paths, and record what is visibly present. Require correct TL/TR/BL/BR markers and unique shapes, TOP/RIGHT/BOTTOM/LEFT labels, center crosshair/rulers, asymmetric top-left triangle, page number/orientation, unclipped border, no stale regions, and distinct black/dark-gray/light-gray/white swatches. The bezel is not rendered content.
+- [x] If visible output fails, do not claim completion. Record the exact first divergence, serial/log evidence, capture paths, and leave the acceptance row failed.
+- [x] Replace `HANDOFF.md` with the current final state, including exact commands/output, starting/ending state, hashes, serial transcript, webcam paths, observed panel result, known failures, and the completed acceptance matrix.
 
 ## Task 16: Final Adversarial Completion Audit
 
