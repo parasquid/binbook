@@ -67,14 +67,12 @@ where
             observer.busy_wait_end(0, BusyWaitOutcome::Ready);
             return Ok(());
         }
-        let mut elapsed_ms = 0;
-        for _ in 0..self.config.busy_timeout_ms {
+        for elapsed_ms in 0..self.config.busy_timeout_ms {
             if !self.is_busy()? {
                 observer.busy_wait_end(elapsed_ms, BusyWaitOutcome::Ready);
                 return Ok(());
             }
             delay.delay_ms(POLL_INTERVAL_MS).await;
-            elapsed_ms += POLL_INTERVAL_MS;
         }
         observer.busy_wait_end(self.config.busy_timeout_ms, BusyWaitOutcome::Timeout);
         Err(Error::Timeout)
