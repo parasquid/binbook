@@ -6,9 +6,9 @@
 
 #![no_std]
 
-pub const PROTOCOL_VERSION: u8 = 1;
-pub const MAX_FRAME_BYTES: usize = 512;
-pub const MAX_PAYLOAD_BYTES: usize = 496;
+pub const PROTOCOL_VERSION: u8 = 2;
+pub const MAX_FRAME_BYTES: usize = 4126;
+pub const MAX_PAYLOAD_BYTES: usize = 4096;
 pub const FRAME_DELIMITER: u8 = 0x00;
 pub const MAGIC: [u8; 2] = *b"BB";
 

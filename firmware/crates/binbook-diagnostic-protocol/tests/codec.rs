@@ -45,8 +45,8 @@ fn crash_response_requires_exact_present_layout() {
 }
 
 #[test]
-fn protocol_version_is_one() {
-    assert_eq!(PROTOCOL_VERSION, 1);
+fn protocol_version_is_two() {
+    assert_eq!(PROTOCOL_VERSION, 2);
 }
 
 #[test]
@@ -72,8 +72,8 @@ fn deferred_gray_event_codes_are_stable_and_nonzero() {
 }
 
 #[test]
-fn max_frame_bytes_is_512() {
-    assert_eq!(MAX_FRAME_BYTES, 512);
+fn max_frame_bytes_is_4126() {
+    assert_eq!(MAX_FRAME_BYTES, 4126);
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn decode_hello_request_roundtrips() {
     let mut buf = [0u8; MAX_FRAME_BYTES];
     let len = encode_frame(&header, &[], &mut buf).unwrap();
 
-    let mut payload = [0u8; 496];
+    let mut payload = [0u8; MAX_PAYLOAD_BYTES];
     let (decoded, _) = decode_frame(&buf[..len], &mut payload).unwrap();
     assert_eq!(decoded.kind, FrameKind::Request);
     assert_eq!(decoded.opcode, Opcode::Hello);
@@ -133,7 +133,7 @@ fn decode_rejects_bad_magic() {
     buf[10..12].copy_from_slice(&0x1234u16.to_le_bytes());
     buf[12] = FRAME_DELIMITER;
 
-    let mut payload = [0u8; 496];
+    let mut payload = [0u8; MAX_PAYLOAD_BYTES];
     assert!(decode_frame(&buf[..13], &mut payload).is_err());
 }
 
@@ -150,7 +150,7 @@ fn decode_rejects_frame_too_large() {
     let mut buf = [0u8; MAX_FRAME_BYTES];
     let len = encode_frame(&header, &[], &mut buf).unwrap();
 
-    let mut payload = [0u8; 496];
+    let mut payload = [0u8; MAX_PAYLOAD_BYTES];
     assert!(decode_frame(&buf[..len + 1], &mut payload).is_err());
 }
 
@@ -168,7 +168,7 @@ fn key_right_press_roundtrips() {
     let mut buf = [0u8; MAX_FRAME_BYTES];
     let len = encode_frame(&header, &payload, &mut buf).unwrap();
 
-    let mut payload_out = [0u8; 496];
+    let mut payload_out = [0u8; MAX_PAYLOAD_BYTES];
     let (decoded, payload_len) = decode_frame(&buf[..len], &mut payload_out).unwrap();
     assert_eq!(decoded.opcode, Opcode::Key);
     assert_eq!(decoded.sequence, 42);
@@ -193,7 +193,7 @@ fn page_goto_payload_roundtrips() {
     let mut buf = [0u8; MAX_FRAME_BYTES];
     let len = encode_frame(&header, &payload, &mut buf).unwrap();
 
-    let mut payload_out = [0u8; 496];
+    let mut payload_out = [0u8; MAX_PAYLOAD_BYTES];
     let (decoded, payload_len) = decode_frame(&buf[..len], &mut payload_out).unwrap();
     assert_eq!(decoded.opcode, Opcode::Page);
     assert_eq!(decoded.sequence, 99);
@@ -229,7 +229,7 @@ fn status_response_payload_roundtrips() {
     let mut buf = [0u8; MAX_FRAME_BYTES];
     let len = encode_frame(&header, &payload, &mut buf).unwrap();
 
-    let mut payload_out = [0u8; 496];
+    let mut payload_out = [0u8; MAX_PAYLOAD_BYTES];
     let (decoded, payload_len) = decode_frame(&buf[..len], &mut payload_out).unwrap();
     assert_eq!(decoded.opcode, Opcode::Status);
     assert_eq!(payload_len, 11);
@@ -259,7 +259,7 @@ fn log_get_request_payload_roundtrips() {
     let mut buf = [0u8; MAX_FRAME_BYTES];
     let len = encode_frame(&header, &payload, &mut buf).unwrap();
 
-    let mut payload_out = [0u8; 496];
+    let mut payload_out = [0u8; MAX_PAYLOAD_BYTES];
     let (decoded, payload_len) = decode_frame(&buf[..len], &mut payload_out).unwrap();
     assert_eq!(decoded.opcode, Opcode::LogGet);
     assert_eq!(decoded.sequence, 55);
@@ -287,7 +287,7 @@ fn malformed_crc_is_rejected() {
     let mut bad_buf = buf;
     bad_buf[len - 3] ^= 0xFF;
 
-    let mut payload = [0u8; 496];
+    let mut payload = [0u8; MAX_PAYLOAD_BYTES];
     assert!(decode_frame(&bad_buf[..len], &mut payload).is_err());
 }
 
@@ -305,7 +305,7 @@ fn display_probe_payload_roundtrips() {
     let mut buf = [0u8; MAX_FRAME_BYTES];
     let len = encode_frame(&header, &payload, &mut buf).unwrap();
 
-    let mut payload_out = [0u8; 496];
+    let mut payload_out = [0u8; MAX_PAYLOAD_BYTES];
     let (decoded, payload_len) = decode_frame(&buf[..len], &mut payload_out).unwrap();
     assert_eq!(decoded.opcode, Opcode::DisplayProbe);
     assert_eq!(payload_len, 1);
@@ -413,7 +413,7 @@ fn crash_response_distinguishes_empty_from_present() {
     };
     let mut frame_buf = [0u8; MAX_FRAME_BYTES];
     let frame_len = encode_frame(&header, &[0x00], &mut frame_buf).unwrap();
-    let mut payload_out = [0u8; 496];
+    let mut payload_out = [0u8; MAX_PAYLOAD_BYTES];
     let (decoded, _) = decode_frame(&frame_buf[..frame_len], &mut payload_out).unwrap();
     assert_eq!(decoded.opcode, Opcode::CrashGet);
     assert_eq!(payload_out[0], 0x00);
@@ -466,20 +466,20 @@ fn decode_rejects_trailing_raw_bytes_after_declared_payload() {
     raw[10..12].copy_from_slice(&crc.to_le_bytes());
     raw[12] = 0x42;
     raw[13] = FRAME_DELIMITER;
-    let mut payload = [0u8; 496];
+    let mut payload = [0u8; MAX_PAYLOAD_BYTES];
     assert!(decode_frame(&raw[..14], &mut payload).is_err());
 }
 
 #[test]
 fn decode_rejects_encoded_frame_larger_than_maximum() {
-    let mut payload = [0u8; 500];
+    let mut payload = [0u8; MAX_PAYLOAD_BYTES + 1];
     payload[0] = 0x01;
     let header = FrameHeader {
         kind: FrameKind::Request,
         opcode: Opcode::Page,
         status: Status::Ok,
         sequence: 1,
-        payload_len: 500,
+        payload_len: MAX_PAYLOAD_BYTES as u16 + 1,
     };
     let mut buf = [0u8; MAX_FRAME_BYTES];
     assert!(encode_frame(&header, &payload, &mut buf).is_err());
@@ -509,7 +509,7 @@ fn decode_preserves_unknown_opcode_and_safe_sequence_for_error_response() {
     raw[10..12].copy_from_slice(&crc.to_le_bytes());
     let mut encoded = [0u8; MAX_FRAME_BYTES];
     let encoded_len = binbook_diagnostic_protocol::cobs_encode(&raw[..12], &mut encoded).unwrap();
-    let mut payload = [0u8; 496];
+    let mut payload = [0u8; MAX_PAYLOAD_BYTES];
     let (header, payload_len) =
         binbook_diagnostic_protocol::decode_raw_frame(&encoded[..encoded_len], &mut payload)
             .unwrap();
