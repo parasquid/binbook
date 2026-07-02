@@ -20,22 +20,14 @@ impl MemoryFs {
 impl Filesystem for MemoryFs {
     type Error = ();
 
-    fn for_each_entry(
-        &mut self,
-        visit: &mut dyn FnMut(&str, u64),
-    ) -> Result<(), Self::Error> {
+    fn for_each_entry(&mut self, visit: &mut dyn FnMut(&str, u64)) -> Result<(), Self::Error> {
         for (name, bytes) in &self.files {
             visit(name, bytes.len() as u64);
         }
         Ok(())
     }
 
-    fn read_at(
-        &mut self,
-        name: &str,
-        offset: u64,
-        out: &mut [u8],
-    ) -> Result<(), Self::Error> {
+    fn read_at(&mut self, name: &str, offset: u64, out: &mut [u8]) -> Result<(), Self::Error> {
         let bytes = self.files.get(name).ok_or(())?;
         let start = usize::try_from(offset).map_err(|_| ())?;
         let end = start.checked_add(out.len()).ok_or(())?;
@@ -51,8 +43,10 @@ impl Filesystem for MemoryFs {
 #[test]
 fn enumerates_only_valid_binbooks() {
     let mut fs = MemoryFs::new();
-    fs.files.insert("book_a.binbook".to_string(), BOOK_A.to_vec());
-    fs.files.insert("notes.txt".to_string(), b"not a book".to_vec());
+    fs.files
+        .insert("book_a.binbook".to_string(), BOOK_A.to_vec());
+    fs.files
+        .insert("notes.txt".to_string(), b"not a book".to_vec());
     fs.files
         .insert("corrupt.binbook".to_string(), b"BINBOOK\0garbage".to_vec());
 

@@ -55,10 +55,7 @@ pub fn enumerate_into<F: Filesystem>(
     for (name, size) in collected {
         // Clone `name` to break the borrow: FsReadAt references the temporary
         // clone (stack-copy, no alloc), freeing `name` for the move below.
-        let page_count = match Book::open(
-            FsReadAt::new(fs, name.clone().as_str()),
-            &mut scratch,
-        ) {
+        let page_count = match Book::open(FsReadAt::new(fs, name.clone().as_str()), &mut scratch) {
             Ok(book) => book.page_count(),
             Err(_) => continue,
         };

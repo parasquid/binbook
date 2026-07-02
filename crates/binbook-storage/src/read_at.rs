@@ -34,14 +34,12 @@ impl<'a, F: Filesystem> ReadAt for FsReadAt<'a, F> {
     type Error = FsReadError<F::Error>;
 
     fn len(&mut self) -> Result<u64, Self::Error> {
-        self.fs
-            .file_size(self.name)
-            .map_err(|e| FsReadError::Backend(e))
+        self.fs.file_size(self.name).map_err(FsReadError::Backend)
     }
 
     fn read_exact_at(&mut self, offset: u64, out: &mut [u8]) -> Result<(), Self::Error> {
         self.fs
             .read_at(self.name, offset, out)
-            .map_err(|e| FsReadError::Backend(e))
+            .map_err(FsReadError::Backend)
     }
 }

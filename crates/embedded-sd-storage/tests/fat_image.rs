@@ -17,11 +17,7 @@ struct RamBlockDevice {
 impl BlockDevice for RamBlockDevice {
     type Error = core::convert::Infallible;
 
-    fn read(
-        &self,
-        blocks: &mut [Block],
-        start: BlockIdx,
-    ) -> Result<(), Self::Error> {
+    fn read(&self, blocks: &mut [Block], start: BlockIdx) -> Result<(), Self::Error> {
         for (i, block) in blocks.iter_mut().enumerate() {
             let idx = (start.0 as usize) + i;
             *block = self.blocks[idx].clone();
@@ -29,11 +25,7 @@ impl BlockDevice for RamBlockDevice {
         Ok(())
     }
 
-    fn write(
-        &self,
-        _blocks: &[Block],
-        _start: BlockIdx,
-    ) -> Result<(), Self::Error> {
+    fn write(&self, _blocks: &[Block], _start: BlockIdx) -> Result<(), Self::Error> {
         unimplemented!("read-only test")
     }
 
@@ -46,8 +38,7 @@ struct FixedTime;
 
 impl TimeSource for FixedTime {
     fn get_timestamp(&self) -> embedded_sdmmc::Timestamp {
-        embedded_sdmmc::Timestamp::from_calendar(2026, 7, 1, 12, 0, 0)
-            .expect("valid timestamp")
+        embedded_sdmmc::Timestamp::from_calendar(2026, 7, 1, 12, 0, 0).expect("valid timestamp")
     }
 }
 
@@ -73,10 +64,7 @@ fn enumerates_and_reads_file_from_fat_image() {
         .unwrap();
 
     let book = names.iter().find(|(n, _)| n.contains("BOOK_A"));
-    assert!(
-        book.is_some(),
-        "BOOK_A should be found, got: {names:?}"
-    );
+    assert!(book.is_some(), "BOOK_A should be found, got: {names:?}");
 
     let mut buf = [0u8; 8];
     storage

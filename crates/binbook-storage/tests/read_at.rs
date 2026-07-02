@@ -21,22 +21,14 @@ impl MemoryFs {
 impl Filesystem for MemoryFs {
     type Error = ();
 
-    fn for_each_entry(
-        &mut self,
-        visit: &mut dyn FnMut(&str, u64),
-    ) -> Result<(), Self::Error> {
+    fn for_each_entry(&mut self, visit: &mut dyn FnMut(&str, u64)) -> Result<(), Self::Error> {
         for (name, bytes) in &self.files {
             visit(name, bytes.len() as u64);
         }
         Ok(())
     }
 
-    fn read_at(
-        &mut self,
-        name: &str,
-        offset: u64,
-        out: &mut [u8],
-    ) -> Result<(), Self::Error> {
+    fn read_at(&mut self, name: &str, offset: u64, out: &mut [u8]) -> Result<(), Self::Error> {
         let bytes = self.files.get(name).ok_or(())?;
         let start = usize::try_from(offset).map_err(|_| ())?;
         let end = start.checked_add(out.len()).ok_or(())?;

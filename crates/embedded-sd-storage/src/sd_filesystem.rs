@@ -11,7 +11,10 @@ use embedded_sdmmc::{BlockDevice, SdCard, VolumeIdx, VolumeManager};
 /// SFN is stored space-padded: 8 bytes base + 3 bytes extension.
 /// The Display output is `BASENAME.EXT` (dot omitted when extension is empty).
 /// Max output length is 12 (8 + '.' + 3).
-fn format_short_name<'a>(name: &embedded_sdmmc::filesystem::ShortFileName, buf: &'a mut [u8; 13]) -> &'a str {
+fn format_short_name<'a>(
+    name: &embedded_sdmmc::filesystem::ShortFileName,
+    buf: &'a mut [u8; 13],
+) -> &'a str {
     let base = name.base_name();
     let ext = name.extension();
     let mut pos = 0;
@@ -52,9 +55,7 @@ pub enum StorageError<D: BlockDevice> {
 
 // --- Hardware path: construct from SPI device + delay ---
 
-impl<SPI: SpiDevice<u8>, DELAY: DelayNs, TIME: TimeSource>
-    SdStorage<SdCard<SPI, DELAY>, TIME>
-{
+impl<SPI: SpiDevice<u8>, DELAY: DelayNs, TIME: TimeSource> SdStorage<SdCard<SPI, DELAY>, TIME> {
     /// Construct from an SPI device + delay (real hardware path).
     pub fn new(spi: SPI, delay: DELAY, time: TIME) -> Self {
         let sdcard = SdCard::new(spi, delay);
@@ -81,9 +82,7 @@ impl<D: BlockDevice, TIME: TimeSource> SdStorage<D, TIME> {
             .volume_mgr
             .open_volume(VolumeIdx(0))
             .map_err(StorageError::Sdmmc)?;
-        let dir = volume
-            .open_root_dir()
-            .map_err(StorageError::Sdmmc)?;
+        let dir = volume.open_root_dir().map_err(StorageError::Sdmmc)?;
 
         let mut lfn_storage = [0u8; 256];
         let mut lfn_buf = LfnBuffer::new(&mut lfn_storage);
@@ -114,9 +113,7 @@ impl<D: BlockDevice, TIME: TimeSource> SdStorage<D, TIME> {
             .volume_mgr
             .open_volume(VolumeIdx(0))
             .map_err(StorageError::Sdmmc)?;
-        let dir = volume
-            .open_root_dir()
-            .map_err(StorageError::Sdmmc)?;
+        let dir = volume.open_root_dir().map_err(StorageError::Sdmmc)?;
 
         let file = dir
             .open_file_in_dir(name, Mode::ReadOnly)
@@ -142,9 +139,7 @@ impl<D: BlockDevice, TIME: TimeSource> SdStorage<D, TIME> {
             .volume_mgr
             .open_volume(VolumeIdx(0))
             .map_err(StorageError::Sdmmc)?;
-        let dir = volume
-            .open_root_dir()
-            .map_err(StorageError::Sdmmc)?;
+        let dir = volume.open_root_dir().map_err(StorageError::Sdmmc)?;
 
         let file = dir
             .open_file_in_dir(name, Mode::ReadOnly)

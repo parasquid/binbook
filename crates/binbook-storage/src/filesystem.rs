@@ -11,19 +11,11 @@ pub trait Filesystem {
     /// Visit every entry in the listed directory. The callback is called once
     /// per entry with its filename (UTF-8, no path separators) and byte length.
     /// Non-UTF-8 names are skipped by the implementation.
-    fn for_each_entry(
-        &mut self,
-        visit: &mut dyn FnMut(&str, u64),
-    ) -> Result<(), Self::Error>;
+    fn for_each_entry(&mut self, visit: &mut dyn FnMut(&str, u64)) -> Result<(), Self::Error>;
 
     /// Open `name` for reading and read `out.len()` bytes at byte `offset`.
     /// Returns `Err(NotFound)` if the file is absent.
-    fn read_at(
-        &mut self,
-        name: &str,
-        offset: u64,
-        out: &mut [u8],
-    ) -> Result<(), Self::Error>;
+    fn read_at(&mut self, name: &str, offset: u64, out: &mut [u8]) -> Result<(), Self::Error>;
 
     /// Total byte length of `name`, or an error if absent.
     fn file_size(&mut self, name: &str) -> Result<u64, Self::Error>;
@@ -63,22 +55,14 @@ pub mod test_helpers {
     impl Filesystem for MemoryFs {
         type Error = ();
 
-        fn for_each_entry(
-            &mut self,
-            visit: &mut dyn FnMut(&str, u64),
-        ) -> Result<(), Self::Error> {
+        fn for_each_entry(&mut self, visit: &mut dyn FnMut(&str, u64)) -> Result<(), Self::Error> {
             for (name, bytes) in &self.files {
                 visit(name, bytes.len() as u64);
             }
             Ok(())
         }
 
-        fn read_at(
-            &mut self,
-            name: &str,
-            offset: u64,
-            out: &mut [u8],
-        ) -> Result<(), Self::Error> {
+        fn read_at(&mut self, name: &str, offset: u64, out: &mut [u8]) -> Result<(), Self::Error> {
             let bytes = self.files.get(name).ok_or(())?;
             let start = usize::try_from(offset).map_err(|_| ())?;
             let end = start.checked_add(out.len()).ok_or(())?;
@@ -96,11 +80,11 @@ pub mod test_helpers {
 mod tests {
     extern crate std;
 
-    use super::*;
     use super::test_helpers::MemoryFs;
+    use super::*;
     use std::string::ToString;
-    use std::vec::Vec;
     use std::vec;
+    use std::vec::Vec;
 
     /// Verify the StorageError variants exist and are constructible.
     #[test]
@@ -129,7 +113,8 @@ mod tests {
     #[test]
     fn memory_fs_read_at() {
         let mut fs = MemoryFs::default();
-        fs.files.insert("data".to_string(), b"Hello, World!".to_vec());
+        fs.files
+            .insert("data".to_string(), b"Hello, World!".to_vec());
 
         let mut buf = [0u8; 5];
         fs.read_at("data", 0, &mut buf).unwrap();
