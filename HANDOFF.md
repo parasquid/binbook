@@ -16,7 +16,7 @@ Implemented timing instrumentation across the diagnostic protocol, firmware runt
 | Readable CLI event names | `crates/binbook/src/diag_response.rs` | `cargo test -p binbook --features serial-device` passed |
 | Request receive/start/end events | `firmware/crates/binbook-fw/src/runtime/display_task.rs`, `runtime_engine.rs`, `runtime_aggregator.rs` | `cargo test -p binbook-fw --features diagnostic-console` passed |
 | Input enqueue/drop timing | `firmware/crates/binbook-fw/src/runtime/input_task.rs` | `runtime_aggregator_events.rs` tests passed |
-| SSD1677 busy-wait observer | `crates/ssd1677-driver/src/wait.rs`, `refresh.rs` | `cargo test -p ssd1677-driver` passed |
+| SSD1677 busy-wait observer | `crates/ssd1677-driver/src/wait.rs`, `refresh.rs` | `cargo test -p ssd1677-driver` passed; regression verifies ready-after-delay reports accumulated elapsed poll time |
 | Observer plumbing through X4 display | `crates/xteink-x4-display/src/panel.rs`, `native.rs`, `render.rs`, `probes.rs` | `cargo test -p xteink-x4-display` passed |
 | Firmware hardware observer bridge | `firmware/crates/binbook-fw/src/runtime/display_backend.rs` | Firmware target and diagnostic builds passed |
 | Host timing analyzer | `scripts/analyze_timing.py`, `tests/test_timing_analysis.py` | `uv run pytest -q tests/test_timing_analysis.py` passed; live capture produced a timeline |
@@ -42,18 +42,9 @@ cd firmware && RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nigh
 cd firmware && RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console --target riscv32imc-unknown-none-elf --release
 ```
 
-### Known host gate issue
+### Current host gate status
 
-`cargo fmt --all -- --check` still reports formatting diffs in pre-existing unrelated storage files. These files are not part of the timing implementation diff except for the intentional clippy fix in `crates/binbook-storage/src/read_at.rs`:
-
-- `crates/binbook-storage/src/enumerate.rs`
-- `crates/binbook-storage/src/filesystem.rs`
-- `crates/binbook-storage/tests/enumerate.rs`
-- `crates/binbook-storage/tests/read_at.rs`
-- `crates/embedded-sd-storage/src/sd_filesystem.rs`
-- `crates/embedded-sd-storage/tests/fat_image.rs`
-
-Touched Rust packages were formatted with package-scoped `cargo fmt` commands. Formatting-only spillover in storage files was removed from the diff.
+`cargo fmt --all -- --check` and `uv run ruff format --check .` pass on the formatted workspace.
 
 ### Live hardware evidence
 
@@ -92,7 +83,7 @@ Verified diagnostic HELLO:
 cargo run -p binbook --features serial-device -- diag hello --port /dev/ttyACM0
 ```
 
-Output:
+Output from the pre-fix hardware capture:
 
 ```text
 protocol=2 max_frame=4126 capabilities=KEY,PAGE,STATUS,LOG,CRASH,DISPLAY_PROBE,STORAGE firmware=binbook-fw target=xteink-x4
@@ -152,6 +143,22 @@ turn=1 input_to_enqueue_ms=0 enqueue_to_receive_ms=0 receive_to_display_start_ms
 summary count=1 min=893 max=893 avg=893 p95=893
 ```
 
+The `busy_wait_ms=1` value came from the original SSD1677 observer reporting the final poll interval on the ready path rather than accumulated elapsed polling time.
+
+Post-fix live recapture on the same device produced:
+
+```text
+seq=31 tick_ms=55649 level=1 subsystem=1 event=BUSY_WAIT_START arg0=2 arg1=60000 arg2=1
+seq=32 tick_ms=56150 level=1 subsystem=1 event=BUSY_WAIT_END arg0=2 arg1=474 arg2=0
+```
+
+Post-fix analyzer output:
+
+```text
+turn=1 input_to_enqueue_ms=0 enqueue_to_receive_ms=0 receive_to_display_start_ms=3 display_request_ms=893 busy_wait_ms=474 input_to_page_ms=893 bottleneck=display_request
+summary count=1 min=893 max=893 avg=893 p95=893
+```
+
 Captured webcam evidence from `/dev/video1`:
 
 ```bash
@@ -166,6 +173,7 @@ Observed image content: the Xteink X4 display is visible and shows `PAGE 01` wit
 
 - The live analyzer evidence used a diagnostic `page next` command, so `REQUEST_ENQUEUE` and `INPUT_DECISION` are not present. The analyzer uses the matching `CMD_RECEIPT` as the origin for diagnostic-command timelines. Physical button timing remains covered by host tests and should be captured separately if physical-input latency is required.
 - `REQUEST_RECEIVE.arg2` is `-1` for queue age in the live diagnostic path because no enqueue timestamp is carried through the request object. This is intentional; the implementation does not fabricate timing data.
+- The first listed live timing capture predates the busy-wait elapsed-time fix. Use the post-fix recapture above for hardware `busy_wait_ms` decisions.
 - Visual webcam evidence was captured for the `PAGE 01` state at `/tmp/binbook-x4-evidence/x4-display-page1.jpg`. Full probe-specific visual verification (`window-corners`, `clear-white`, `full-refresh-current`) was not run because the timing instrumentation acceptance was verified through serial/state/log timing evidence and the page-turn display image.
 
 ## Files Modified For Timing Work

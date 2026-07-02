@@ -120,22 +120,23 @@ def build_timelines(records: list[LogRecord]) -> list[Timeline]:
             if record.event == "BUSY_WAIT_END"
             and display_start.tick_ms <= record.tick_ms <= display_end.tick_ms
         )
+        input_to_enqueue_ms = elapsed_ms(input_decision.tick_ms, enqueue.tick_ms)
+        enqueue_to_receive_ms = elapsed_ms(enqueue.tick_ms, receive.tick_ms)
+        receive_to_display_start_ms = elapsed_ms(receive.tick_ms, display_start.tick_ms)
+        input_to_page_ms = elapsed_ms(input_decision.tick_ms, page_turn.tick_ms)
         timelines.append(
             Timeline(
-                input_to_enqueue_ms=enqueue.tick_ms - input_decision.tick_ms,
-                enqueue_to_receive_ms=receive.tick_ms - enqueue.tick_ms,
-                receive_to_display_start_ms=display_start.tick_ms - receive.tick_ms,
+                input_to_enqueue_ms=input_to_enqueue_ms,
+                enqueue_to_receive_ms=enqueue_to_receive_ms,
+                receive_to_display_start_ms=receive_to_display_start_ms,
                 display_request_ms=display_end.arg1,
                 busy_wait_ms=busy_wait_ms,
-                input_to_page_ms=page_turn.tick_ms - input_decision.tick_ms,
+                input_to_page_ms=input_to_page_ms,
                 bottleneck_stage=bottleneck_stage(
                     [
-                        ("input_to_enqueue", enqueue.tick_ms - input_decision.tick_ms),
-                        ("enqueue_to_receive", receive.tick_ms - enqueue.tick_ms),
-                        (
-                            "receive_to_display_start",
-                            display_start.tick_ms - receive.tick_ms,
-                        ),
+                        ("input_to_enqueue", input_to_enqueue_ms),
+                        ("enqueue_to_receive", enqueue_to_receive_ms),
+                        ("receive_to_display_start", receive_to_display_start_ms),
                         ("display_request", display_end.arg1),
                         ("busy_wait", busy_wait_ms),
                     ]
@@ -143,6 +144,10 @@ def build_timelines(records: list[LogRecord]) -> list[Timeline]:
             )
         )
     return timelines
+
+
+def elapsed_ms(start_ms: int, end_ms: int) -> int:
+    return max(0, end_ms - start_ms)
 
 
 def last_event(records: list[LogRecord], event: str) -> LogRecord | None:

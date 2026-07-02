@@ -78,3 +78,14 @@ def test_diagnostic_command_page_turn_uses_command_receipt_as_origin() -> None:
     assert summary.busy_wait_ms == 1
     assert summary.input_to_page_ms == 893
     assert summary.bottleneck_stage == "display_request"
+
+
+def test_diagnostic_command_timing_clamps_out_of_order_stage_ticks() -> None:
+    text = DIAGNOSTIC_PAGE_LOG.replace(
+        "seq=27 tick_ms=42965 level=2 subsystem=3 event=REQUEST_RECEIVE",
+        "seq=27 tick_ms=42962 level=2 subsystem=3 event=REQUEST_RECEIVE",
+    )
+
+    [summary] = timing.build_timelines(timing.parse_log_text(text))
+
+    assert summary.enqueue_to_receive_ms == 0
