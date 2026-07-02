@@ -119,6 +119,154 @@ fn nav_burst_exercise_uses_key_batches_and_validates_logs() {
     assert!(text.contains("\"boundary_key_count\":5"));
 }
 
+#[test]
+fn page_turn_cadence_exercise_sends_sequential_keys_and_writes_evidence() {
+    let mut io = ScriptedExerciseIo::new(page_turn_cadence_responses());
+    let mut evidence = Vec::new();
+    let result = binbook::page_turn_cadence::run_page_turn_cadence_io(
+        &mut io,
+        binbook::page_turn_cadence::PageTurnCadenceOptions {
+            port: PORT,
+            key: binbook_diagnostic_protocol::KeyCode::Down,
+            start_page: 0,
+            turns: 2,
+            rounds: 1,
+            min_gap_ms: 0,
+            max_gap_ms: 0,
+            coarse_step_ms: 50,
+            refine_step_ms: 10,
+        },
+        &mut evidence,
+    );
+
+    assert!(
+        result.is_ok(),
+        "page-turn-cadence exercise should run: {result:?}"
+    );
+    assert_eq!(io.index, io.reads.len());
+    assert_eq!(
+        decoded_request_transcript(&io.written),
+        [
+            (Opcode::Page, 1),
+            (Opcode::LogClear, 2),
+            (Opcode::Key, 3),
+            (Opcode::Key, 4),
+            (Opcode::Status, 5),
+            (Opcode::LogGet, 6),
+        ]
+    );
+    let text = String::from_utf8(evidence).unwrap();
+    assert!(text.contains("\"kind\":\"trial_result\""));
+    assert!(text.contains("\"gap_ms\":0"));
+    assert!(
+        text.find("\"kind\":\"key_sent\"").unwrap()
+            < text.find("\"kind\":\"key_response\"").unwrap()
+    );
+    let second_key_sent = text
+        .lines()
+        .find(|line| {
+            line.contains("\"kind\":\"key_sent\"")
+                && line.contains("\"turn_index\":1")
+                && line.contains("\"sequence\":4")
+        })
+        .expect("second key_sent record");
+    assert!(second_key_sent.contains("\"host_elapsed_ms\":0"));
+    assert!(second_key_sent.contains("\"host_unix_ms\":"));
+    let first_key_response = text
+        .lines()
+        .find(|line| line.contains("\"kind\":\"key_response\""))
+        .expect("key_response record");
+    assert!(first_key_response.contains("\"host_unix_ms\":"));
+    assert!(text.contains("\"all_ok\":true"));
+}
+
+fn page_turn_cadence_responses() -> Vec<Vec<u8>> {
+    let records = [
+        log_record(
+            1,
+            100,
+            binbook_diagnostic_protocol::EVT_CMD_RECEIPT,
+            5,
+            3,
+            0,
+        ),
+        log_record(
+            2,
+            100,
+            binbook_diagnostic_protocol::EVT_TURN_STARTED,
+            3,
+            0,
+            1,
+        ),
+        log_record(3, 350, binbook_diagnostic_protocol::EVT_PAGE_TURN, 0, 1, 0),
+        log_record(
+            4,
+            351,
+            binbook_diagnostic_protocol::EVT_TURN_DEQUEUED,
+            3,
+            1,
+            0,
+        ),
+        log_record(
+            5,
+            360,
+            binbook_diagnostic_protocol::EVT_CMD_RECEIPT,
+            5,
+            4,
+            0,
+        ),
+        log_record(
+            6,
+            360,
+            binbook_diagnostic_protocol::EVT_GRAY_DELAY_CANCELLED,
+            1,
+            0,
+            0,
+        ),
+        log_record(
+            7,
+            370,
+            binbook_diagnostic_protocol::EVT_TURN_STARTED,
+            4,
+            1,
+            2,
+        ),
+        log_record(8, 620, binbook_diagnostic_protocol::EVT_PAGE_TURN, 1, 2, 0),
+        log_record(
+            9,
+            621,
+            binbook_diagnostic_protocol::EVT_TURN_DEQUEUED,
+            4,
+            2,
+            0,
+        ),
+        log_record(
+            10,
+            980,
+            binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_START,
+            2,
+            0,
+            0,
+        ),
+        log_record(
+            11,
+            1_020,
+            binbook_diagnostic_protocol::EVT_GRAY_OVERLAY_COMPLETE,
+            2,
+            0,
+            0,
+        ),
+    ];
+    let mut reads = Vec::new();
+    reads.extend(fragment(page_response(1, 0)));
+    reads.extend(fragment(log_response(Opcode::LogClear, 2, 1, 0, &[])));
+    reads.extend(fragment(ack(3, Opcode::Key)));
+    reads.extend(fragment(ack(4, Opcode::Key)));
+    reads.extend(fragment(status_response(5, nav_status(2))));
+    reads.extend(fragment(log_response(Opcode::LogGet, 6, 12, 0, &records)));
+    reads
+}
+
 fn nav_burst_responses() -> Vec<Vec<u8>> {
     let expected = binbook::nav_burst::INTERIOR_EXPECTED;
     let mut records = Vec::new();

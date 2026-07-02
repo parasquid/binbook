@@ -21,6 +21,7 @@ pub enum DisplayProbeKind {
     FullRefreshCurrent,
     ClearWhite,
     WindowCorners,
+    PartialWindowBusyMatrix,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,6 +203,9 @@ pub fn dispatch_command(
             Ok(ProbeCode::ClearWhite) => DispatchResult::DisplayProbe(DisplayProbeKind::ClearWhite),
             Ok(ProbeCode::WindowCorners) => {
                 DispatchResult::DisplayProbe(DisplayProbeKind::WindowCorners)
+            }
+            Ok(ProbeCode::PartialWindowBusyMatrix) => {
+                DispatchResult::DisplayProbe(DisplayProbeKind::PartialWindowBusyMatrix)
             }
             Err(_) => DispatchResult::Response {
                 status: Status::BadRequest,

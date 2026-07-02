@@ -8,6 +8,8 @@ mod error;
 mod input;
 mod inspect;
 pub mod nav_burst;
+pub mod page_turn_cadence;
+pub mod partial_window_busy;
 pub mod protocol;
 
 #[cfg(feature = "serial-device")]

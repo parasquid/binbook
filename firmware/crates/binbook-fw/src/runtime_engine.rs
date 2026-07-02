@@ -245,6 +245,53 @@ pub enum RuntimeEventKind {
         from: u32,
         target: u32,
     },
+    BwRefreshStarted {
+        sequence: Option<u16>,
+        from: u32,
+        target: u32,
+    },
+    BwBusyAsserted {
+        sequence: Option<u16>,
+        from: u32,
+        target: u32,
+    },
+    BwBusyReady {
+        sequence: Option<u16>,
+        target: u32,
+        elapsed_ms: u32,
+    },
+    PartialWindowCaseStarted {
+        case: u8,
+        round: u16,
+        polarity: i32,
+    },
+    PartialWindowGeometry {
+        case: u8,
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+    },
+    PartialWindowSize {
+        case: u8,
+        bytes_per_plane: u32,
+        total_bytes: u32,
+    },
+    PartialWindowRamWrite {
+        case: u8,
+        red_ms: u32,
+        black_ms: u32,
+    },
+    PartialWindowBusy {
+        case: u8,
+        busy_ms: u32,
+        status: BusyWaitStatus,
+    },
+    PartialWindowCaseEnded {
+        case: u8,
+        duration_ms: u32,
+        status: i32,
+    },
     TurnBoundaryNoop {
         sequence: Option<u16>,
         page: u32,
@@ -418,6 +465,9 @@ fn map_probe(kind: xteink_x4_display::probes::ProbeKind) -> DisplayProbeKind {
         }
         xteink_x4_display::probes::ProbeKind::ClearWhite => DisplayProbeKind::ClearWhite,
         xteink_x4_display::probes::ProbeKind::WindowCorners => DisplayProbeKind::WindowCorners,
+        xteink_x4_display::probes::ProbeKind::PartialWindowBusyMatrix => {
+            DisplayProbeKind::PartialWindowBusyMatrix
+        }
     }
 }
 

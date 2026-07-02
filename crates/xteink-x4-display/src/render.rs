@@ -12,7 +12,7 @@ use crate::{
     page_source::{read_x4_page, required_plane, PlaneDecoder},
     panel::{RefreshMode, X4Panel},
     plane_write::{write_plane, PlaneWrite},
-    profile::{CHUNK_COUNT, CHUNK_ROWS, PHYSICAL_WIDTH, ROW_BYTES},
+    profile::{PHYSICAL_HEIGHT, PHYSICAL_WIDTH, ROW_BYTES},
     DisplayResult,
 };
 
@@ -64,38 +64,33 @@ where
     let mut msb = PlaneDecoder::new(required_plane(page.planes, PlaneSlot::OverlayMsb)?);
     let mut lsb = PlaneDecoder::new(required_plane(page.planes, PlaneSlot::OverlayLsb)?);
     let mut base = PlaneDecoder::new(required_plane(page.planes, PlaneSlot::FastBase)?);
-    for strip in 0..CHUNK_COUNT {
-        panel.controller().set_window(
-            0,
-            u16::from(strip) * CHUNK_ROWS,
-            PHYSICAL_WIDTH,
-            CHUNK_ROWS,
-        )?;
-        let mut error = None;
-        panel
-            .controller()
-            .write_red_frame_rows::<ROW_BYTES>(CHUNK_ROWS, |_, output| {
-                if error.is_some() {
-                    output.fill(0xff);
-                    return;
-                }
-                if let Err(value) = fill_absolute_row(
-                    book,
-                    (&mut msb, input0, row0),
-                    (&mut lsb, input1, row1),
-                    (&mut base, input2, row2),
-                    output,
-                    buffers.black,
-                ) {
-                    error = Some(value);
-                    output.fill(0xff);
-                }
-            })?;
-        if let Some(error) = error {
-            return Err(error);
-        }
-        delay.delay_ns(0).await;
+    panel
+        .controller()
+        .set_window(0, 0, PHYSICAL_WIDTH, PHYSICAL_HEIGHT)?;
+    let mut error = None;
+    panel
+        .controller()
+        .write_red_frame_rows::<ROW_BYTES>(PHYSICAL_HEIGHT, |_, output| {
+            if error.is_some() {
+                output.fill(0xff);
+                return;
+            }
+            if let Err(value) = fill_absolute_row(
+                book,
+                (&mut msb, input0, row0),
+                (&mut lsb, input1, row1),
+                (&mut base, input2, row2),
+                output,
+                buffers.black,
+            ) {
+                error = Some(value);
+                output.fill(0xff);
+            }
+        })?;
+    if let Some(error) = error {
+        return Err(error);
     }
+    delay.delay_ns(0).await;
     msb.finish()?;
     lsb.finish()?;
     base.finish()?;
@@ -103,39 +98,31 @@ where
     let mut lsb = PlaneDecoder::new(required_plane(page.planes, PlaneSlot::OverlayLsb)?);
     let mut base = PlaneDecoder::new(required_plane(page.planes, PlaneSlot::FastBase)?);
     row0.fill(0);
-    for strip in 0..CHUNK_COUNT {
-        panel.controller().set_window(
-            0,
-            u16::from(strip) * CHUNK_ROWS,
-            PHYSICAL_WIDTH,
-            CHUNK_ROWS,
-        )?;
-        let mut error = None;
-        panel
-            .controller()
-            .write_frame_rows::<ROW_BYTES>(CHUNK_ROWS, |_, output| {
-                if error.is_some() {
-                    output.fill(0xff);
-                    return;
-                }
-                let result = lsb
-                    .fill(book, input1, row1)
-                    .and_then(|()| base.fill(book, input2, row2))
-                    .and_then(|()| {
-                        gray2_render::staged_row_to_absolute(row0, row1, row2, buffers.red, output)
-                            .map_err(Into::into)
-                    });
-                if let Err(value) = result {
-                    error = Some(value);
-                    output.fill(0xff);
-                }
-            })?;
-        if let Some(error) = error {
-            return Err(error);
-        }
-        if strip + 1 < CHUNK_COUNT {
-            delay.delay_ns(0).await;
-        }
+    panel
+        .controller()
+        .set_window(0, 0, PHYSICAL_WIDTH, PHYSICAL_HEIGHT)?;
+    let mut error = None;
+    panel
+        .controller()
+        .write_frame_rows::<ROW_BYTES>(PHYSICAL_HEIGHT, |_, output| {
+            if error.is_some() {
+                output.fill(0xff);
+                return;
+            }
+            let result = lsb
+                .fill(book, input1, row1)
+                .and_then(|()| base.fill(book, input2, row2))
+                .and_then(|()| {
+                    gray2_render::staged_row_to_absolute(row0, row1, row2, buffers.red, output)
+                        .map_err(Into::into)
+                });
+            if let Err(value) = result {
+                error = Some(value);
+                output.fill(0xff);
+            }
+        })?;
+    if let Some(error) = error {
+        return Err(error);
     }
     lsb.finish()?;
     base.finish()?;

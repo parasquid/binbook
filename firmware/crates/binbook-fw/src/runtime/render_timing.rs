@@ -7,11 +7,19 @@ use binbook_fw::runtime_engine::{RuntimeEvent, RuntimeEventKind};
 
 use super::RUNTIME_EVENT_CHANNEL;
 
-pub(super) struct RuntimeRenderTimingObserver;
+pub(super) struct RuntimeRenderTimingObserver {
+    sequence: Option<u16>,
+    from: u32,
+    target: u32,
+}
 
 impl RuntimeRenderTimingObserver {
-    pub(super) const fn new() -> Self {
-        Self
+    pub(super) const fn new(sequence: Option<u16>, from: u32, target: u32) -> Self {
+        Self {
+            sequence,
+            from,
+            target,
+        }
     }
 }
 
@@ -61,6 +69,13 @@ impl RenderTimingObserver for RuntimeRenderTimingObserver {
     }
 
     fn refresh_trigger(&mut self, mode: RefreshMode, duration_ms: u32, status: RenderStageStatus) {
+        if mode == RefreshMode::Partial && status == RenderStageStatus::Ok {
+            send_timing_event(RuntimeEventKind::BwRefreshStarted {
+                sequence: self.sequence,
+                from: self.from,
+                target: self.target,
+            });
+        }
         send_timing_event(RuntimeEventKind::RefreshTrigger {
             mode: refresh_mode_code(mode),
             duration_ms,

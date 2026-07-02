@@ -205,6 +205,9 @@ async fn handle_display_command(
                 binbook_fw::diag::DisplayProbeKind::WindowCorners => {
                     DisplayProbeKind::WindowCorners
                 }
+                binbook_fw::diag::DisplayProbeKind::PartialWindowBusyMatrix => {
+                    DisplayProbeKind::PartialWindowBusyMatrix
+                }
             },
             completion_sequence: pending.header.sequence,
         },

@@ -250,6 +250,7 @@ pub enum ProbeCode {
     FullRefreshCurrent = 0x01,
     ClearWhite = 0x02,
     WindowCorners = 0x03,
+    PartialWindowBusyMatrix = 0x04,
 }
 
 impl ProbeCode {
@@ -258,6 +259,7 @@ impl ProbeCode {
             0x01 => Some(ProbeCode::FullRefreshCurrent),
             0x02 => Some(ProbeCode::ClearWhite),
             0x03 => Some(ProbeCode::WindowCorners),
+            0x04 => Some(ProbeCode::PartialWindowBusyMatrix),
             _ => None,
         }
     }

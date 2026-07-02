@@ -233,6 +233,28 @@ fn diag_probe_clear_white_maps_to_render_request() {
 
 #[cfg(feature = "diagnostic-console")]
 #[test]
+fn diag_probe_partial_window_busy_maps_to_render_request() {
+    use binbook_fw::diag::{dispatch_command, CommandContext, DispatchResult};
+    use binbook_fw::diag_storage::UnavailableStorage;
+    let header = binbook_diagnostic_protocol::FrameHeader {
+        kind: binbook_diagnostic_protocol::FrameKind::Request,
+        opcode: binbook_diagnostic_protocol::Opcode::DisplayProbe,
+        status: binbook_diagnostic_protocol::Status::Ok,
+        sequence: 9,
+        payload_len: 1,
+    };
+    let mut ctx = CommandContext::new(0, 10, 0, 0);
+    let mut resp_buf = [0u8; 496];
+    let mut storage = UnavailableStorage;
+    let result = dispatch_command(header, &[0x04], &mut ctx, &mut resp_buf, &mut storage);
+    assert_eq!(
+        result,
+        DispatchResult::DisplayProbe(binbook_fw::diag::DisplayProbeKind::PartialWindowBusyMatrix)
+    );
+}
+
+#[cfg(feature = "diagnostic-console")]
+#[test]
 fn diag_probe_unknown_code_returns_error() {
     use binbook_fw::diag::{dispatch_command, CommandContext, DispatchResult};
     use binbook_fw::diag_storage::UnavailableStorage;

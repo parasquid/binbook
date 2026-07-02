@@ -86,6 +86,20 @@ The basic integration flow is:
 
 The `xteink-x4-display` crate is the only reusable owner of X4 dimensions, rotation, staged waveform policy, chunk geometry, page-turn semantics, and refresh state.
 
+## X4 full-window plane streaming
+
+`xteink-x4-display` uses full-window SSD1677 RAM writes for non-cancellable full-plane operations. Each controller plane write sets one full-screen RAM window and streams the full physical `800x480` plane in a single `0x24` BW RAM or `0x26` RED RAM transfer.
+
+Current full-window paths:
+
+- BW differential page turn: stream the previous fast-base plane to RED RAM, stream the target fast-base plane to BW RAM, then trigger the partial refresh.
+- Recovery seed: stream the fast-base plane to both RED and BW RAM, then trigger the full refresh.
+- Absolute grayscale: stream the absolute RED and BW controller planes once each before the grayscale refresh.
+
+Cancellable operations remain strip-based. `render_staged_overlay` and BW base synchronization check cancellation between bounded row strips so a pending page-turn event can prevent refresh activation. Full-window writes are intentionally used only where mid-plane cancellation is not part of the behavior.
+
+Live hardware timing showed the page-turn path reduced `dequeue_to_bw_start` to roughly `255-259 ms`; the fastest BW refresh activation point was `525 ms`; the fastest reliable gray-safe cadence was `775 ms`; and the panel BUSY interval stayed roughly `501 ms`. Full-window streaming removes strip setup overhead before refresh activation, but it does not reduce panel waveform BUSY time.
+
 ## Build and test commands
 
 Run all host tests from the repository root:

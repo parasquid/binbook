@@ -36,7 +36,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 mod runtime;
 
 #[cfg(target_arch = "riscv32")]
-const DISPLAY_SPI_FREQUENCY_MHZ: u32 = 20;
+const DISPLAY_SPI_FREQUENCY_MHZ: u32 = 40;
 #[cfg(target_arch = "riscv32")]
 const PROBE_BOOK: &[u8] = include_bytes!("../fixtures/nav_probe.binbook");
 #[cfg(target_arch = "riscv32")]

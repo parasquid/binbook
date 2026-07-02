@@ -153,16 +153,17 @@ where
         panel,
         book,
         required_plane(from.planes, PlaneSlot::FastBase)?,
-        PlaneWrite::new(input, row, RamTarget::Red, 0, &mut epoch, delay),
+        PlaneWrite::new(input, row, RamTarget::Red, 0, &mut epoch, delay).full_window(),
         PlaneRole::PreviousFastBase,
         timing_observer,
     )
     .await?;
+    delay.delay_ns(0).await;
     write_plane_timed(
         panel,
         book,
         required_plane(target.planes, PlaneSlot::FastBase)?,
-        PlaneWrite::new(input, row, RamTarget::Black, 0, &mut epoch, delay),
+        PlaneWrite::new(input, row, RamTarget::Black, 0, &mut epoch, delay).full_window(),
         PlaneRole::TargetFastBase,
         timing_observer,
     )
@@ -227,14 +228,15 @@ where
         panel,
         book,
         plane,
-        PlaneWrite::new(input, row, RamTarget::Red, 0, &mut epoch, delay),
+        PlaneWrite::new(input, row, RamTarget::Red, 0, &mut epoch, delay).full_window(),
     )
     .await?;
+    delay.delay_ns(0).await;
     write_plane(
         panel,
         book,
         plane,
-        PlaneWrite::new(input, row, RamTarget::Black, 0, &mut epoch, delay),
+        PlaneWrite::new(input, row, RamTarget::Black, 0, &mut epoch, delay).full_window(),
     )
     .await?;
     panel

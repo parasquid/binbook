@@ -5,7 +5,11 @@
 Build and flash with `FW_FEATURES="firmware-bin,diagnostic-console" firmware/scripts/flash-xteink-x4-nav-probe.sh`. Capture boot serial for at least 15 seconds, then establish independent HELLO and STATUS baselines. STATUS must report `page_count=16`, zero protocol errors, and `last_error=0`.
 
 ```bash
-UV_CACHE_DIR=/tmp/binbook-uv-cache uv run --offline python firmware/scripts/run-x4-nav-burst-diagnostic.py --port /dev/ttyACM0 --video-device /dev/video1 --rounds 10 --inter-key-ms 0 --output-dir /tmp/x4-nav-burst
+OUT="${OUT:-target/diag-evidence/x4-nav-burst}"
+mkdir -p "$OUT"
+uv run --offline python firmware/scripts/run-x4-nav-burst-diagnostic.py \
+  --port "$PORT" --video-device "${VIDEO_DEVICE:-/dev/video1}" \
+  --rounds 10 --inter-key-ms 0 --output-dir "$OUT"
 ```
 
 After it exits, query STATUS and paginate LOG independently. Compare every contact-sheet `PAGE NN` label with JSONL `expected_to`; CLI success alone is insufficient. Record the MP4, JSONL, transcript, contact sheets, exact commands, relevant output, first divergence or clean result, and acceptance matrix in `HANDOFF.md`.
@@ -105,10 +109,10 @@ cargo run -p binbook --features serial-device -- diag hello --port "$PORT"
 cargo run -p binbook --features serial-device -- diag status --port "$PORT"
 ```
 
-HELLO must report protocol 1, maximum frame size 512, firmware `binbook-fw`,
-target `xteink-x4`, and KEY, PAGE, STATUS, LOG, CRASH, and DISPLAY_PROBE
-capabilities. STATUS must decode current page, page count, panel mode, dropped
-logs, protocol errors, and signed last error.
+HELLO must report protocol 2, maximum frame size 4126, firmware `binbook-fw`,
+target `xteink-x4`, and KEY, PAGE, STATUS, LOG, CRASH, DISPLAY_PROBE, and
+STORAGE capabilities. STATUS must decode current page, page count, panel mode,
+dropped logs, protocol errors, and signed last error.
 
 For every response, verify response kind, opcode, sequence, status, and typed
 payload. The CLI performs these checks and exits nonzero on a mismatch.
@@ -145,8 +149,8 @@ cargo run -p binbook --features serial-device -- diag page --port "$PORT" curren
 ```
 
 Required results are `goto 3 -> 3`, `goto 0 -> 0`, `next -> 1`, `previous -> 0`,
-`last -> 3`, `first -> 0`, and `current -> 0`. `current` must not cause another
-render.
+`last -> 15` for the current 16-page navigation fixture, `first -> 0`, and
+`current -> 0`. `current` must not cause another render.
 
 ### 7. Verify Structured Logs And Clear Semantics
 

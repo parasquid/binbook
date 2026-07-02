@@ -5,11 +5,13 @@ use binbook_fw::{
     async_refresh::{DisplayRequest, RefreshPhase},
     diag::DiagnosticSnapshot,
     diag_log::{
-        DiagLogRecord, EVT_BUSY_WAIT_END, EVT_DISPLAY_REQUEST_END, EVT_INPUT_DECISION,
-        EVT_INPUT_TRANSITION, EVT_PAGE_METADATA_READ, EVT_PLANE_ROW_FILL_SUMMARY,
-        EVT_PLANE_SPI_WRITE_SUMMARY, EVT_PLANE_WRITE_END, EVT_REFRESH_PHASE, EVT_REFRESH_TRIGGER,
-        EVT_REQUEST_ENQUEUE, EVT_REQUEST_RECEIVE, EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DROPPED,
-        EVT_TURN_STARTED,
+        DiagLogRecord, EVT_BUSY_WAIT_END, EVT_BW_BUSY_ASSERTED, EVT_BW_BUSY_READY,
+        EVT_BW_REFRESH_START, EVT_DISPLAY_REQUEST_END, EVT_INPUT_DECISION, EVT_INPUT_TRANSITION,
+        EVT_PAGE_METADATA_READ, EVT_PARTIAL_WINDOW_BUSY, EVT_PARTIAL_WINDOW_CASE_END,
+        EVT_PARTIAL_WINDOW_CASE_START, EVT_PARTIAL_WINDOW_GEOMETRY, EVT_PARTIAL_WINDOW_RAM_WRITE,
+        EVT_PARTIAL_WINDOW_SIZE, EVT_PLANE_ROW_FILL_SUMMARY, EVT_PLANE_SPI_WRITE_SUMMARY,
+        EVT_PLANE_WRITE_END, EVT_REFRESH_PHASE, EVT_REFRESH_TRIGGER, EVT_REQUEST_ENQUEUE,
+        EVT_REQUEST_RECEIVE, EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DROPPED, EVT_TURN_STARTED,
     },
     input::{Button, InputDecision, PageTurn},
     runtime_aggregator::RuntimeAggregator,
@@ -21,6 +23,136 @@ use binbook_fw::{
 
 fn event(timestamp_ms: u64, kind: RuntimeEventKind) -> RuntimeEvent {
     RuntimeEvent { timestamp_ms, kind }
+}
+
+#[test]
+fn bw_refresh_start_maps_sequence_from_and_target() {
+    let mut aggregator = aggregator::<2>();
+    aggregator.commit(event(
+        777,
+        RuntimeEventKind::BwRefreshStarted {
+            sequence: Some(44),
+            from: 2,
+            target: 3,
+        },
+    ));
+
+    let mut records = [DiagLogRecord::default(); 1];
+    let result = aggregator.log().read_from_sequence(0, &mut records);
+    assert_eq!(result.record_count, 1);
+    assert_eq!(records[0].tick_ms, 777);
+    assert_eq!(records[0].event, EVT_BW_REFRESH_START);
+    assert_eq!(records[0].subsystem, 1);
+    assert_eq!(
+        (records[0].arg0, records[0].arg1, records[0].arg2),
+        (44, 2, 3)
+    );
+}
+
+#[test]
+fn bw_busy_events_map_sequence_pages_and_elapsed() {
+    let mut aggregator = aggregator::<2>();
+    aggregator.commit(event(
+        800,
+        RuntimeEventKind::BwBusyAsserted {
+            sequence: Some(44),
+            from: 2,
+            target: 3,
+        },
+    ));
+    aggregator.commit(event(
+        912,
+        RuntimeEventKind::BwBusyReady {
+            sequence: Some(44),
+            target: 3,
+            elapsed_ms: 112,
+        },
+    ));
+
+    let mut records = [DiagLogRecord::default(); 2];
+    let result = aggregator.log().read_from_sequence(0, &mut records);
+    assert_eq!(result.record_count, 2);
+    assert_eq!(records[0].tick_ms, 800);
+    assert_eq!(records[0].event, EVT_BW_BUSY_ASSERTED);
+    assert_eq!(
+        (records[0].arg0, records[0].arg1, records[0].arg2),
+        (44, 2, 3)
+    );
+    assert_eq!(records[1].tick_ms, 912);
+    assert_eq!(records[1].event, EVT_BW_BUSY_READY);
+    assert_eq!(
+        (records[1].arg0, records[1].arg1, records[1].arg2),
+        (44, 3, 112)
+    );
+}
+
+#[test]
+fn partial_window_probe_events_keep_case_geometry_and_timing() {
+    let mut aggregator = aggregator::<2>();
+    for kind in [
+        RuntimeEventKind::PartialWindowCaseStarted {
+            case: 3,
+            round: 2,
+            polarity: 1,
+        },
+        RuntimeEventKind::PartialWindowGeometry {
+            case: 3,
+            x: 0,
+            y: 208,
+            width: 800,
+            height: 64,
+        },
+        RuntimeEventKind::PartialWindowSize {
+            case: 3,
+            bytes_per_plane: 6400,
+            total_bytes: 12800,
+        },
+        RuntimeEventKind::PartialWindowRamWrite {
+            case: 3,
+            red_ms: 7,
+            black_ms: 8,
+        },
+        RuntimeEventKind::PartialWindowBusy {
+            case: 3,
+            busy_ms: 245,
+            status: BusyWaitStatus::Ready,
+        },
+        RuntimeEventKind::PartialWindowCaseEnded {
+            case: 3,
+            duration_ms: 264,
+            status: 0,
+        },
+    ] {
+        aggregator.commit(event(1_000, kind));
+    }
+
+    let mut records = [DiagLogRecord::default(); 6];
+    let result = aggregator.log().read_from_sequence(0, &mut records);
+    assert_eq!(result.record_count, 6);
+    assert_eq!(
+        (records[0].event, records[0].arg0, records[0].arg1, records[0].arg2),
+        (EVT_PARTIAL_WINDOW_CASE_START, 3, 2, 1)
+    );
+    assert_eq!(
+        (records[1].event, records[1].arg0, records[1].arg1, records[1].arg2),
+        (EVT_PARTIAL_WINDOW_GEOMETRY, 3, 0, 208)
+    );
+    assert_eq!(
+        (records[2].event, records[2].arg0, records[2].arg1, records[2].arg2),
+        (EVT_PARTIAL_WINDOW_SIZE, 3, 6400, 12800)
+    );
+    assert_eq!(
+        (records[3].event, records[3].arg0, records[3].arg1, records[3].arg2),
+        (EVT_PARTIAL_WINDOW_RAM_WRITE, 3, 7, 8)
+    );
+    assert_eq!(
+        (records[4].event, records[4].arg0, records[4].arg1, records[4].arg2),
+        (EVT_PARTIAL_WINDOW_BUSY, 3, 245, BusyWaitStatus::Ready.log_code())
+    );
+    assert_eq!(
+        (records[5].event, records[5].arg0, records[5].arg1, records[5].arg2),
+        (EVT_PARTIAL_WINDOW_CASE_END, 3, 264, 0)
+    );
 }
 
 fn aggregator<const N: usize>() -> RuntimeAggregator<N, 32> {

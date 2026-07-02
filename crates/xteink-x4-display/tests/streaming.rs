@@ -10,7 +10,10 @@ use xteink_x4_display::{
     events::OperationOutcome,
     page_source::PlaneDecoder,
     panel::X4Panel,
-    render::{render_absolute_gray, render_staged_overlay, sync_bw_base, OverlayControl},
+    render::{
+        render_absolute_gray, render_bw_differential, render_staged_overlay, sync_bw_base,
+        OverlayControl,
+    },
     stream::decode_stream,
 };
 
@@ -145,7 +148,7 @@ fn packbits_stream_accepts_buffers_smaller_than_input_and_output() {
 }
 
 #[test]
-fn absolute_gray_reconstructs_both_controller_planes_in_sixteen_row_strips() {
+fn absolute_gray_streams_each_controller_plane_with_one_full_window() {
     let (mut book, mut panel, trace) = fixture();
     let (mut compressed, mut decoded, mut black, mut red) = buffers();
     let mut buffers = RenderBuffers::new(&mut compressed, &mut decoded, &mut black, &mut red);
@@ -164,16 +167,49 @@ fn absolute_gray_reconstructs_both_controller_planes_in_sixteen_row_strips() {
             .iter()
             .filter(|write| write.as_slice() == [ssd1677_driver::Command::WRITE_RAM_RED])
             .count(),
-        30
+        1
     );
     assert_eq!(
         writes
             .iter()
             .filter(|write| write.as_slice() == [ssd1677_driver::Command::WRITE_RAM_BW])
             .count(),
-        30
+        1
     );
-    assert_eq!(delay.0.iter().filter(|ns| **ns == 0).count(), 59);
+    assert_eq!(delay.0.iter().filter(|ns| **ns == 0).count(), 1);
+}
+
+#[test]
+fn bw_differential_streams_previous_and_target_planes_with_one_full_window_each() {
+    let (mut book, mut panel, trace) = fixture();
+    let (mut compressed, mut decoded, mut black, mut red) = buffers();
+    let mut buffers = RenderBuffers::new(&mut compressed, &mut decoded, &mut black, &mut red);
+    let mut delay = Delay::default();
+    block_on(render_bw_differential(
+        &mut panel,
+        &mut book,
+        0,
+        1,
+        &mut buffers,
+        &mut delay,
+    ))
+    .unwrap();
+    let writes = trace.0.borrow();
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|write| write.as_slice() == [ssd1677_driver::Command::WRITE_RAM_RED])
+            .count(),
+        1
+    );
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|write| write.as_slice() == [ssd1677_driver::Command::WRITE_RAM_BW])
+            .count(),
+        1
+    );
+    assert_eq!(delay.0.iter().filter(|ns| **ns == 0).count(), 1);
 }
 
 #[test]

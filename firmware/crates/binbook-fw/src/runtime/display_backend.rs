@@ -5,6 +5,7 @@ use xteink_x4_display::{
     engine::DisplayBackend,
     events::OperationOutcome,
     panel::X4Panel,
+    probes::{PartialWindowBusyCase, PartialWindowBusyObserver, PartialWindowPolarity},
     render::{self, OverlayControl, RenderObservers},
 };
 
@@ -25,24 +26,60 @@ pub(super) struct HardwareDisplayBackend<'a, SPI: embedded_hal::spi::SpiDevice<u
 
 struct RuntimeBusyWaitObserver {
     site: BusyWaitSite,
+    bw_context: Option<BwRefreshContext>,
+}
+
+#[derive(Clone, Copy)]
+struct BwRefreshContext {
+    sequence: Option<u16>,
+    from: u32,
+    target: u32,
 }
 
 impl RuntimeBusyWaitObserver {
     const fn new(site: BusyWaitSite) -> Self {
-        Self { site }
+        Self {
+            site,
+            bw_context: None,
+        }
+    }
+
+    const fn bw_refresh(sequence: Option<u16>, from: u32, target: u32) -> Self {
+        Self {
+            site: BusyWaitSite::BwRefresh,
+            bw_context: Some(BwRefreshContext {
+                sequence,
+                from,
+                target,
+            }),
+        }
     }
 }
 
 impl BusyWaitObserver for RuntimeBusyWaitObserver {
     fn busy_wait_start(&mut self, timeout_ms: u32, busy_state: Option<bool>) {
-        let _ = RUNTIME_EVENT_CHANNEL.sender().try_send(RuntimeEvent {
-            timestamp_ms: embassy_time::Instant::now().as_millis(),
+        let sender = RUNTIME_EVENT_CHANNEL.sender();
+        let timestamp_ms = embassy_time::Instant::now().as_millis();
+        let _ = sender.try_send(RuntimeEvent {
+            timestamp_ms,
             kind: RuntimeEventKind::BusyWaitStart {
                 site: self.site,
                 timeout_ms,
                 busy_state,
             },
         });
+        if busy_state == Some(true) {
+            if let Some(context) = self.bw_context {
+                let _ = sender.try_send(RuntimeEvent {
+                    timestamp_ms,
+                    kind: RuntimeEventKind::BwBusyAsserted {
+                        sequence: context.sequence,
+                        from: context.from,
+                        target: context.target,
+                    },
+                });
+            }
+        }
     }
 
     fn busy_wait_end(&mut self, elapsed_ms: u32, outcome: BusyWaitOutcome) {
@@ -51,14 +88,101 @@ impl BusyWaitObserver for RuntimeBusyWaitObserver {
             BusyWaitOutcome::Timeout => BusyWaitStatus::Timeout,
             BusyWaitOutcome::PinError => BusyWaitStatus::PinError,
         };
-        let _ = RUNTIME_EVENT_CHANNEL.sender().try_send(RuntimeEvent {
-            timestamp_ms: embassy_time::Instant::now().as_millis(),
+        let sender = RUNTIME_EVENT_CHANNEL.sender();
+        let timestamp_ms = embassy_time::Instant::now().as_millis();
+        let _ = sender.try_send(RuntimeEvent {
+            timestamp_ms,
             kind: RuntimeEventKind::BusyWaitEnd {
                 site: self.site,
                 elapsed_ms,
                 status,
             },
         });
+        if outcome == BusyWaitOutcome::Ready {
+            if let Some(context) = self.bw_context {
+                let _ = sender.try_send(RuntimeEvent {
+                    timestamp_ms,
+                    kind: RuntimeEventKind::BwBusyReady {
+                        sequence: context.sequence,
+                        target: context.target,
+                        elapsed_ms,
+                    },
+                });
+            }
+        }
+    }
+}
+
+struct RuntimePartialWindowBusyObserver;
+
+impl PartialWindowBusyObserver for RuntimePartialWindowBusyObserver {
+    fn now_ms(&self) -> u64 {
+        embassy_time::Instant::now().as_millis()
+    }
+
+    fn case_start(&mut self, case: u8, round: u16, polarity: PartialWindowPolarity) {
+        send_runtime_event(RuntimeEventKind::PartialWindowCaseStarted {
+            case,
+            round,
+            polarity: polarity.code(),
+        });
+    }
+
+    fn geometry(&mut self, case: u8, window: PartialWindowBusyCase) {
+        send_runtime_event(RuntimeEventKind::PartialWindowGeometry {
+            case,
+            x: window.x,
+            y: window.y,
+            width: window.width,
+            height: window.height,
+        });
+    }
+
+    fn size(&mut self, case: u8, bytes_per_plane: u32, total_bytes: u32) {
+        send_runtime_event(RuntimeEventKind::PartialWindowSize {
+            case,
+            bytes_per_plane,
+            total_bytes,
+        });
+    }
+
+    fn ram_write(&mut self, case: u8, red_ms: u32, black_ms: u32) {
+        send_runtime_event(RuntimeEventKind::PartialWindowRamWrite {
+            case,
+            red_ms,
+            black_ms,
+        });
+    }
+
+    fn busy(&mut self, case: u8, busy_ms: u32, outcome: BusyWaitOutcome) {
+        send_runtime_event(RuntimeEventKind::PartialWindowBusy {
+            case,
+            busy_ms,
+            status: busy_status(outcome),
+        });
+    }
+
+    fn case_end(&mut self, case: u8, duration_ms: u32, status: i32) {
+        send_runtime_event(RuntimeEventKind::PartialWindowCaseEnded {
+            case,
+            duration_ms,
+            status,
+        });
+    }
+}
+
+fn send_runtime_event(kind: RuntimeEventKind) {
+    let _ = RUNTIME_EVENT_CHANNEL.sender().try_send(RuntimeEvent {
+        timestamp_ms: embassy_time::Instant::now().as_millis(),
+        kind,
+    });
+}
+
+const fn busy_status(outcome: BusyWaitOutcome) -> BusyWaitStatus {
+    match outcome {
+        BusyWaitOutcome::Ready => BusyWaitStatus::Ready,
+        BusyWaitOutcome::Timeout => BusyWaitStatus::Timeout,
+        BusyWaitOutcome::PinError => BusyWaitStatus::PinError,
     }
 }
 
@@ -127,15 +251,20 @@ where
         self.display.init_bw_async(&mut self.delay).await
     }
 
-    async fn render_bw(&mut self, from: u32, target: u32) -> xteink_x4_display::DisplayResult<()> {
+    async fn render_bw(
+        &mut self,
+        sequence: Option<u16>,
+        from: u32,
+        target: u32,
+    ) -> xteink_x4_display::DisplayResult<()> {
         let mut buffers = xteink_x4_display::buffers::RenderBuffers::new(
             &mut self.compressed,
             &mut self.decoded,
             &mut self.black,
             &mut self.red,
         );
-        let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::BwRefresh);
-        let mut timing = RuntimeRenderTimingObserver::new();
+        let mut observer = RuntimeBusyWaitObserver::bw_refresh(sequence, from, target);
+        let mut timing = RuntimeRenderTimingObserver::new(sequence, from, target);
         render::render_bw_differential_timed(
             &mut self.display,
             &mut self.book,
@@ -232,6 +361,16 @@ where
                 xteink_x4_display::probes::window_corners_observed(
                     &mut self.display,
                     &mut self.delay,
+                    &mut observer,
+                )
+                .await
+            }
+            xteink_x4_display::probes::ProbeKind::PartialWindowBusyMatrix => {
+                let mut observer = RuntimePartialWindowBusyObserver;
+                xteink_x4_display::probes::partial_window_busy_matrix_observed(
+                    &mut self.display,
+                    &mut self.delay,
+                    1,
                     &mut observer,
                 )
                 .await

@@ -60,7 +60,7 @@ impl DisplayEngine {
             },
         );
         self.set_phase(DisplayPhase::BwRefreshing, events, now);
-        match backend.render_bw(from, target).await {
+        match backend.render_bw(sequence, from, target).await {
             Ok(()) => {
                 let completed = backend.timestamp_ms().unwrap_or(now);
                 self.current_page = target;

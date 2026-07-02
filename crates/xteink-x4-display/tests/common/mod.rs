@@ -58,7 +58,7 @@ impl DisplayBackend for Backend {
         self.operations.push("init-bw");
         Ok(())
     }
-    async fn render_bw(&mut self, _: u32, _: u32) -> DisplayResult<()> {
+    async fn render_bw(&mut self, _: Option<u16>, _: u32, _: u32) -> DisplayResult<()> {
         self.operations.push("render-bw");
         self.render_bw
     }

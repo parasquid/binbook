@@ -105,6 +105,7 @@ pub enum ProbeChoice {
     FullRefreshCurrent,
     ClearWhite,
     WindowCorners,
+    PartialWindowBusyMatrix,
 }
 
 impl ProbeChoice {
@@ -113,6 +114,7 @@ impl ProbeChoice {
             Self::FullRefreshCurrent => ProbeCode::FullRefreshCurrent,
             Self::ClearWhite => ProbeCode::ClearWhite,
             Self::WindowCorners => ProbeCode::WindowCorners,
+            Self::PartialWindowBusyMatrix => ProbeCode::PartialWindowBusyMatrix,
         }
     }
 }

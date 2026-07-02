@@ -52,6 +52,7 @@ pub enum DisplayProbeKind {
     FullRefreshCurrent,
     ClearWhite,
     WindowCorners,
+    PartialWindowBusyMatrix,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -164,6 +164,36 @@ pub enum ExerciseCommand {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    PageTurnCadence {
+        #[arg(short, long)]
+        port: String,
+        #[arg(long, default_value = "DOWN", value_parser = parse_key_name)]
+        key: String,
+        #[arg(long, default_value_t = 0)]
+        start_page: u32,
+        #[arg(long, default_value_t = 8, value_parser = parse_positive_u16)]
+        turns: u16,
+        #[arg(long, default_value_t = 3, value_parser = parse_rounds)]
+        rounds: u16,
+        #[arg(long, default_value_t = 0, value_parser = parse_gap_ms)]
+        min_gap_ms: u64,
+        #[arg(long, default_value_t = 1_300, value_parser = parse_gap_ms)]
+        max_gap_ms: u64,
+        #[arg(long, default_value_t = 50, value_parser = parse_positive_u64)]
+        coarse_step_ms: u64,
+        #[arg(long, default_value_t = 10, value_parser = parse_positive_u64)]
+        refine_step_ms: u64,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    PartialWindowBusy {
+        #[arg(short, long)]
+        port: String,
+        #[arg(long, default_value_t = 3, value_parser = parse_rounds)]
+        rounds: u16,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
 }
 
 fn parse_rounds(value: &str) -> Result<u16, String> {
@@ -174,6 +204,46 @@ fn parse_rounds(value: &str) -> Result<u16, String> {
         Ok(rounds)
     } else {
         Err("rounds must be between 1 and 100".into())
+    }
+}
+
+fn parse_positive_u16(value: &str) -> Result<u16, String> {
+    let parsed = value
+        .parse::<u16>()
+        .map_err(|error| format!("invalid value: {error}"))?;
+    if parsed == 0 {
+        Err("value must be greater than zero".into())
+    } else {
+        Ok(parsed)
+    }
+}
+
+fn parse_positive_u64(value: &str) -> Result<u64, String> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|error| format!("invalid value: {error}"))?;
+    if parsed == 0 {
+        Err("value must be greater than zero".into())
+    } else {
+        Ok(parsed)
+    }
+}
+
+fn parse_gap_ms(value: &str) -> Result<u64, String> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|error| format!("invalid gap: {error}"))?;
+    if parsed <= 3_000 {
+        Ok(parsed)
+    } else {
+        Err("gap must be between 0 and 3000 ms".into())
+    }
+}
+
+fn parse_key_name(value: &str) -> Result<String, String> {
+    match value {
+        "LEFT" | "RIGHT" | "UP" | "DOWN" => Ok(value.to_string()),
+        _ => Err("key must be one of LEFT, RIGHT, UP, DOWN".into()),
     }
 }
 
@@ -192,6 +262,7 @@ pub enum ProbeCommand {
     WindowCorners,
     ClearWhite,
     FullRefreshCurrent,
+    PartialWindowBusy,
 }
 
 #[derive(Subcommand)]

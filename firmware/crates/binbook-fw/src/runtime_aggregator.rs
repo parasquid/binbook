@@ -7,17 +7,19 @@ use crate::{
     diag::{DiagnosticSnapshot, PendingCommand},
     diag_log::{
         DiagEvent, DiagLog, EVT_BUSY_WAIT_END, EVT_BUSY_WAIT_START, EVT_BW_BASE_SYNC_CANCELLED,
-        EVT_BW_BASE_SYNC_COMPLETE, EVT_BW_BASE_SYNC_START, EVT_CONTROLLER_RAM_STATE,
-        EVT_DISPLAY_ERROR, EVT_DISPLAY_RECOVERY, EVT_DISPLAY_REQUEST_END,
-        EVT_DISPLAY_REQUEST_START, EVT_GRAY_DELAY_CANCELLED, EVT_GRAY_OVERLAY_ACTIVATE,
-        EVT_GRAY_OVERLAY_CANCELLED, EVT_GRAY_OVERLAY_COMPLETE, EVT_GRAY_OVERLAY_START,
-        EVT_INPUT_DECISION, EVT_INPUT_TRANSITION, EVT_PAGE_METADATA_READ, EVT_PANEL_MODE,
-        EVT_PLANE_ROW_FILL_SUMMARY, EVT_PLANE_SPI_WRITE_SUMMARY, EVT_PLANE_WRITE_END,
-        EVT_PLANE_WRITE_START, EVT_REFRESH_PHASE, EVT_REFRESH_TRIGGER, EVT_RENDER_FAILURE,
-        EVT_RENDER_START, EVT_RENDER_SUCCESS, EVT_REQUEST_ENQUEUE, EVT_REQUEST_RECEIVE,
-        EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED, EVT_TURN_QUEUED,
-        EVT_TURN_STARTED, EVT_WAVEFORM_SELECTED, LEVEL_DEBUG, LEVEL_ERROR, LEVEL_INFO, SUB_DISPLAY,
-        SUB_INPUT, SUB_NAV, SUB_SERIAL, SUB_SYSTEM,
+        EVT_BW_BASE_SYNC_COMPLETE, EVT_BW_BASE_SYNC_START, EVT_BW_BUSY_ASSERTED, EVT_BW_BUSY_READY,
+        EVT_BW_REFRESH_START, EVT_CONTROLLER_RAM_STATE, EVT_DISPLAY_ERROR, EVT_DISPLAY_RECOVERY,
+        EVT_DISPLAY_REQUEST_END, EVT_DISPLAY_REQUEST_START, EVT_GRAY_DELAY_CANCELLED,
+        EVT_GRAY_OVERLAY_ACTIVATE, EVT_GRAY_OVERLAY_CANCELLED, EVT_GRAY_OVERLAY_COMPLETE,
+        EVT_GRAY_OVERLAY_START, EVT_INPUT_DECISION, EVT_INPUT_TRANSITION, EVT_PAGE_METADATA_READ,
+        EVT_PANEL_MODE, EVT_PLANE_ROW_FILL_SUMMARY, EVT_PLANE_SPI_WRITE_SUMMARY,
+        EVT_PARTIAL_WINDOW_BUSY, EVT_PARTIAL_WINDOW_CASE_END, EVT_PARTIAL_WINDOW_CASE_START,
+        EVT_PARTIAL_WINDOW_GEOMETRY, EVT_PARTIAL_WINDOW_RAM_WRITE, EVT_PARTIAL_WINDOW_SIZE,
+        EVT_PLANE_WRITE_END, EVT_PLANE_WRITE_START, EVT_REFRESH_PHASE, EVT_REFRESH_TRIGGER,
+        EVT_RENDER_FAILURE, EVT_RENDER_START, EVT_RENDER_SUCCESS, EVT_REQUEST_ENQUEUE,
+        EVT_REQUEST_RECEIVE, EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED,
+        EVT_TURN_QUEUED, EVT_TURN_STARTED, EVT_WAVEFORM_SELECTED, LEVEL_DEBUG, LEVEL_ERROR,
+        LEVEL_INFO, SUB_DISPLAY, SUB_INPUT, SUB_NAV, SUB_SERIAL, SUB_SYSTEM,
     },
     runtime_engine::{
         RuntimeCompletion, RuntimeCompletionStatus, RuntimeEvent, RuntimeEventKind,
@@ -388,6 +390,96 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
                     status,
                 );
             }
+            RuntimeEventKind::PartialWindowCaseStarted {
+                case,
+                round,
+                polarity,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    EVT_PARTIAL_WINDOW_CASE_START,
+                    i32::from(case),
+                    i32::from(round),
+                    polarity,
+                );
+            }
+            RuntimeEventKind::PartialWindowGeometry {
+                case,
+                x,
+                y,
+                width: _,
+                height: _,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    EVT_PARTIAL_WINDOW_GEOMETRY,
+                    i32::from(case),
+                    i32::from(x),
+                    i32::from(y),
+                );
+            }
+            RuntimeEventKind::PartialWindowSize {
+                case,
+                bytes_per_plane,
+                total_bytes,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    EVT_PARTIAL_WINDOW_SIZE,
+                    i32::from(case),
+                    bytes_per_plane.min(i32::MAX as u32) as i32,
+                    total_bytes.min(i32::MAX as u32) as i32,
+                );
+            }
+            RuntimeEventKind::PartialWindowRamWrite {
+                case,
+                red_ms,
+                black_ms,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    EVT_PARTIAL_WINDOW_RAM_WRITE,
+                    i32::from(case),
+                    red_ms.min(i32::MAX as u32) as i32,
+                    black_ms.min(i32::MAX as u32) as i32,
+                );
+            }
+            RuntimeEventKind::PartialWindowBusy {
+                case,
+                busy_ms,
+                status,
+            } => {
+                self.push(
+                    tick_ms,
+                    if status == crate::runtime_engine::BusyWaitStatus::Ready {
+                        LEVEL_INFO
+                    } else {
+                        LEVEL_ERROR
+                    },
+                    EVT_PARTIAL_WINDOW_BUSY,
+                    i32::from(case),
+                    busy_ms.min(i32::MAX as u32) as i32,
+                    status.log_code(),
+                );
+            }
+            RuntimeEventKind::PartialWindowCaseEnded {
+                case,
+                duration_ms,
+                status,
+            } => {
+                self.push(
+                    tick_ms,
+                    if status == 0 { LEVEL_INFO } else { LEVEL_ERROR },
+                    EVT_PARTIAL_WINDOW_CASE_END,
+                    i32::from(case),
+                    duration_ms.min(i32::MAX as u32) as i32,
+                    status,
+                );
+            }
             RuntimeEventKind::InputTransition { ch1, ch2, observed } => {
                 self.push_with_subsystem(
                     tick_ms,
@@ -439,6 +531,48 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
                         arg1: from as i32,
                         arg2: target as i32,
                     },
+                );
+            }
+            RuntimeEventKind::BwRefreshStarted {
+                sequence,
+                from,
+                target,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    EVT_BW_REFRESH_START,
+                    sequence.map(i32::from).unwrap_or(-1),
+                    from as i32,
+                    target as i32,
+                );
+            }
+            RuntimeEventKind::BwBusyAsserted {
+                sequence,
+                from,
+                target,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    EVT_BW_BUSY_ASSERTED,
+                    sequence.map(i32::from).unwrap_or(-1),
+                    from as i32,
+                    target as i32,
+                );
+            }
+            RuntimeEventKind::BwBusyReady {
+                sequence,
+                target,
+                elapsed_ms,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    EVT_BW_BUSY_READY,
+                    sequence.map(i32::from).unwrap_or(-1),
+                    target as i32,
+                    elapsed_ms.min(i32::MAX as u32) as i32,
                 );
             }
             RuntimeEventKind::TurnBoundaryNoop {

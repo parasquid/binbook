@@ -27,7 +27,12 @@ pub trait DisplayBackend {
         Ok(())
     }
     async fn init_bw(&mut self) -> DisplayResult<()>;
-    async fn render_bw(&mut self, from: u32, target: u32) -> DisplayResult<()>;
+    async fn render_bw(
+        &mut self,
+        sequence: Option<u16>,
+        from: u32,
+        target: u32,
+    ) -> DisplayResult<()>;
     async fn render_grayscale(&mut self, page: u32, epoch: u32) -> DisplayResult<OperationOutcome>;
     async fn sync_bw_base(&mut self, page: u32, epoch: u32) -> DisplayResult<OperationOutcome>;
     async fn recover_bw(&mut self, page: u32) -> DisplayResult<()>;

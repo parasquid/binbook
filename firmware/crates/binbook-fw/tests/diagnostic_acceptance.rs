@@ -131,6 +131,7 @@ fn acceptance_hardware_commands_remain_deferred_actions() {
         (0x01u8, DisplayProbeKind::FullRefreshCurrent),
         (0x02, DisplayProbeKind::ClearWhite),
         (0x03, DisplayProbeKind::WindowCorners),
+        (0x04, DisplayProbeKind::PartialWindowBusyMatrix),
     ] {
         assert_eq!(
             fixture.request(

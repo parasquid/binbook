@@ -103,8 +103,9 @@ fn timing_event_codes_are_stable_and_nonzero() {
 #[test]
 fn page_turn_breakdown_event_codes_are_stable_and_nonzero() {
     use binbook_diagnostic_protocol::{
-        EVT_PAGE_METADATA_READ, EVT_PLANE_ROW_FILL_SUMMARY, EVT_PLANE_SPI_WRITE_SUMMARY,
-        EVT_PLANE_WRITE_END, EVT_PLANE_WRITE_START, EVT_REFRESH_TRIGGER,
+        EVT_BW_BUSY_ASSERTED, EVT_BW_BUSY_READY, EVT_BW_REFRESH_START, EVT_PAGE_METADATA_READ,
+        EVT_PLANE_ROW_FILL_SUMMARY, EVT_PLANE_SPI_WRITE_SUMMARY, EVT_PLANE_WRITE_END,
+        EVT_PLANE_WRITE_START, EVT_REFRESH_TRIGGER,
     };
 
     let expected = [
@@ -113,6 +114,9 @@ fn page_turn_breakdown_event_codes_are_stable_and_nonzero() {
         (EVT_PLANE_ROW_FILL_SUMMARY, 0x0311),
         (EVT_PLANE_SPI_WRITE_SUMMARY, 0x0312),
         (EVT_PLANE_WRITE_END, 0x0313),
+        (EVT_BW_REFRESH_START, 0x0314),
+        (EVT_BW_BUSY_ASSERTED, 0x0315),
+        (EVT_BW_BUSY_READY, 0x0316),
         (EVT_REFRESH_TRIGGER, 0x0406),
     ];
     for (actual, expected) in expected {
@@ -383,6 +387,20 @@ fn display_probe_payload_roundtrips() {
     assert_eq!(decoded.opcode, Opcode::DisplayProbe);
     assert_eq!(payload_len, 1);
     assert_eq!(payload_out[0], ProbeCode::WindowCorners as u8);
+}
+
+#[test]
+fn display_probe_payload_accepts_partial_window_busy_matrix() {
+    let mut payload = [0u8; 4];
+    let len =
+        binbook_diagnostic_protocol::encode_probe_payload(ProbeCode::PartialWindowBusyMatrix, &mut payload)
+            .unwrap();
+    assert_eq!(len, 1);
+    assert_eq!(payload[0], 0x04);
+    assert_eq!(
+        binbook_diagnostic_protocol::decode_probe_payload(&payload[..len]).unwrap(),
+        ProbeCode::PartialWindowBusyMatrix
+    );
 }
 
 #[test]

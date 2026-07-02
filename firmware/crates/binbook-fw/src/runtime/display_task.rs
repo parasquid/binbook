@@ -106,6 +106,9 @@ fn display_request(request: DisplayRequest) -> xteink_x4_display::events::Displa
                 DisplayProbeKind::WindowCorners => {
                     xteink_x4_display::probes::ProbeKind::WindowCorners
                 }
+                DisplayProbeKind::PartialWindowBusyMatrix => {
+                    xteink_x4_display::probes::ProbeKind::PartialWindowBusyMatrix
+                }
             },
             sequence: completion_sequence,
         },

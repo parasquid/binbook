@@ -8,7 +8,7 @@ use embedded_hal_async::delay::DelayNs;
 use crate::{
     page_source::PlaneDecoder,
     panel::X4Panel,
-    profile::{CHUNK_COUNT, CHUNK_ROWS, PHYSICAL_WIDTH, ROW_BYTES},
+    profile::{CHUNK_COUNT, CHUNK_ROWS, PHYSICAL_HEIGHT, PHYSICAL_WIDTH, ROW_BYTES},
     render_timing::{
         elapsed_u32, NoopRenderTimingObserver, PlaneRole, RamTarget, RenderStageStatus,
         RenderTimingObserver,
@@ -65,6 +65,55 @@ where
     let mut fill_ms = 0u32;
     let mut spi_ms = 0u32;
     let mut rows = 0u32;
+    if write.mode == PlaneWriteMode::FullWindow {
+        if (write.epoch)() != write.expected_epoch {
+            let duration = elapsed_u32(plane_start, timing_observer.now_ms());
+            timing_observer.plane_write_end(role, duration, RenderStageStatus::Cancelled);
+            return Ok(false);
+        }
+        panel
+            .controller()
+            .set_window(0, 0, PHYSICAL_WIDTH, PHYSICAL_HEIGHT)?;
+        let mut error = None;
+        let write_start = timing_observer.now_ms();
+        let mut fill = |_: u16, output: &mut [u8; ROW_BYTES]| {
+            let fill_start = timing_observer.now_ms();
+            if let Err(value) = decoder.fill(book, write.input, write.row) {
+                error = Some(value);
+                output.fill(0xff);
+            } else {
+                output.copy_from_slice(write.row);
+            }
+            fill_ms = fill_ms.saturating_add(elapsed_u32(fill_start, timing_observer.now_ms()));
+            rows = rows.saturating_add(1);
+        };
+        if write.target == RamTarget::Red {
+            panel
+                .controller()
+                .write_red_frame_rows(PHYSICAL_HEIGHT, &mut fill)?;
+        } else {
+            panel
+                .controller()
+                .write_frame_rows(PHYSICAL_HEIGHT, &mut fill)?;
+        }
+        let write_duration = elapsed_u32(write_start, timing_observer.now_ms());
+        spi_ms = write_duration.saturating_sub(fill_ms);
+        if let Some(error) = error {
+            let duration = elapsed_u32(plane_start, timing_observer.now_ms());
+            timing_observer.plane_write_end(role, duration, RenderStageStatus::Error);
+            return Err(error);
+        }
+        decoder.finish()?;
+        timing_observer.plane_row_fill_summary(role, fill_ms, rows);
+        timing_observer.plane_spi_write_summary(
+            role,
+            spi_ms,
+            rows.saturating_mul(ROW_BYTES as u32),
+        );
+        let duration = elapsed_u32(plane_start, timing_observer.now_ms());
+        timing_observer.plane_write_end(role, duration, RenderStageStatus::Ok);
+        return Ok(true);
+    }
     for strip in 0..CHUNK_COUNT {
         if (write.epoch)() != write.expected_epoch {
             let duration = elapsed_u32(plane_start, timing_observer.now_ms());
@@ -122,6 +171,7 @@ pub(crate) struct PlaneWrite<'a, E, D> {
     pub(crate) expected_epoch: u32,
     pub(crate) epoch: &'a mut E,
     pub(crate) delay: &'a mut D,
+    pub(crate) mode: PlaneWriteMode,
 }
 
 impl<'a, E, D> PlaneWrite<'a, E, D> {
@@ -140,6 +190,18 @@ impl<'a, E, D> PlaneWrite<'a, E, D> {
             expected_epoch,
             epoch,
             delay,
+            mode: PlaneWriteMode::StripCancellable,
         }
     }
+
+    pub(crate) fn full_window(mut self) -> Self {
+        self.mode = PlaneWriteMode::FullWindow;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlaneWriteMode {
+    StripCancellable,
+    FullWindow,
 }

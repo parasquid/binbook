@@ -142,7 +142,7 @@ fn cli_crash_clear_sends_crash_clear() {
 }
 
 #[test]
-fn cli_probe_supports_all_three_probe_codes() {
+fn cli_probe_supports_all_probe_codes() {
     let probes = [
         (
             binbook::diag_protocol::ProbeChoice::FullRefreshCurrent,
@@ -150,6 +150,10 @@ fn cli_probe_supports_all_three_probe_codes() {
         ),
         (binbook::diag_protocol::ProbeChoice::ClearWhite, 0x02u8),
         (binbook::diag_protocol::ProbeChoice::WindowCorners, 0x03u8),
+        (
+            binbook::diag_protocol::ProbeChoice::PartialWindowBusyMatrix,
+            0x04u8,
+        ),
     ];
     for (i, (choice, expected_code)) in probes.iter().enumerate() {
         let frame = binbook::diag_protocol::display_probe_request(60 + i as u16, *choice);
@@ -347,6 +351,70 @@ fn cli_logs_formats_navigation_burst_event_names() {
 }
 
 #[test]
+fn cli_logs_formats_partial_window_event_names() {
+    let events = [
+        (
+            binbook_diagnostic_protocol::EVT_PARTIAL_WINDOW_CASE_START,
+            "PARTIAL_WINDOW_CASE_START",
+        ),
+        (
+            binbook_diagnostic_protocol::EVT_PARTIAL_WINDOW_GEOMETRY,
+            "PARTIAL_WINDOW_GEOMETRY",
+        ),
+        (
+            binbook_diagnostic_protocol::EVT_PARTIAL_WINDOW_SIZE,
+            "PARTIAL_WINDOW_SIZE",
+        ),
+        (
+            binbook_diagnostic_protocol::EVT_PARTIAL_WINDOW_RAM_WRITE,
+            "PARTIAL_WINDOW_RAM_WRITE",
+        ),
+        (
+            binbook_diagnostic_protocol::EVT_PARTIAL_WINDOW_BUSY,
+            "PARTIAL_WINDOW_BUSY",
+        ),
+        (
+            binbook_diagnostic_protocol::EVT_PARTIAL_WINDOW_CASE_END,
+            "PARTIAL_WINDOW_CASE_END",
+        ),
+    ];
+    for (event, name) in events {
+        let mut payload = [0u8; 64];
+        let header_len = binbook_diagnostic_protocol::encode_log_response_header(
+            binbook_diagnostic_protocol::LogResponseHeader {
+                next_cursor: 2,
+                dropped_log_count: 0,
+                record_count: 1,
+            },
+            &mut payload,
+        )
+        .unwrap();
+        let record_len = binbook_diagnostic_protocol::encode_log_record(
+            binbook_diagnostic_protocol::LogRecordPayload {
+                sequence: 1,
+                tick_ms: 10,
+                level: 2,
+                subsystem: 1,
+                event,
+                arg0: 0,
+                arg1: 0,
+                arg2: 0,
+            },
+            &mut payload[header_len..],
+        )
+        .unwrap();
+        let frame = response_frame(
+            Opcode::LogGet,
+            8,
+            Status::Ok,
+            &payload[..header_len + record_len],
+        );
+        let text = binbook::diag_protocol::format_response(&frame, Opcode::LogGet, 8).unwrap();
+        assert!(text.contains(name), "{name} should be formatted in {text}");
+    }
+}
+
+#[test]
 fn cli_crash_formats_empty_and_present_distinctly() {
     let empty = response_frame(Opcode::CrashGet, 9, Status::Ok, &[0]);
     assert!(
@@ -426,6 +494,23 @@ fn cli_probe_full_refresh_current_subcommand_parses() {
     assert!(
         cli.is_ok(),
         "diag probe full-refresh-current should parse: {:?}",
+        cli.err()
+    );
+}
+
+#[test]
+fn cli_probe_partial_window_busy_subcommand_parses() {
+    let cli = binbook::Cli::try_parse_from([
+        "binbook",
+        "diag",
+        "probe",
+        "--port",
+        "/dev/ttyACM0",
+        "partial-window-busy",
+    ]);
+    assert!(
+        cli.is_ok(),
+        "diag probe partial-window-busy should parse: {:?}",
         cli.err()
     );
 }
@@ -560,6 +645,88 @@ fn nav_burst_exercise_parses_and_validates_rounds() {
         ])
         .is_err());
     }
+}
+
+#[test]
+fn page_turn_cadence_exercise_parses_and_validates_bounds() {
+    let valid = binbook::Cli::try_parse_from([
+        "binbook",
+        "diag",
+        "exercise",
+        "page-turn-cadence",
+        "--port",
+        "/dev/ttyACM0",
+        "--key",
+        "DOWN",
+        "--start-page",
+        "0",
+        "--turns",
+        "8",
+        "--rounds",
+        "3",
+        "--min-gap-ms",
+        "0",
+        "--max-gap-ms",
+        "450",
+        "--coarse-step-ms",
+        "50",
+        "--refine-step-ms",
+        "10",
+        "--output",
+        "/tmp/binbook-page-turn-cadence/evidence.jsonl",
+    ]);
+    assert!(valid.is_ok(), "page-turn-cadence should parse");
+
+    for args in [
+        vec!["--turns", "0"],
+        vec!["--rounds", "0"],
+        vec!["--coarse-step-ms", "0"],
+        vec!["--refine-step-ms", "0"],
+        vec!["--max-gap-ms", "3001"],
+    ] {
+        let mut command = vec![
+            "binbook",
+            "diag",
+            "exercise",
+            "page-turn-cadence",
+            "--port",
+            "/dev/ttyACM0",
+        ];
+        command.extend(args);
+        assert!(
+            binbook::Cli::try_parse_from(command).is_err(),
+            "invalid cadence args should fail"
+        );
+    }
+}
+
+#[test]
+fn partial_window_busy_exercise_parses_and_validates_rounds() {
+    let valid = binbook::Cli::try_parse_from([
+        "binbook",
+        "diag",
+        "exercise",
+        "partial-window-busy",
+        "--port",
+        "/dev/ttyACM0",
+        "--rounds",
+        "3",
+        "--output",
+        "/tmp/binbook-partial-window-busy/evidence.jsonl",
+    ]);
+    assert!(valid.is_ok(), "partial-window-busy exercise should parse");
+
+    let invalid = binbook::Cli::try_parse_from([
+        "binbook",
+        "diag",
+        "exercise",
+        "partial-window-busy",
+        "--port",
+        "/dev/ttyACM0",
+        "--rounds",
+        "0",
+    ]);
+    assert!(invalid.is_err(), "rounds must reject zero");
 }
 
 #[test]

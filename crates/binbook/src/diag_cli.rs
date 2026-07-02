@@ -31,6 +31,64 @@ pub fn run_diag(cmd: DiagCommand) {
                 }
                 return;
             }
+            ExerciseCommand::PageTurnCadence {
+                port,
+                key,
+                start_page,
+                turns,
+                rounds,
+                min_gap_ms,
+                max_gap_ms,
+                coarse_step_ms,
+                refine_step_ms,
+                output,
+            } => {
+                let Some(key) = crate::page_turn_cadence::key_name_to_code(key) else {
+                    eprintln!("Diagnostic error: invalid key {key}");
+                    std::process::exit(1);
+                };
+                if min_gap_ms > max_gap_ms {
+                    eprintln!("Diagnostic error: min gap must not exceed max gap");
+                    std::process::exit(1);
+                }
+                if let Err(error) = crate::page_turn_cadence::run_page_turn_cadence(
+                    port,
+                    crate::page_turn_cadence::PageTurnCadenceOptions {
+                        port,
+                        key,
+                        start_page: *start_page,
+                        turns: *turns,
+                        rounds: *rounds,
+                        min_gap_ms: *min_gap_ms,
+                        max_gap_ms: *max_gap_ms,
+                        coarse_step_ms: *coarse_step_ms,
+                        refine_step_ms: *refine_step_ms,
+                    },
+                    output.as_deref(),
+                ) {
+                    eprintln!("Diagnostic error: {error}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+            ExerciseCommand::PartialWindowBusy {
+                port,
+                rounds,
+                output,
+            } => {
+                if let Err(error) = crate::partial_window_busy::run_partial_window_busy(
+                    port,
+                    crate::partial_window_busy::PartialWindowBusyOptions {
+                        port,
+                        rounds: *rounds,
+                    },
+                    output.as_deref(),
+                ) {
+                    eprintln!("Diagnostic error: {error}");
+                    std::process::exit(1);
+                }
+                return;
+            }
         }
     }
 
@@ -131,6 +189,9 @@ pub fn run_diag(cmd: DiagCommand) {
                 ProbeCommand::WindowCorners => diag_protocol::ProbeChoice::WindowCorners,
                 ProbeCommand::ClearWhite => diag_protocol::ProbeChoice::ClearWhite,
                 ProbeCommand::FullRefreshCurrent => diag_protocol::ProbeChoice::FullRefreshCurrent,
+                ProbeCommand::PartialWindowBusy => {
+                    diag_protocol::ProbeChoice::PartialWindowBusyMatrix
+                }
             };
             (
                 port.clone(),

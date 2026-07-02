@@ -4,6 +4,8 @@
 
 - If present, also apply [`AGENTS.local.md`](AGENTS.local.md) after this file.
 - Treat `AGENTS.local.md` as a host-local, gitignored overlay for machine-specific paths, device notes, and capture coordinates.
+- Treat `HANDOFF.md` as a host-local, gitignored current-state handoff. It may contain machine-specific paths, local artifact locations, and transient device notes. Do not stage or commit it; if it is ever tracked, remove it from the index with `git rm --cached HANDOFF.md` while leaving the local file in place.
+- Do not put host-local artifact paths such as `/tmp/...`, `/var/home/<user>/...`, Homebrew install paths, webcam crop preview paths, or local evidence filenames in tracked docs. In tracked docs, summarize measured results and use portable placeholders such as `$PORT`, `$OUT`, `target/diag-evidence/...`, or "live hardware run" instead.
 
 ## Project Context
 
