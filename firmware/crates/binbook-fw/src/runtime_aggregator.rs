@@ -11,11 +11,13 @@ use crate::{
         EVT_DISPLAY_ERROR, EVT_DISPLAY_RECOVERY, EVT_DISPLAY_REQUEST_END,
         EVT_DISPLAY_REQUEST_START, EVT_GRAY_DELAY_CANCELLED, EVT_GRAY_OVERLAY_ACTIVATE,
         EVT_GRAY_OVERLAY_CANCELLED, EVT_GRAY_OVERLAY_COMPLETE, EVT_GRAY_OVERLAY_START,
-        EVT_INPUT_DECISION, EVT_INPUT_TRANSITION, EVT_PANEL_MODE, EVT_REFRESH_PHASE,
-        EVT_RENDER_FAILURE, EVT_RENDER_START, EVT_RENDER_SUCCESS, EVT_REQUEST_ENQUEUE,
-        EVT_REQUEST_RECEIVE, EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED,
-        EVT_TURN_QUEUED, EVT_TURN_STARTED, EVT_WAVEFORM_SELECTED, LEVEL_DEBUG, LEVEL_ERROR,
-        LEVEL_INFO, SUB_DISPLAY, SUB_INPUT, SUB_NAV, SUB_SERIAL, SUB_SYSTEM,
+        EVT_INPUT_DECISION, EVT_INPUT_TRANSITION, EVT_PAGE_METADATA_READ, EVT_PANEL_MODE,
+        EVT_PLANE_ROW_FILL_SUMMARY, EVT_PLANE_SPI_WRITE_SUMMARY, EVT_PLANE_WRITE_END,
+        EVT_PLANE_WRITE_START, EVT_REFRESH_PHASE, EVT_REFRESH_TRIGGER, EVT_RENDER_FAILURE,
+        EVT_RENDER_START, EVT_RENDER_SUCCESS, EVT_REQUEST_ENQUEUE, EVT_REQUEST_RECEIVE,
+        EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED, EVT_TURN_QUEUED,
+        EVT_TURN_STARTED, EVT_WAVEFORM_SELECTED, LEVEL_DEBUG, LEVEL_ERROR, LEVEL_INFO, SUB_DISPLAY,
+        SUB_INPUT, SUB_NAV, SUB_SERIAL, SUB_SYSTEM,
     },
     runtime_engine::{
         RuntimeCompletion, RuntimeCompletionStatus, RuntimeEvent, RuntimeEventKind,
@@ -300,6 +302,90 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
                     site.log_code(),
                     elapsed_ms.min(i32::MAX as u32) as i32,
                     status.log_code(),
+                );
+            }
+            RuntimeEventKind::PageMetadataRead {
+                from,
+                target,
+                duration_ms,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    EVT_PAGE_METADATA_READ,
+                    from as i32,
+                    target as i32,
+                    duration_ms.min(i32::MAX as u32) as i32,
+                );
+            }
+            RuntimeEventKind::PlaneWriteStart {
+                role,
+                ram_target,
+                plane_bytes,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_DEBUG,
+                    EVT_PLANE_WRITE_START,
+                    role,
+                    ram_target,
+                    plane_bytes.min(i32::MAX as u32) as i32,
+                );
+            }
+            RuntimeEventKind::PlaneRowFillSummary {
+                role,
+                duration_ms,
+                row_count,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    EVT_PLANE_ROW_FILL_SUMMARY,
+                    role,
+                    duration_ms.min(i32::MAX as u32) as i32,
+                    row_count.min(i32::MAX as u32) as i32,
+                );
+            }
+            RuntimeEventKind::PlaneSpiWriteSummary {
+                role,
+                duration_ms,
+                bytes_written,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    EVT_PLANE_SPI_WRITE_SUMMARY,
+                    role,
+                    duration_ms.min(i32::MAX as u32) as i32,
+                    bytes_written.min(i32::MAX as u32) as i32,
+                );
+            }
+            RuntimeEventKind::PlaneWriteEnd {
+                role,
+                duration_ms,
+                status,
+            } => {
+                self.push(
+                    tick_ms,
+                    if status == 0 { LEVEL_INFO } else { LEVEL_ERROR },
+                    EVT_PLANE_WRITE_END,
+                    role,
+                    duration_ms.min(i32::MAX as u32) as i32,
+                    status,
+                );
+            }
+            RuntimeEventKind::RefreshTrigger {
+                mode,
+                duration_ms,
+                status,
+            } => {
+                self.push(
+                    tick_ms,
+                    if status == 0 { LEVEL_INFO } else { LEVEL_ERROR },
+                    EVT_REFRESH_TRIGGER,
+                    mode,
+                    duration_ms.min(i32::MAX as u32) as i32,
+                    status,
                 );
             }
             RuntimeEventKind::InputTransition { ch1, ch2, observed } => {

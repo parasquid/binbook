@@ -200,6 +200,36 @@ pub enum RuntimeEventKind {
         elapsed_ms: u32,
         status: BusyWaitStatus,
     },
+    PageMetadataRead {
+        from: u32,
+        target: u32,
+        duration_ms: u32,
+    },
+    PlaneWriteStart {
+        role: i32,
+        ram_target: i32,
+        plane_bytes: u32,
+    },
+    PlaneRowFillSummary {
+        role: i32,
+        duration_ms: u32,
+        row_count: u32,
+    },
+    PlaneSpiWriteSummary {
+        role: i32,
+        duration_ms: u32,
+        bytes_written: u32,
+    },
+    PlaneWriteEnd {
+        role: i32,
+        duration_ms: u32,
+        status: i32,
+    },
+    RefreshTrigger {
+        mode: i32,
+        duration_ms: u32,
+        status: i32,
+    },
     InputTransition {
         ch1: u16,
         ch2: u16,

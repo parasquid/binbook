@@ -6,8 +6,10 @@ use binbook_fw::{
     diag::DiagnosticSnapshot,
     diag_log::{
         DiagLogRecord, EVT_BUSY_WAIT_END, EVT_DISPLAY_REQUEST_END, EVT_INPUT_DECISION,
-        EVT_INPUT_TRANSITION, EVT_REFRESH_PHASE, EVT_REQUEST_ENQUEUE, EVT_REQUEST_RECEIVE,
-        EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DROPPED, EVT_TURN_STARTED,
+        EVT_INPUT_TRANSITION, EVT_PAGE_METADATA_READ, EVT_PLANE_ROW_FILL_SUMMARY,
+        EVT_PLANE_SPI_WRITE_SUMMARY, EVT_PLANE_WRITE_END, EVT_REFRESH_PHASE, EVT_REFRESH_TRIGGER,
+        EVT_REQUEST_ENQUEUE, EVT_REQUEST_RECEIVE, EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DROPPED,
+        EVT_TURN_STARTED,
     },
     input::{Button, InputDecision, PageTurn},
     runtime_aggregator::RuntimeAggregator,
@@ -213,6 +215,69 @@ fn timing_busy_wait_end_maps_timeout_as_error() {
     assert_eq!(
         (records[0].arg0, records[0].arg1, records[0].arg2),
         (2, 60_000, 1)
+    );
+}
+
+#[test]
+fn page_turn_breakdown_events_keep_exact_log_argument_layouts() {
+    let mut aggregator = aggregator::<2>();
+    for kind in [
+        RuntimeEventKind::PageMetadataRead {
+            from: 0,
+            target: 1,
+            duration_ms: 3,
+        },
+        RuntimeEventKind::PlaneRowFillSummary {
+            role: 0,
+            duration_ms: 14,
+            row_count: 480,
+        },
+        RuntimeEventKind::PlaneSpiWriteSummary {
+            role: 1,
+            duration_ms: 122,
+            bytes_written: 48_000,
+        },
+        RuntimeEventKind::PlaneWriteEnd {
+            role: 1,
+            duration_ms: 199,
+            status: 0,
+        },
+        RuntimeEventKind::RefreshTrigger {
+            mode: 1,
+            duration_ms: 20,
+            status: 0,
+        },
+    ] {
+        aggregator.commit(event(900, kind));
+    }
+
+    let mut records = [DiagLogRecord::default(); 5];
+    let result = aggregator.log().read_from_sequence(0, &mut records);
+    assert_eq!(result.record_count, 5);
+    assert_eq!(records[0].event, EVT_PAGE_METADATA_READ);
+    assert_eq!(
+        (records[0].arg0, records[0].arg1, records[0].arg2),
+        (0, 1, 3)
+    );
+    assert_eq!(records[1].event, EVT_PLANE_ROW_FILL_SUMMARY);
+    assert_eq!(
+        (records[1].arg0, records[1].arg1, records[1].arg2),
+        (0, 14, 480)
+    );
+    assert_eq!(records[2].event, EVT_PLANE_SPI_WRITE_SUMMARY);
+    assert_eq!(
+        (records[2].arg0, records[2].arg1, records[2].arg2),
+        (1, 122, 48_000)
+    );
+    assert_eq!(records[3].event, EVT_PLANE_WRITE_END);
+    assert_eq!(
+        (records[3].arg0, records[3].arg1, records[3].arg2),
+        (1, 199, 0)
+    );
+    assert_eq!(records[4].event, EVT_REFRESH_TRIGGER);
+    assert_eq!(
+        (records[4].arg0, records[4].arg1, records[4].arg2),
+        (1, 20, 0)
     );
 }
 
