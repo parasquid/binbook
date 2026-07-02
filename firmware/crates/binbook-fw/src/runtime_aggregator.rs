@@ -6,13 +6,15 @@ use crate::error::FirmwareError;
 use crate::{
     diag::{DiagnosticSnapshot, PendingCommand},
     diag_log::{
-        DiagEvent, DiagLog, EVT_BW_BASE_SYNC_CANCELLED, EVT_BW_BASE_SYNC_COMPLETE,
-        EVT_BW_BASE_SYNC_START, EVT_CONTROLLER_RAM_STATE, EVT_DISPLAY_ERROR, EVT_DISPLAY_RECOVERY,
-        EVT_GRAY_DELAY_CANCELLED, EVT_GRAY_OVERLAY_ACTIVATE, EVT_GRAY_OVERLAY_CANCELLED,
-        EVT_GRAY_OVERLAY_COMPLETE, EVT_GRAY_OVERLAY_START, EVT_INPUT_DECISION,
-        EVT_INPUT_TRANSITION, EVT_PANEL_MODE, EVT_REFRESH_PHASE, EVT_RENDER_FAILURE,
-        EVT_RENDER_START, EVT_RENDER_SUCCESS, EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED,
-        EVT_TURN_DROPPED, EVT_TURN_QUEUED, EVT_TURN_STARTED, EVT_WAVEFORM_SELECTED, LEVEL_ERROR,
+        DiagEvent, DiagLog, EVT_BUSY_WAIT_END, EVT_BUSY_WAIT_START, EVT_BW_BASE_SYNC_CANCELLED,
+        EVT_BW_BASE_SYNC_COMPLETE, EVT_BW_BASE_SYNC_START, EVT_CONTROLLER_RAM_STATE,
+        EVT_DISPLAY_ERROR, EVT_DISPLAY_RECOVERY, EVT_DISPLAY_REQUEST_END,
+        EVT_DISPLAY_REQUEST_START, EVT_GRAY_DELAY_CANCELLED, EVT_GRAY_OVERLAY_ACTIVATE,
+        EVT_GRAY_OVERLAY_CANCELLED, EVT_GRAY_OVERLAY_COMPLETE, EVT_GRAY_OVERLAY_START,
+        EVT_INPUT_DECISION, EVT_INPUT_TRANSITION, EVT_PANEL_MODE, EVT_REFRESH_PHASE,
+        EVT_RENDER_FAILURE, EVT_RENDER_START, EVT_RENDER_SUCCESS, EVT_REQUEST_ENQUEUE,
+        EVT_REQUEST_RECEIVE, EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED,
+        EVT_TURN_QUEUED, EVT_TURN_STARTED, EVT_WAVEFORM_SELECTED, LEVEL_DEBUG, LEVEL_ERROR,
         LEVEL_INFO, SUB_DISPLAY, SUB_INPUT, SUB_NAV, SUB_SERIAL, SUB_SYSTEM,
     },
     runtime_engine::{
@@ -190,6 +192,114 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
                     sequence.map(i32::from).unwrap_or(-1),
                     turn as i32,
                     0,
+                );
+            }
+            RuntimeEventKind::RequestEnqueue {
+                kind,
+                sequence,
+                status,
+            } => {
+                self.push_with_subsystem(
+                    tick_ms,
+                    DiagEvent {
+                        level: if status == crate::runtime_engine::RequestEnqueueStatus::Ok {
+                            LEVEL_INFO
+                        } else {
+                            LEVEL_ERROR
+                        },
+                        subsystem: SUB_INPUT,
+                        event: EVT_REQUEST_ENQUEUE,
+                        arg0: kind.log_code(),
+                        arg1: sequence.map(i32::from).unwrap_or(-1),
+                        arg2: status.log_code(),
+                    },
+                );
+            }
+            RuntimeEventKind::RequestReceive {
+                kind,
+                sequence,
+                queue_age_ms,
+            } => {
+                self.push_with_subsystem(
+                    tick_ms,
+                    DiagEvent {
+                        level: LEVEL_INFO,
+                        subsystem: SUB_NAV,
+                        event: EVT_REQUEST_RECEIVE,
+                        arg0: kind.log_code(),
+                        arg1: sequence.map(i32::from).unwrap_or(-1),
+                        arg2: queue_age_ms
+                            .map(|value| value.min(i32::MAX as u32) as i32)
+                            .unwrap_or(-1),
+                    },
+                );
+            }
+            RuntimeEventKind::DisplayRequestStart {
+                kind,
+                current_page,
+                target_page,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    EVT_DISPLAY_REQUEST_START,
+                    kind.log_code(),
+                    current_page as i32,
+                    target_page.map(|page| page as i32).unwrap_or(-1),
+                );
+            }
+            RuntimeEventKind::DisplayRequestEnd {
+                kind,
+                duration_ms,
+                status,
+            } => {
+                self.push(
+                    tick_ms,
+                    if status == RuntimeCompletionStatus::Ok {
+                        LEVEL_INFO
+                    } else {
+                        LEVEL_ERROR
+                    },
+                    EVT_DISPLAY_REQUEST_END,
+                    kind.log_code(),
+                    duration_ms.min(i32::MAX as u32) as i32,
+                    if status == RuntimeCompletionStatus::Ok {
+                        0
+                    } else {
+                        1
+                    },
+                );
+            }
+            RuntimeEventKind::BusyWaitStart {
+                site,
+                timeout_ms,
+                busy_state,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_DEBUG,
+                    EVT_BUSY_WAIT_START,
+                    site.log_code(),
+                    timeout_ms.min(i32::MAX as u32) as i32,
+                    busy_state.map(i32::from).unwrap_or(-1),
+                );
+            }
+            RuntimeEventKind::BusyWaitEnd {
+                site,
+                elapsed_ms,
+                status,
+            } => {
+                self.push(
+                    tick_ms,
+                    if status == crate::runtime_engine::BusyWaitStatus::Ready {
+                        LEVEL_DEBUG
+                    } else {
+                        LEVEL_ERROR
+                    },
+                    EVT_BUSY_WAIT_END,
+                    site.log_code(),
+                    elapsed_ms.min(i32::MAX as u32) as i32,
+                    status.log_code(),
                 );
             }
             RuntimeEventKind::InputTransition { ch1, ch2, observed } => {

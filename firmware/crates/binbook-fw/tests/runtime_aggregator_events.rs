@@ -2,15 +2,19 @@
 
 use binbook_diagnostic_protocol::PanelModeCode;
 use binbook_fw::{
-    async_refresh::RefreshPhase,
+    async_refresh::{DisplayRequest, RefreshPhase},
     diag::DiagnosticSnapshot,
     diag_log::{
-        DiagLogRecord, EVT_INPUT_DECISION, EVT_INPUT_TRANSITION, EVT_REFRESH_PHASE,
+        DiagLogRecord, EVT_BUSY_WAIT_END, EVT_DISPLAY_REQUEST_END, EVT_INPUT_DECISION,
+        EVT_INPUT_TRANSITION, EVT_REFRESH_PHASE, EVT_REQUEST_ENQUEUE, EVT_REQUEST_RECEIVE,
         EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DROPPED, EVT_TURN_STARTED,
     },
     input::{Button, InputDecision, PageTurn},
     runtime_aggregator::RuntimeAggregator,
-    runtime_engine::{RuntimeEvent, RuntimeEventKind},
+    runtime_engine::{
+        BusyWaitSite, BusyWaitStatus, RequestEnqueueStatus, RuntimeCompletionStatus, RuntimeEvent,
+        RuntimeEventKind, RuntimeRequestKind,
+    },
 };
 
 fn event(timestamp_ms: u64, kind: RuntimeEventKind) -> RuntimeEvent {
@@ -116,6 +120,136 @@ fn navigation_burst_events_keep_exact_log_argument_layouts() {
         ),
         (EVT_TURN_BOUNDARY_NOOP, 45, 0, PageTurn::Previous as i32)
     );
+}
+
+#[test]
+fn timing_request_enqueue_maps_to_input_log_record() {
+    let mut aggregator = aggregator::<2>();
+    aggregator.commit(event(
+        500,
+        RuntimeEventKind::RequestEnqueue {
+            kind: RuntimeRequestKind::Turn,
+            sequence: Some(7),
+            status: RequestEnqueueStatus::Ok,
+        },
+    ));
+
+    let mut records = [DiagLogRecord::default(); 1];
+    let result = aggregator.log().read_from_sequence(0, &mut records);
+    assert_eq!(result.record_count, 1);
+    assert_eq!(records[0].tick_ms, 500);
+    assert_eq!(records[0].event, EVT_REQUEST_ENQUEUE);
+    assert_eq!(records[0].subsystem, 2);
+    assert_eq!(
+        (records[0].arg0, records[0].arg1, records[0].arg2),
+        (0, 7, 0)
+    );
+}
+
+#[test]
+fn timing_request_receive_maps_to_navigation_log_record() {
+    let mut aggregator = aggregator::<2>();
+    aggregator.commit(event(
+        502,
+        RuntimeEventKind::RequestReceive {
+            kind: RuntimeRequestKind::Turn,
+            sequence: Some(7),
+            queue_age_ms: Some(2),
+        },
+    ));
+
+    let mut records = [DiagLogRecord::default(); 1];
+    let result = aggregator.log().read_from_sequence(0, &mut records);
+    assert_eq!(result.record_count, 1);
+    assert_eq!(records[0].tick_ms, 502);
+    assert_eq!(records[0].event, EVT_REQUEST_RECEIVE);
+    assert_eq!(records[0].subsystem, 3);
+    assert_eq!(
+        (records[0].arg0, records[0].arg1, records[0].arg2),
+        (0, 7, 2)
+    );
+}
+
+#[test]
+fn timing_display_request_end_maps_status_and_duration() {
+    let mut aggregator = aggregator::<2>();
+    aggregator.commit(event(
+        900,
+        RuntimeEventKind::DisplayRequestEnd {
+            kind: RuntimeRequestKind::Turn,
+            duration_ms: 398,
+            status: RuntimeCompletionStatus::Error,
+        },
+    ));
+
+    let mut records = [DiagLogRecord::default(); 1];
+    let result = aggregator.log().read_from_sequence(0, &mut records);
+    assert_eq!(result.record_count, 1);
+    assert_eq!(records[0].event, EVT_DISPLAY_REQUEST_END);
+    assert_eq!(records[0].level, 4);
+    assert_eq!(
+        (records[0].arg0, records[0].arg1, records[0].arg2),
+        (0, 398, 1)
+    );
+}
+
+#[test]
+fn timing_busy_wait_end_maps_timeout_as_error() {
+    let mut aggregator = aggregator::<2>();
+    aggregator.commit(event(
+        810,
+        RuntimeEventKind::BusyWaitEnd {
+            site: BusyWaitSite::BwRefresh,
+            elapsed_ms: 60_000,
+            status: BusyWaitStatus::Timeout,
+        },
+    ));
+
+    let mut records = [DiagLogRecord::default(); 1];
+    let result = aggregator.log().read_from_sequence(0, &mut records);
+    assert_eq!(result.record_count, 1);
+    assert_eq!(records[0].event, EVT_BUSY_WAIT_END);
+    assert_eq!(records[0].level, 4);
+    assert_eq!(
+        (records[0].arg0, records[0].arg1, records[0].arg2),
+        (2, 60_000, 1)
+    );
+}
+
+#[test]
+fn request_kind_for_turn_is_stable() {
+    let request = DisplayRequest::Turn {
+        turn: PageTurn::Next,
+        completion_sequence: Some(12),
+    };
+
+    assert_eq!(
+        RuntimeRequestKind::from_request(&request),
+        RuntimeRequestKind::Turn
+    );
+    assert_eq!(RuntimeRequestKind::from_request(&request).log_code(), 0);
+}
+
+#[test]
+fn request_enqueue_status_for_full_channel_is_dropped() {
+    assert_eq!(RequestEnqueueStatus::Full.log_code(), 1);
+    assert_ne!(
+        RequestEnqueueStatus::Ok.log_code(),
+        RequestEnqueueStatus::Full.log_code()
+    );
+}
+
+#[test]
+fn request_receive_uses_nonnegative_queue_age_when_sent_timestamp_exists() {
+    assert_eq!(
+        binbook_fw::runtime_engine::queue_age_ms(104, Some(100)),
+        Some(4)
+    );
+    assert_eq!(
+        binbook_fw::runtime_engine::queue_age_ms(100, Some(104)),
+        Some(0)
+    );
+    assert_eq!(binbook_fw::runtime_engine::queue_age_ms(104, None), None);
 }
 
 #[test]
