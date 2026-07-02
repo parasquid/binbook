@@ -9,11 +9,16 @@ use ssd1677_driver::{BusyWaitObserver, NoopBusyWaitObserver};
 use crate::{
     buffers::{first_row, require_row, row_triplet, split_three, RenderBuffers},
     events::OperationOutcome,
-    native::{write_plane, PlaneWrite, RamTarget},
     page_source::{read_x4_page, required_plane, PlaneDecoder},
     panel::{RefreshMode, X4Panel},
+    plane_write::{write_plane, PlaneWrite},
     profile::{CHUNK_COUNT, CHUNK_ROWS, PHYSICAL_WIDTH, ROW_BYTES},
     DisplayResult,
+};
+
+pub use crate::native::render_bw_differential_timed;
+pub use crate::render_timing::{
+    PlaneRole, RamTarget, RenderObservers, RenderStageStatus, RenderTimingObserver,
 };
 
 pub async fn render_absolute_gray<R, SPI, DC, RST, BUSY, D>(

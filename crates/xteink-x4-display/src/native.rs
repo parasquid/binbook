@@ -8,9 +8,13 @@ use ssd1677_driver::{BusyWaitObserver, NoopBusyWaitObserver};
 
 use crate::{
     buffers::{first_input, first_row, RenderBuffers},
-    page_source::{read_x4_page, required_plane, PlaneDecoder},
+    page_source::{read_x4_page, required_plane},
     panel::{RefreshMode, X4Panel},
-    profile::{CHUNK_COUNT, CHUNK_ROWS, PHYSICAL_WIDTH, ROW_BYTES},
+    plane_write::{write_plane, write_plane_timed, PlaneWrite},
+    render_timing::{
+        elapsed_u32, NoopRenderTimingObserver, PlaneRole, RamTarget, RenderObservers,
+        RenderStageStatus, RenderTimingObserver,
+    },
     DisplayResult,
 };
 
@@ -99,28 +103,84 @@ where
     BUSY: InputPin,
     D: DelayNs,
 {
-    let from = read_x4_page(book, from)?;
-    let target = read_x4_page(book, target)?;
+    let mut timing = NoopRenderTimingObserver;
+    render_bw_differential_timed(
+        panel,
+        book,
+        from,
+        target,
+        buffers,
+        delay,
+        RenderObservers {
+            busy: observer,
+            timing: &mut timing,
+        },
+    )
+    .await
+}
+
+pub async fn render_bw_differential_timed<R, SPI, DC, RST, BUSY, D, B, T>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    from: u32,
+    target: u32,
+    buffers: &mut RenderBuffers<'_>,
+    delay: &mut D,
+    observers: RenderObservers<'_, B, T>,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+    B: BusyWaitObserver,
+    T: RenderTimingObserver,
+{
+    let timing_observer = observers.timing;
+    let metadata_start = timing_observer.now_ms();
+    let from_page = from;
+    let target_page = target;
+    let from = read_x4_page(book, from_page)?;
+    let target = read_x4_page(book, target_page)?;
+    let metadata_duration = elapsed_u32(metadata_start, timing_observer.now_ms());
+    timing_observer.page_metadata_read(from_page, target_page, metadata_duration);
     let input = first_input(buffers.compressed)?;
     let row = first_row(buffers.decoded)?;
     let mut epoch = || 0;
-    write_plane(
+    write_plane_timed(
         panel,
         book,
         required_plane(from.planes, PlaneSlot::FastBase)?,
         PlaneWrite::new(input, row, RamTarget::Red, 0, &mut epoch, delay),
+        PlaneRole::PreviousFastBase,
+        timing_observer,
     )
     .await?;
-    write_plane(
+    write_plane_timed(
         panel,
         book,
         required_plane(target.planes, PlaneSlot::FastBase)?,
         PlaneWrite::new(input, row, RamTarget::Black, 0, &mut epoch, delay),
+        PlaneRole::TargetFastBase,
+        timing_observer,
     )
     .await?;
-    panel
-        .refresh_observed(RefreshMode::Partial, delay, observer)
-        .await?;
+    let trigger_start = timing_observer.now_ms();
+    let trigger_result = panel.controller().trigger_refresh(RefreshMode::Partial);
+    let trigger_duration = elapsed_u32(trigger_start, timing_observer.now_ms());
+    timing_observer.refresh_trigger(
+        RefreshMode::Partial,
+        trigger_duration,
+        if trigger_result.is_ok() {
+            RenderStageStatus::Ok
+        } else {
+            RenderStageStatus::Error
+        },
+    );
+    trigger_result?;
+    panel.wait_ready_observed(delay, observers.busy).await?;
     Ok(())
 }
 
@@ -181,90 +241,4 @@ where
         .refresh_observed(RefreshMode::Full, delay, observer)
         .await?;
     Ok(())
-}
-
-pub(crate) async fn write_plane<R, SPI, DC, RST, BUSY, D, E>(
-    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
-    book: &mut Book<R>,
-    plane: binbook_core::PlaneDescriptor,
-    write: PlaneWrite<'_, E, D>,
-) -> DisplayResult<bool>
-where
-    R: ReadAt,
-    SPI: SpiDevice<u8>,
-    DC: OutputPin,
-    RST: OutputPin,
-    BUSY: InputPin,
-    D: DelayNs,
-    E: FnMut() -> u32,
-{
-    let mut decoder = PlaneDecoder::new(plane);
-    for strip in 0..CHUNK_COUNT {
-        if (write.epoch)() != write.expected_epoch {
-            return Ok(false);
-        }
-        panel.controller().set_window(
-            0,
-            u16::from(strip) * CHUNK_ROWS,
-            PHYSICAL_WIDTH,
-            CHUNK_ROWS,
-        )?;
-        let mut error = None;
-        let mut fill = |_: u16, output: &mut [u8; ROW_BYTES]| {
-            if let Err(value) = decoder.fill(book, write.input, write.row) {
-                error = Some(value);
-                output.fill(0xff);
-            } else {
-                output.copy_from_slice(write.row);
-            }
-        };
-        if write.target == RamTarget::Red {
-            panel
-                .controller()
-                .write_red_frame_rows(CHUNK_ROWS, &mut fill)?;
-        } else {
-            panel.controller().write_frame_rows(CHUNK_ROWS, &mut fill)?;
-        }
-        if let Some(error) = error {
-            return Err(error);
-        }
-        write.delay.delay_ns(0).await;
-    }
-    decoder.finish()?;
-    Ok(true)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RamTarget {
-    Black,
-    Red,
-}
-
-pub(crate) struct PlaneWrite<'a, E, D> {
-    input: &'a mut [u8],
-    row: &'a mut [u8],
-    target: RamTarget,
-    expected_epoch: u32,
-    epoch: &'a mut E,
-    delay: &'a mut D,
-}
-
-impl<'a, E, D> PlaneWrite<'a, E, D> {
-    pub(crate) fn new(
-        input: &'a mut [u8],
-        row: &'a mut [u8],
-        target: RamTarget,
-        expected_epoch: u32,
-        epoch: &'a mut E,
-        delay: &'a mut D,
-    ) -> Self {
-        Self {
-            input,
-            row,
-            target,
-            expected_epoch,
-            epoch,
-            delay,
-        }
-    }
 }

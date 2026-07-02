@@ -105,6 +105,15 @@ where
         Ok(())
     }
 
+    pub async fn wait_ready_observed(
+        &mut self,
+        delay: &mut impl AsyncDelayNs,
+        observer: &mut impl BusyWaitObserver,
+    ) -> DisplayResult<()> {
+        self.0.wait_ready_async_observed(delay, observer).await?;
+        Ok(())
+    }
+
     pub fn controller(&mut self) -> &mut Ssd1677<SPI, DC, RST, BUSY> {
         &mut self.0
     }
