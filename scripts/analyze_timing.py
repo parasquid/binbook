@@ -8,12 +8,16 @@
 
 from __future__ import annotations
 
-import statistics
-import subprocess
 import sys
-from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.timing_breakdown import build_display_breakdown
+from scripts.timing_cli import UsageError, parse_args, read_input
+from scripts.timing_report import print_timelines
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,17 +39,18 @@ class Timeline:
     receive_to_display_start_ms: int
     display_request_ms: int
     busy_wait_ms: int
+    page_metadata_ms: int | None
+    prev_plane_total_ms: int | None
+    prev_plane_fill_ms: int | None
+    prev_plane_spi_ms: int | None
+    target_plane_total_ms: int | None
+    target_plane_fill_ms: int | None
+    target_plane_spi_ms: int | None
+    refresh_trigger_ms: int | None
+    non_busy_ms: int
+    unattributed_ms: int | None
     input_to_page_ms: int
     bottleneck_stage: str
-
-
-@dataclass(frozen=True, slots=True)
-class CliArgs:
-    log_text: str | None
-    capture: bool
-    port: str
-    since: int
-    allow_incomplete: bool
 
 
 def parse_log_text(text: str) -> list[LogRecord]:
@@ -120,6 +125,13 @@ def build_timelines(records: list[LogRecord]) -> list[Timeline]:
             if record.event == "BUSY_WAIT_END"
             and display_start.tick_ms <= record.tick_ms <= display_end.tick_ms
         )
+        breakdown = build_display_breakdown(
+            records,
+            display_start.tick_ms,
+            display_end.tick_ms,
+            display_end.arg1,
+            busy_wait_ms,
+        )
         input_to_enqueue_ms = elapsed_ms(input_decision.tick_ms, enqueue.tick_ms)
         enqueue_to_receive_ms = elapsed_ms(enqueue.tick_ms, receive.tick_ms)
         receive_to_display_start_ms = elapsed_ms(receive.tick_ms, display_start.tick_ms)
@@ -131,6 +143,16 @@ def build_timelines(records: list[LogRecord]) -> list[Timeline]:
                 receive_to_display_start_ms=receive_to_display_start_ms,
                 display_request_ms=display_end.arg1,
                 busy_wait_ms=busy_wait_ms,
+                page_metadata_ms=breakdown.page_metadata_ms,
+                prev_plane_total_ms=breakdown.prev_plane_total_ms,
+                prev_plane_fill_ms=breakdown.prev_plane_fill_ms,
+                prev_plane_spi_ms=breakdown.prev_plane_spi_ms,
+                target_plane_total_ms=breakdown.target_plane_total_ms,
+                target_plane_fill_ms=breakdown.target_plane_fill_ms,
+                target_plane_spi_ms=breakdown.target_plane_spi_ms,
+                refresh_trigger_ms=breakdown.refresh_trigger_ms,
+                non_busy_ms=breakdown.non_busy_ms,
+                unattributed_ms=breakdown.unattributed_ms,
                 input_to_page_ms=input_to_page_ms,
                 bottleneck_stage=bottleneck_stage(
                     [
@@ -166,121 +188,6 @@ def first_event(records: list[LogRecord], event: str) -> LogRecord | None:
 
 def bottleneck_stage(stages: list[tuple[str, int]]) -> str:
     return max(stages, key=lambda item: item[1])[0]
-
-
-def percentile95(values: list[int]) -> int:
-    if len(values) == 1:
-        return values[0]
-    return int(statistics.quantiles(values, n=20, method="inclusive")[18])
-
-
-def read_input(args: CliArgs) -> str:
-    if args.log_text is not None:
-        return Path(args.log_text).read_text(encoding="utf-8")
-    if args.capture:
-        result = subprocess.run(
-            [
-                "cargo",
-                "run",
-                "-p",
-                "binbook",
-                "--features",
-                "serial-device",
-                "--",
-                "diag",
-                "logs",
-                "--port",
-                args.port,
-                "--since",
-                str(args.since),
-            ],
-            check=True,
-            text=True,
-            capture_output=True,
-        )
-        return result.stdout
-    return sys.stdin.read()
-
-
-def print_timelines(timelines: list[Timeline]) -> None:
-    for index, timeline in enumerate(timelines, start=1):
-        line = (
-            f"turn={index} input_to_enqueue_ms={timeline.input_to_enqueue_ms} "
-            + f"enqueue_to_receive_ms={timeline.enqueue_to_receive_ms} "
-            + f"receive_to_display_start_ms={timeline.receive_to_display_start_ms} "
-            + f"display_request_ms={timeline.display_request_ms} "
-            + f"busy_wait_ms={timeline.busy_wait_ms} "
-            + f"input_to_page_ms={timeline.input_to_page_ms} "
-            + f"bottleneck={timeline.bottleneck_stage}"
-        )
-        print(line)
-    totals = [timeline.input_to_page_ms for timeline in timelines]
-    summary = (
-        f"summary count={len(timelines)} min={min(totals)} max={max(totals)} "
-        + f"avg={int(statistics.mean(totals))} p95={percentile95(totals)}"
-    )
-    print(summary)
-
-
-def parse_args(argv: Sequence[str]) -> CliArgs | None:
-    log_text: str | None = None
-    capture = False
-    port = "/dev/ttyACM0"
-    since = 0
-    allow_incomplete = False
-    index = 0
-    while index < len(argv):
-        arg = argv[index]
-        if arg in {"-h", "--help"}:
-            print_help()
-            return None
-        if arg == "--capture":
-            capture = True
-            index += 1
-            continue
-        if arg == "--allow-incomplete":
-            allow_incomplete = True
-            index += 1
-            continue
-        if arg in {"--log-text", "--port", "--since"}:
-            if index + 1 >= len(argv):
-                raise UsageError(f"missing value for {arg}")
-            value = argv[index + 1]
-            match arg:
-                case "--log-text":
-                    log_text = value
-                case "--port":
-                    port = value
-                case "--since":
-                    since = int(value)
-                case unreachable:
-                    raise AssertionError(unreachable)
-            index += 2
-            continue
-        raise UsageError(f"unknown argument {arg}")
-    return CliArgs(
-        log_text=log_text,
-        capture=capture,
-        port=port,
-        since=since,
-        allow_incomplete=allow_incomplete,
-    )
-
-
-class UsageError(Exception):
-    pass
-
-
-def print_help() -> None:
-    print(
-        "usage: analyze_timing.py [--log-text PATH] [--capture] [--port PORT] [--since CURSOR] [--allow-incomplete]"
-    )
-    print("Analyze BinBook diagnostic timing logs")
-    print("--log-text PATH      Path to saved `binbook diag logs` text output")
-    print("--capture            Capture logs through the Rust CLI")
-    print("--port PORT          Serial port for --capture")
-    print("--since CURSOR       Log cursor for --capture")
-    print("--allow-incomplete   Return zero without complete timelines")
 
 
 def main() -> int:

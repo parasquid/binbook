@@ -24,6 +24,26 @@ seq=31 tick_ms=43357 level=1 subsystem=1 event=BUSY_WAIT_START arg0=2 arg1=60000
 seq=32 tick_ms=43858 level=1 subsystem=1 event=BUSY_WAIT_END arg0=2 arg1=1 arg2=0
 seq=34 tick_ms=43858 level=2 subsystem=3 event=PAGE_TURN arg0=0 arg1=1 arg2=0
 seq=37 tick_ms=43859 level=2 subsystem=1 event=DISPLAY_REQUEST_END arg0=1 arg1=894 arg2=0
+	""".strip()
+
+BREAKDOWN_PAGE_LOG = """
+seq=24 tick_ms=42965 level=2 subsystem=5 event=CMD_RECEIPT arg0=3 arg1=1 arg2=0
+seq=25 tick_ms=42965 level=2 subsystem=3 event=REQUEST_RECEIVE arg0=1 arg1=1 arg2=-1
+seq=26 tick_ms=42965 level=2 subsystem=1 event=DISPLAY_REQUEST_START arg0=1 arg1=0 arg2=1
+seq=27 tick_ms=42968 level=2 subsystem=1 event=PAGE_METADATA_READ arg0=0 arg1=1 arg2=3
+seq=28 tick_ms=42969 level=2 subsystem=1 event=PLANE_WRITE_START arg0=0 arg1=1 arg2=48000
+seq=29 tick_ms=43029 level=2 subsystem=1 event=PLANE_ROW_FILL_SUMMARY arg0=0 arg1=14 arg2=480
+seq=30 tick_ms=43169 level=2 subsystem=1 event=PLANE_SPI_WRITE_SUMMARY arg0=0 arg1=120 arg2=48000
+seq=31 tick_ms=43170 level=2 subsystem=1 event=PLANE_WRITE_END arg0=0 arg1=201 arg2=0
+seq=32 tick_ms=43171 level=2 subsystem=1 event=PLANE_WRITE_START arg0=1 arg1=0 arg2=48000
+seq=33 tick_ms=43229 level=2 subsystem=1 event=PLANE_ROW_FILL_SUMMARY arg0=1 arg1=16 arg2=480
+seq=34 tick_ms=43369 level=2 subsystem=1 event=PLANE_SPI_WRITE_SUMMARY arg0=1 arg1=122 arg2=48000
+seq=35 tick_ms=43370 level=2 subsystem=1 event=PLANE_WRITE_END arg0=1 arg1=199 arg2=0
+seq=36 tick_ms=43390 level=2 subsystem=1 event=REFRESH_TRIGGER arg0=1 arg1=20 arg2=0
+seq=37 tick_ms=43391 level=1 subsystem=1 event=BUSY_WAIT_START arg0=2 arg1=60000 arg2=1
+seq=38 tick_ms=43865 level=1 subsystem=1 event=BUSY_WAIT_END arg0=2 arg1=474 arg2=0
+seq=39 tick_ms=43865 level=2 subsystem=3 event=PAGE_TURN arg0=0 arg1=1 arg2=0
+seq=40 tick_ms=43865 level=2 subsystem=1 event=DISPLAY_REQUEST_END arg0=1 arg1=900 arg2=0
 """.strip()
 
 
@@ -89,3 +109,20 @@ def test_diagnostic_command_timing_clamps_out_of_order_stage_ticks() -> None:
     [summary] = timing.build_timelines(timing.parse_log_text(text))
 
     assert summary.enqueue_to_receive_ms == 0
+
+
+def test_page_turn_summary_splits_non_busy_display_time() -> None:
+    [summary] = timing.build_timelines(timing.parse_log_text(BREAKDOWN_PAGE_LOG))
+
+    assert summary.display_request_ms == 900
+    assert summary.busy_wait_ms == 474
+    assert summary.page_metadata_ms == 3
+    assert summary.prev_plane_total_ms == 201
+    assert summary.prev_plane_fill_ms == 14
+    assert summary.prev_plane_spi_ms == 120
+    assert summary.target_plane_total_ms == 199
+    assert summary.target_plane_fill_ms == 16
+    assert summary.target_plane_spi_ms == 122
+    assert summary.refresh_trigger_ms == 20
+    assert summary.non_busy_ms == 426
+    assert summary.unattributed_ms == 3
