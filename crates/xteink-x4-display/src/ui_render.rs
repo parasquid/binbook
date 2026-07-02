@@ -235,39 +235,10 @@ fn fill_absolute_row_packed(
     red: &mut [u8],
     black: &mut [u8],
 ) -> DisplayResult<()> {
-    use crate::profile::LOGICAL_HEIGHT;
+    use crate::profile::physical_to_logical;
 
-    // We store the framebuffer packed rows in LOGICAL coordinates (480×800).
-    // For the physical row Y (in the 800×480 physical space), per the 270°
-    // rotation: logical_x = physical_y, logical_y = LOGICAL_HEIGHT - 1 - physical_strip_x.
-    //
-    // But the full packed GRAY2 row is stored as 120 bytes per logical row,
-    // covering all 480 logical pixels in that row.
-    //
-    // For each physical row Y (800 pixels wide), we need to gather pixels
-    // from across the logical buffer using the rotation mapping.
-    //
-    // The rotation is:
-    //   logical_x = Y  (the physical row index becomes the logical column)
-    //   logical_y = LOGICAL_HEIGHT - 1 - strip_x  (where strip_x goes 0..799)
-    //
-    // So for each pixel position X in the physical row Y:
-    //   source = fb.get_pixel(Y as u16, LOGICAL_HEIGHT - 1 - X as u16)
-    //
-    // Then that source pixel value gets placed at physical column X in the
-    // SSD1677 row output.
-
-    // We need to build the full physical row (800 pixels, 100 bytes of
-    // red/black RAM). Each physical pixel X maps to logical (Y, 799-X).
-
-    // Compute the physical row data by iterating physical columns.
     for phys_x in 0..crate::profile::PHYSICAL_WIDTH as usize {
-        let logical_x = phys_y as u16; // physical_y → logical_x
-        let logical_y = LOGICAL_HEIGHT - 1 - phys_x as u16; // phys_x → rotated logical_y
-
-        if logical_y >= LOGICAL_HEIGHT {
-            continue;
-        }
+        let (logical_x, logical_y) = physical_to_logical(phys_x as u16, phys_y as u16);
 
         let gray = fb.get_pixel(logical_x, logical_y);
 
@@ -312,7 +283,7 @@ fn fill_staged_from_fb(
     base: &mut [u8],
     output: &mut [u8],
 ) -> DisplayResult<()> {
-    use crate::profile::{LOGICAL_HEIGHT, PHYSICAL_HEIGHT, PHYSICAL_WIDTH};
+    use crate::profile::{physical_to_logical, PHYSICAL_HEIGHT, PHYSICAL_WIDTH};
 
     let row_dst = usize::from(strip) * usize::from(CHUNK_ROWS);
     let row_end = (row_dst + usize::from(CHUNK_ROWS)).min(usize::from(PHYSICAL_HEIGHT));
@@ -324,15 +295,11 @@ fn fill_staged_from_fb(
         canonical_row.fill(0);
 
         for phys_x in 0..PHYSICAL_WIDTH as usize {
-            let logical_x = phys_y as u16;
-            let logical_y = LOGICAL_HEIGHT - 1 - phys_x as u16;
-
-            if logical_y < LOGICAL_HEIGHT {
-                let gray = fb.get_pixel(logical_x, logical_y);
-                let byte_idx = phys_x / 4;
-                let shift = 6 - (phys_x % 4) * 2;
-                canonical_row[byte_idx] |= gray.value() << shift;
-            }
+            let (logical_x, logical_y) = physical_to_logical(phys_x as u16, phys_y as u16);
+            let gray = fb.get_pixel(logical_x, logical_y);
+            let byte_idx = phys_x / 4;
+            let shift = 6 - (phys_x % 4) * 2;
+            canonical_row[byte_idx] |= gray.value() << shift;
         }
 
         canonical_row_to_staged(&canonical_row, msb, lsb, base)
@@ -356,13 +323,9 @@ fn fill_staged_from_fb(
 /// This is the inverse of the rotation mapping.
 #[must_use]
 pub fn logical_gray2_to_black_row(packed: &[u8], row_y: u16) -> [u8; ROW_BYTES] {
-    use crate::profile::{LOGICAL_HEIGHT, PHYSICAL_WIDTH};
+    use crate::profile::PHYSICAL_WIDTH;
     let mut row = [0u8; ROW_BYTES];
     for phys_x in 0..PHYSICAL_WIDTH as usize {
-        let logical_y = LOGICAL_HEIGHT - 1 - phys_x as u16;
-        if logical_y >= LOGICAL_HEIGHT {
-            continue;
-        }
         let byte_idx =
             usize::from(row_y) * usize::from(crate::profile::LOGICAL_WIDTH) / 4 + phys_x / 4;
         if byte_idx >= packed.len() {

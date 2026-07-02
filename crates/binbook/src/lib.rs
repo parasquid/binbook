@@ -11,6 +11,8 @@ pub mod nav_burst;
 pub mod protocol;
 
 #[cfg(feature = "serial-device")]
+pub mod diag_cli;
+#[cfg(feature = "serial-device")]
 pub mod exercise;
 #[cfg(feature = "serial-device")]
 mod exercise_decode;

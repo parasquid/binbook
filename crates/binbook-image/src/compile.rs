@@ -3,12 +3,15 @@ use binbook_encode::{CompiledChunk, CompiledPage, CompiledPlane};
 use gray2_render::{
     canonical_image_to_staged, quantize_gray1, quantize_gray2, FloydSteinberg, PlaneChunks,
 };
-use xteink_x4_display::profile::{
-    logical_gray2_to_physical_packed, CHUNK_ROWS, LOGICAL_HEIGHT, LOGICAL_WIDTH, PHYSICAL_HEIGHT,
-    PHYSICAL_WIDTH, ROW_BYTES,
-};
 
-use crate::{decode_image, fit_luma, ImageError};
+use crate::{
+    decode_image, fit_luma,
+    target::{
+        logical_gray2_unpacked_to_physical_packed, CHUNK_ROWS, LOGICAL_HEIGHT, LOGICAL_WIDTH,
+        PHYSICAL_HEIGHT, PHYSICAL_WIDTH, ROW_BYTES,
+    },
+    ImageError,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageFormat {
@@ -43,7 +46,7 @@ pub fn compile_decoded_image(
     let logical = fit_luma(decoded, u32::from(LOGICAL_WIDTH), u32::from(LOGICAL_HEIGHT))?;
     let levels = quantize(&logical.pixels, options)?;
     let mut physical = vec![0_u8; usize::from(PHYSICAL_WIDTH) * usize::from(PHYSICAL_HEIGHT) / 4];
-    logical_gray2_to_physical_packed(&levels, &mut physical).map_err(|_| ImageError::Format)?;
+    logical_gray2_unpacked_to_physical_packed(&levels, &mut physical)?;
     let plane_bytes = ROW_BYTES * usize::from(PHYSICAL_HEIGHT);
     let mut msb = vec![0_u8; plane_bytes];
     let mut lsb = vec![0_u8; plane_bytes];

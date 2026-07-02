@@ -10,6 +10,7 @@ pub mod error;
 pub mod flash;
 pub mod input;
 pub mod menu;
+pub mod menu_render;
 pub mod resume;
 pub mod runtime_engine;
 

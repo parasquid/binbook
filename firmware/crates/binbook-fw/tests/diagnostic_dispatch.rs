@@ -1,6 +1,37 @@
 #![cfg(feature = "diagnostic-console")]
 
 use binbook_fw::input::PageTurn;
+
+#[cfg(feature = "diagnostic-console")]
+#[test]
+fn diag_command_module_exposes_dispatch_boundary() {
+    use binbook_fw::diag::command::{dispatch_command, CommandContext, DispatchResult};
+    use binbook_fw::diag_storage::UnavailableStorage;
+
+    let header = binbook_diagnostic_protocol::FrameHeader {
+        kind: binbook_diagnostic_protocol::FrameKind::Request,
+        opcode: binbook_diagnostic_protocol::Opcode::Status,
+        status: binbook_diagnostic_protocol::Status::Ok,
+        sequence: 0,
+        payload_len: 0,
+    };
+    let mut ctx = CommandContext::new(2, 8, -7, 0);
+    ctx.protocol_errors = 3;
+    ctx.dropped_records = 4;
+    let mut resp_buf = [0u8; 496];
+    let mut storage = UnavailableStorage;
+
+    let result = dispatch_command(header, &[], &mut ctx, &mut resp_buf, &mut storage);
+
+    assert_eq!(
+        result,
+        DispatchResult::Response {
+            status: binbook_diagnostic_protocol::Status::Ok,
+            payload_len: 21,
+        }
+    );
+}
+
 #[cfg(feature = "diagnostic-console")]
 #[test]
 fn diag_dispatch_key_right_press_matches_button_right() {
