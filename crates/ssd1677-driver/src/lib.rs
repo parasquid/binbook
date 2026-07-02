@@ -12,3 +12,4 @@ pub use config::{PanelConfig, Waveform};
 pub use driver::Ssd1677;
 pub use error::Error;
 pub use refresh::{ControllerState, RefreshMode};
+pub use wait::{BusyWaitObserver, BusyWaitOutcome, NoopBusyWaitObserver};

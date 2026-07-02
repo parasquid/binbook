@@ -63,12 +63,31 @@ where
         self.wait_ready_async(delay).await
     }
 
+    pub async fn refresh_async_observed(
+        &mut self,
+        mode: RefreshMode,
+        delay: &mut impl AsyncDelayNs,
+        observer: &mut impl crate::BusyWaitObserver,
+    ) -> Result<(), Error> {
+        self.trigger_refresh(mode)?;
+        self.wait_ready_async_observed(delay, observer).await
+    }
+
     pub async fn activate_staged_grayscale_async(
         &mut self,
         delay: &mut impl AsyncDelayNs,
     ) -> Result<(), Error> {
         self.trigger_refresh(RefreshMode::StagedGrayscale)?;
         self.wait_ready_async(delay).await
+    }
+
+    pub async fn activate_staged_grayscale_async_observed(
+        &mut self,
+        delay: &mut impl AsyncDelayNs,
+        observer: &mut impl crate::BusyWaitObserver,
+    ) -> Result<(), Error> {
+        self.trigger_refresh(RefreshMode::StagedGrayscale)?;
+        self.wait_ready_async_observed(delay, observer).await
     }
 }
 use embedded_hal::delay::DelayNs;
