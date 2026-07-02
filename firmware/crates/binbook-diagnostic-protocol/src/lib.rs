@@ -948,7 +948,9 @@ pub fn encode_store_upload_begin_request(
     Ok(pos)
 }
 
-pub fn decode_store_upload_begin_request(payload: &[u8]) -> Result<StoreUploadBeginRequest<'_>, ProtocolError> {
+pub fn decode_store_upload_begin_request(
+    payload: &[u8],
+) -> Result<StoreUploadBeginRequest<'_>, ProtocolError> {
     if payload.len() < 11 {
         return Err(ProtocolError::BadPayloadLength);
     }
@@ -958,12 +960,22 @@ pub fn decode_store_upload_begin_request(payload: &[u8]) -> Result<StoreUploadBe
     if payload.len() != required {
         return Err(ProtocolError::BadPayloadLength);
     }
-    let path = core::str::from_utf8(&payload[3..3 + path_len])
-        .map_err(|_| ProtocolError::InvalidValue)?;
+    let path =
+        core::str::from_utf8(&payload[3..3 + path_len]).map_err(|_| ProtocolError::InvalidValue)?;
     let mut pos = 3 + path_len;
-    let file_size = u32::from_le_bytes([payload[pos], payload[pos + 1], payload[pos + 2], payload[pos + 3]]);
+    let file_size = u32::from_le_bytes([
+        payload[pos],
+        payload[pos + 1],
+        payload[pos + 2],
+        payload[pos + 3],
+    ]);
     pos += 4;
-    let expected_crc32 = u32::from_le_bytes([payload[pos], payload[pos + 1], payload[pos + 2], payload[pos + 3]]);
+    let expected_crc32 = u32::from_le_bytes([
+        payload[pos],
+        payload[pos + 1],
+        payload[pos + 2],
+        payload[pos + 3],
+    ]);
     Ok(StoreUploadBeginRequest {
         backend,
         path,
@@ -987,7 +999,9 @@ pub fn decode_store_upload_begin_response(payload: &[u8]) -> Result<u32, Protoco
     if payload.len() != 4 {
         return Err(ProtocolError::BadPayloadLength);
     }
-    Ok(u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]))
+    Ok(u32::from_le_bytes([
+        payload[0], payload[1], payload[2], payload[3],
+    ]))
 }
 
 // ---------------------------------------------------------------------------
@@ -1015,7 +1029,9 @@ pub fn encode_store_upload_write_request(
     Ok(total)
 }
 
-pub fn decode_store_upload_write_request(payload: &[u8]) -> Result<StoreUploadWriteRequest<'_>, ProtocolError> {
+pub fn decode_store_upload_write_request(
+    payload: &[u8],
+) -> Result<StoreUploadWriteRequest<'_>, ProtocolError> {
     if payload.len() < 8 {
         return Err(ProtocolError::BadPayloadLength);
     }
@@ -1044,7 +1060,9 @@ pub fn decode_store_upload_write_response(payload: &[u8]) -> Result<u32, Protoco
     if payload.len() != 4 {
         return Err(ProtocolError::BadPayloadLength);
     }
-    Ok(u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]))
+    Ok(u32::from_le_bytes([
+        payload[0], payload[1], payload[2], payload[3],
+    ]))
 }
 
 // ---------------------------------------------------------------------------
@@ -1066,17 +1084,16 @@ pub fn decode_store_upload_commit_request(payload: &[u8]) -> Result<u32, Protoco
     if payload.len() != 4 {
         return Err(ProtocolError::BadPayloadLength);
     }
-    Ok(u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]))
+    Ok(u32::from_le_bytes([
+        payload[0], payload[1], payload[2], payload[3],
+    ]))
 }
 
 // ---------------------------------------------------------------------------
 // StoreAbort
 // ---------------------------------------------------------------------------
 
-pub fn encode_store_abort_request(
-    upload_id: u32,
-    out: &mut [u8],
-) -> Result<usize, ProtocolError> {
+pub fn encode_store_abort_request(upload_id: u32, out: &mut [u8]) -> Result<usize, ProtocolError> {
     if out.len() < 4 {
         return Err(ProtocolError::OutputTooSmall);
     }
@@ -1088,7 +1105,9 @@ pub fn decode_store_abort_request(payload: &[u8]) -> Result<u32, ProtocolError> 
     if payload.len() != 4 {
         return Err(ProtocolError::BadPayloadLength);
     }
-    Ok(u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]))
+    Ok(u32::from_le_bytes([
+        payload[0], payload[1], payload[2], payload[3],
+    ]))
 }
 
 // ---------------------------------------------------------------------------
@@ -1116,7 +1135,9 @@ pub fn encode_store_delete_request(
     Ok(total)
 }
 
-pub fn decode_store_delete_request(payload: &[u8]) -> Result<StoreDeleteRequest<'_>, ProtocolError> {
+pub fn decode_store_delete_request(
+    payload: &[u8],
+) -> Result<StoreDeleteRequest<'_>, ProtocolError> {
     if payload.len() < 3 {
         return Err(ProtocolError::BadPayloadLength);
     }
@@ -1180,6 +1201,8 @@ pub const EVT_TURN_DEQUEUED: u16 = 0x0203;
 pub const EVT_TURN_DROPPED: u16 = 0x0204;
 pub const EVT_TURN_STARTED: u16 = 0x0205;
 pub const EVT_TURN_BOUNDARY_NOOP: u16 = 0x0206;
+pub const EVT_REQUEST_ENQUEUE: u16 = 0x0207;
+pub const EVT_REQUEST_RECEIVE: u16 = 0x0208;
 pub const EVT_RESEED_START: u16 = 0x0303;
 pub const EVT_RESEED_COMPLETE: u16 = 0x0304;
 pub const EVT_DISPLAY_RECOVERY: u16 = 0x0801;
@@ -1191,8 +1214,12 @@ pub const EVT_GRAY_OVERLAY_COMPLETE: u16 = 0x0309;
 pub const EVT_BW_BASE_SYNC_START: u16 = 0x030A;
 pub const EVT_BW_BASE_SYNC_CANCELLED: u16 = 0x030B;
 pub const EVT_BW_BASE_SYNC_COMPLETE: u16 = 0x030C;
+pub const EVT_DISPLAY_REQUEST_START: u16 = 0x030D;
+pub const EVT_DISPLAY_REQUEST_END: u16 = 0x030E;
 pub const EVT_CONTROLLER_RAM_STATE: u16 = 0x0402;
 pub const EVT_WAVEFORM_SELECTED: u16 = 0x0403;
+pub const EVT_BUSY_WAIT_START: u16 = 0x0404;
+pub const EVT_BUSY_WAIT_END: u16 = 0x0405;
 
 pub fn crc16_ccitt_false(data: &[u8]) -> u16 {
     let mut crc: u16 = 0xFFFF;

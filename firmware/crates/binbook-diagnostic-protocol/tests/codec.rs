@@ -1,20 +1,20 @@
 use binbook_diagnostic_protocol::{
     decode_frame, decode_hello_response, decode_log_get_payload, decode_log_record,
-    decode_store_abort_request, decode_store_delete_request, decode_store_list_request,
-    decode_store_read_request, decode_store_read_response, decode_store_upload_begin_request,
-    decode_store_upload_begin_response, decode_store_upload_commit_request,
-    decode_store_upload_write_request, decode_store_upload_write_response, decode_status_payload,
-    encode_frame, encode_hello_response, encode_log_get_payload, encode_log_record,
-    encode_page_payload, encode_status_payload, encode_store_abort_request,
-    encode_store_delete_request, encode_store_upload_begin_request,
+    decode_status_payload, decode_store_abort_request, decode_store_delete_request,
+    decode_store_list_request, decode_store_read_request, decode_store_read_response,
+    decode_store_upload_begin_request, decode_store_upload_begin_response,
+    decode_store_upload_commit_request, decode_store_upload_write_request,
+    decode_store_upload_write_response, encode_frame, encode_hello_response,
+    encode_log_get_payload, encode_log_record, encode_page_payload, encode_status_payload,
+    encode_store_abort_request, encode_store_delete_request, encode_store_upload_begin_request,
     encode_store_upload_begin_response, encode_store_upload_commit_request,
     encode_store_upload_write_request, encode_store_upload_write_response, FrameHeader, FrameKind,
     HelloResponse, KeyAction, KeyCode, LogGetPayload, LogRecordPayload, Opcode, PageAction,
     PanelModeCode, ProbeCode, Status, StatusPayload, StorageBackend, EVT_DISPLAY_RECOVERY,
     EVT_INPUT_DECISION, EVT_INPUT_TRANSITION, EVT_REFRESH_PHASE, EVT_RESEED_COMPLETE,
-    EVT_RESEED_START, EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED,
-    EVT_TURN_QUEUED, EVT_TURN_STARTED, FRAME_DELIMITER, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES,
-    PROTOCOL_VERSION, STORE_LIST_ENTRY_HEADER_BYTES,
+    EVT_RESEED_START, EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED, EVT_TURN_QUEUED,
+    EVT_TURN_STARTED, FRAME_DELIMITER, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
+    STORE_LIST_ENTRY_HEADER_BYTES,
 };
 
 #[test]
@@ -80,18 +80,38 @@ fn deferred_gray_event_codes_are_stable_and_nonzero() {
 }
 
 #[test]
+fn timing_event_codes_are_stable_and_nonzero() {
+    use binbook_diagnostic_protocol::{
+        EVT_BUSY_WAIT_END, EVT_BUSY_WAIT_START, EVT_DISPLAY_REQUEST_END, EVT_DISPLAY_REQUEST_START,
+        EVT_REQUEST_ENQUEUE, EVT_REQUEST_RECEIVE,
+    };
+
+    let expected = [
+        (EVT_REQUEST_ENQUEUE, 0x0207),
+        (EVT_REQUEST_RECEIVE, 0x0208),
+        (EVT_DISPLAY_REQUEST_START, 0x030D),
+        (EVT_DISPLAY_REQUEST_END, 0x030E),
+        (EVT_BUSY_WAIT_START, 0x0404),
+        (EVT_BUSY_WAIT_END, 0x0405),
+    ];
+    for (actual, expected) in expected {
+        assert_eq!(actual, expected);
+        assert_ne!(actual, 0);
+    }
+}
+
+#[test]
 fn max_frame_bytes_is_4126() {
     assert_eq!(MAX_FRAME_BYTES, 4126);
 }
 
 #[test]
 fn storage_backend_and_unsupported_status_and_cap_storage() {
-    use binbook_diagnostic_protocol::{StorageBackend, Status};
+    use binbook_diagnostic_protocol::{Status, StorageBackend};
     assert_eq!(StorageBackend::from_u8(0), Some(StorageBackend::Sd));
     assert_eq!(StorageBackend::from_u8(1), Some(StorageBackend::Flash));
     assert_eq!(StorageBackend::from_u8(2), None);
     assert_eq!(Status::Unsupported, Status::from_u8(5).unwrap());
-    assert!(binbook_diagnostic_protocol::CAP_STORAGE != 0);
     assert_eq!(binbook_diagnostic_protocol::CAP_STORAGE, 1 << 6);
 }
 

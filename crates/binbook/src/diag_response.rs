@@ -1,5 +1,5 @@
 use binbook_diagnostic_protocol::{
-    decode_frame, decode_store_list_entry, FrameKind, Opcode, Status, MAX_FRAME_BYTES, CAP_STORAGE,
+    decode_frame, decode_store_list_entry, FrameKind, Opcode, Status, CAP_STORAGE, MAX_FRAME_BYTES,
 };
 
 pub struct StatusResponse {
@@ -193,6 +193,8 @@ fn event_name(event: u16) -> &'static str {
         EVT_TURN_DROPPED => "TURN_DROPPED",
         EVT_TURN_STARTED => "TURN_STARTED",
         EVT_TURN_BOUNDARY_NOOP => "TURN_BOUNDARY_NOOP",
+        EVT_REQUEST_ENQUEUE => "REQUEST_ENQUEUE",
+        EVT_REQUEST_RECEIVE => "REQUEST_RECEIVE",
         EVT_RESEED_START => "RESEED_START",
         EVT_RESEED_COMPLETE => "RESEED_COMPLETE",
         EVT_GRAY_DELAY_CANCELLED => "GRAY_DELAY_CANCELLED",
@@ -203,8 +205,12 @@ fn event_name(event: u16) -> &'static str {
         EVT_BW_BASE_SYNC_START => "BW_BASE_SYNC_START",
         EVT_BW_BASE_SYNC_CANCELLED => "BW_BASE_SYNC_CANCELLED",
         EVT_BW_BASE_SYNC_COMPLETE => "BW_BASE_SYNC_COMPLETE",
+        EVT_DISPLAY_REQUEST_START => "DISPLAY_REQUEST_START",
+        EVT_DISPLAY_REQUEST_END => "DISPLAY_REQUEST_END",
         EVT_CONTROLLER_RAM_STATE => "CONTROLLER_RAM_STATE",
         EVT_WAVEFORM_SELECTED => "WAVEFORM_SELECTED",
+        EVT_BUSY_WAIT_START => "BUSY_WAIT_START",
+        EVT_BUSY_WAIT_END => "BUSY_WAIT_END",
         EVT_DISPLAY_RECOVERY => "DISPLAY_RECOVERY",
         _ => "UNKNOWN",
     }
