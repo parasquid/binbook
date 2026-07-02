@@ -1,7 +1,10 @@
 # Xteink X4 Diagnostic Serial Console Design
 
 Date: 2026-06-26
-Status: Planned
+Status: Historical v1 design record. The diagnostic console is implemented, but
+the current wire protocol is version 2 with a larger frame size and storage
+opcodes. Use `firmware/crates/binbook-diagnostic-protocol` and
+`docs/reference/xteink-x4-agent-device-verification.md` for current behavior.
 Target: Xteink X4 BinBook firmware on ESP32-C3 USB Serial/JTAG
 
 ## Summary

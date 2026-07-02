@@ -1,5 +1,12 @@
 # X4 Navigation Burst Diagnostics
 
+Status: Historical diagnostic design record. The 16-page fixture and FIFO
+relative-turn contract remain relevant, but protocol constants in this dated
+spec reflect the older protocol version. Use
+`firmware/crates/binbook-diagnostic-protocol` and
+`docs/reference/xteink-x4-agent-device-verification.md` for current wire-format
+and runbook details.
+
 ## Scope
 
 The diagnostic localizes rapid mixed-direction navigation stalls without changing ADC thresholds, polling cadence, cooldown, queue capacity, page-turn semantics, display timing, SSD1677 commands, or controller-RAM behavior. Diagnostic protocol version 1 and the STATUS payload layout remain unchanged.

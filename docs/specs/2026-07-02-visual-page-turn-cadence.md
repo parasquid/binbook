@@ -1,5 +1,9 @@
 # Visual Page-Turn Cadence Design
 
+Status: Implemented analyzer design. Webcam cadence remains a verification aid;
+firmware-only optimization decisions should use the accepted-key and BUSY
+metrics described in `docs/ROADMAP.md`.
+
 ## Goal
 
 Measure the fastest serial-injected key cadence where each key produces a distinct visible page-number transition start on the webcam feed.

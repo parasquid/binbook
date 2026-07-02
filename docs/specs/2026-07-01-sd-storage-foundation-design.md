@@ -1,15 +1,13 @@
-# SD Storage Foundation Design  — CORRECTED COPY
+# SD Storage Foundation Design
 
-> **Corrected copy.** This replaces the committed
-> `docs/specs/2026-07-01-sd-storage-foundation-design.md`. Move agent: overwrite
-> the `docs/specs/` file with this one.
->
-> **Correction applied:** the shared-bus arbiter was attributed to `xteink-hal`,
-> but `firmware/crates/xteink-hal` is an **empty placeholder** (no manifest, empty
-> `src/`). The board abstraction (`BoardSpiDevice`) lives in
-> `binbook-fw/src/board.rs`, so the arbiter + pin wiring belong there. This aligns
-> better with the modularity rule (board-specific sharing stays in the app crate;
-> the reusable `embedded-sd-storage` takes a generic `SpiDevice`).
+Status: Implemented foundation design. The reusable `binbook-storage` and
+`embedded-sd-storage` crates exist, and firmware SD integration is feature-gated.
+Diagnostic storage commands and user-facing library flow are covered by the
+follow-on B/C designs.
+
+Correction note: the shared-bus arbiter belongs in `binbook-fw/src/board.rs`
+with the board-specific pin wiring. The reusable `embedded-sd-storage` takes a
+generic `SpiDevice`.
 
 ## Status and authority
 

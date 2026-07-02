@@ -1,5 +1,10 @@
 # Xteink X4 Fast-Turn Staged-Grayscale Design
 
+Status: Implemented display-policy design with historical protocol references.
+The staged grayscale controller policy remains current, but protocol constants
+in the diagnostics section predate diagnostic protocol v2. Use
+`firmware/crates/binbook-diagnostic-protocol` for current wire-format details.
+
 ## Purpose
 
 Provide fast Xteink X4 page turns followed by four-level grayscale refinement

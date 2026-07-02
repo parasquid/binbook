@@ -1,15 +1,14 @@
-# Diagnostic Storage Extension Design — CORRECTED COPY
+# Diagnostic Storage Extension Design
 
-> **Corrected copy.** This replaces the committed
-> `docs/specs/2026-07-01-diagnostic-storage-extension-design.md`. Move agent:
-> overwrite the `docs/specs/` file with this one.
->
-> **Correction applied:** the original upload design assumed `embedded-sdmmc`
-> supported pre-allocation and an atomic rename (`.partial` → final). It supports
-> **neither**. The upload flow is amended to write directly to the final filename
-> and guarantee integrity via (a) CRC32 verification at commit and (b)
-> `binbook-storage`'s `Book::open` validation (incomplete/corrupt files are
-> invisible to `StoreList`). The user-facing contract is unchanged.
+Status: Partially implemented. Diagnostic protocol v2, storage opcodes, CLI
+commands, and firmware dispatch seams exist. The current diagnostic firmware
+still wires `UnavailableStorage` unless a real storage backend is integrated, so
+live storage CRUD remains backend-dependent rather than generally available.
+The LittleFS internal-flash backend remains roadmap work.
+
+Correction note: the upload design writes directly to the final filename and
+guarantees integrity via CRC32 verification at commit plus `binbook-storage`
+validation. It does not rely on `embedded-sdmmc` pre-allocation or atomic rename.
 
 ## Status and authority
 
@@ -20,14 +19,14 @@ commands to **upload, list, delete, and read back** BinBook files on the SD
 storage delivered by A. B is what makes A verifiable on real hardware and gives a
 mechanism to populate the card for testing C.
 
-`BINBOOK_FORMAT_SPEC.md` and the existing `binbook-diagnostic-protocol` crate are
-authoritative for the wire format. B extends the protocol (new opcodes, larger
-frame, new capability, version bump) but does not change BinBook file bytes.
+`BINBOOK_FORMAT_SPEC.md` is authoritative for BinBook file bytes. The
+`binbook-diagnostic-protocol` crate is authoritative for the current diagnostic
+wire format.
 
 Build order is **A → B → C**. B depends on A's crates (`embedded-sd-storage`,
 `binbook-storage`) and the `binbook-fw` shared-bus arbiter.
 
-## Existing protocol facts (from `binbook-diagnostic-protocol`)
+## Pre-change protocol facts
 
 - COBS-framed binary, `MAGIC = "BB"`, per-frame CRC, frame delimiter `0x00`.
 - `RawFrameHeader { kind: u8, opcode: u8, status: u8, sequence: u16, payload_len: u16 }`.
@@ -40,6 +39,10 @@ Build order is **A → B → C**. B depends on A's crates (`embedded-sd-storage`
   returns `max_frame_bytes`.
 - `binbook-fw::diag::dispatch_command` matches opcode → decodes payload → returns
   a `DispatchResult`.
+
+Current code has protocol version 2, larger frames, storage opcodes,
+`CAP_STORAGE`, and `Status::Unsupported`; use
+`firmware/crates/binbook-diagnostic-protocol` for exact values.
 
 ## Goals
 

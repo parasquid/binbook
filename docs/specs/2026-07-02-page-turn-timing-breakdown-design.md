@@ -1,5 +1,10 @@
 # Page-Turn Timing Breakdown
 
+Status: Implemented timing-instrumentation design. The event model remains
+current, but measured values in later docs should be preferred because
+full-window plane streaming changed the page-turn timing profile after this
+design was written.
+
 ## Scope
 
 The diagnostic timing breakdown localizes the non-BUSY portion of an Xteink X4 page turn without changing page-turn semantics, SSD1677 commands, refresh mode selection, queue behavior, ADC input handling, or display output. Existing `DISPLAY_REQUEST_START`, `DISPLAY_REQUEST_END`, `BUSY_WAIT_START`, and `BUSY_WAIT_END` events remain valid. The new data explains what makes up `display_request_ms - busy_wait_ms` so optimization work can target the dominant stage.

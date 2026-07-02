@@ -22,8 +22,10 @@ console is a hardware-verification interface, not merely a debugging shell.
 A command is verified only when its request, response, resulting state, and any
 required visible panel outcome are all checked.
 
-Use `docs/specs/2026-06-26-x4-diagnostic-serial-console-design.md` for protocol
-semantics and `BINBOOK_FORMAT_SPEC.md` for file-format semantics.
+Use `firmware/crates/binbook-diagnostic-protocol` for current diagnostic
+protocol semantics and `BINBOOK_FORMAT_SPEC.md` for file-format semantics. Dated
+diagnostic protocol specs under `docs/specs/` are implementation records and may
+describe older protocol versions.
 
 ## Safety And Ownership Rules
 
