@@ -24,7 +24,8 @@ fn diag_command_error_is_logged_immediately() {
     let req_len = encode_frame(&header, &[0xFF], &mut req_buf).unwrap();
     state.feed_rx(&req_buf[..req_len]);
 
-    let _action = poll_pending_command(&mut state, 0, 10, 0, 0, &mut log, 500);
+    let mut storage = binbook_fw::diag_storage::UnavailableStorage;
+    let _action = poll_pending_command(&mut state, 0, 10, 0, 0, &mut log, 500, &mut storage);
 
     let mut resp_buf = [0u8; 496];
     let written = binbook_fw::diag::resolve_log_get(&log, 0, 496, &mut resp_buf);
@@ -73,7 +74,8 @@ fn diag_refresh_panel_and_display_error_events_are_emitted() {
     let req_len = encode_frame(&header, &key_payload, &mut req_buf).unwrap();
     state.feed_rx(&req_buf[..req_len]);
 
-    let _action = poll_pending_command(&mut state, 0, 10, 0, 0, &mut log, 1000);
+    let mut storage = binbook_fw::diag_storage::UnavailableStorage;
+    let _action = poll_pending_command(&mut state, 0, 10, 0, 0, &mut log, 1000, &mut storage);
 
     let mut resp_buf = [0u8; 496];
     let written = binbook_fw::diag::resolve_log_get(&log, 0, 496, &mut resp_buf);

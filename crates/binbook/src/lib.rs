@@ -21,7 +21,7 @@ pub mod serial_transport;
 
 pub use args::{
     Cli, Commands, DiagCommand, ExerciseCommand, FontChoice, InputFormat, PageAction, PixelFormat,
-    ProbeCommand, Profile,
+    ProbeCommand, Profile, StorageCommand,
 };
 pub use decode::run_decode;
 pub use encode::run_encode;

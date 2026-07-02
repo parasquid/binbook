@@ -1,12 +1,20 @@
 use binbook_diagnostic_protocol::{
     decode_frame, decode_hello_response, decode_log_get_payload, decode_log_record,
-    decode_status_payload, encode_frame, encode_hello_response, encode_log_get_payload,
-    encode_log_record, encode_page_payload, encode_status_payload, FrameHeader, FrameKind,
+    decode_store_abort_request, decode_store_delete_request, decode_store_list_request,
+    decode_store_read_request, decode_store_read_response, decode_store_upload_begin_request,
+    decode_store_upload_begin_response, decode_store_upload_commit_request,
+    decode_store_upload_write_request, decode_store_upload_write_response, decode_status_payload,
+    encode_frame, encode_hello_response, encode_log_get_payload, encode_log_record,
+    encode_page_payload, encode_status_payload, encode_store_abort_request,
+    encode_store_delete_request, encode_store_upload_begin_request,
+    encode_store_upload_begin_response, encode_store_upload_commit_request,
+    encode_store_upload_write_request, encode_store_upload_write_response, FrameHeader, FrameKind,
     HelloResponse, KeyAction, KeyCode, LogGetPayload, LogRecordPayload, Opcode, PageAction,
-    PanelModeCode, ProbeCode, Status, StatusPayload, EVT_DISPLAY_RECOVERY, EVT_INPUT_DECISION,
-    EVT_INPUT_TRANSITION, EVT_REFRESH_PHASE, EVT_RESEED_COMPLETE, EVT_RESEED_START,
-    EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED, EVT_TURN_QUEUED, EVT_TURN_STARTED,
-    FRAME_DELIMITER, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
+    PanelModeCode, ProbeCode, Status, StatusPayload, StorageBackend, EVT_DISPLAY_RECOVERY,
+    EVT_INPUT_DECISION, EVT_INPUT_TRANSITION, EVT_REFRESH_PHASE, EVT_RESEED_COMPLETE,
+    EVT_RESEED_START, EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED,
+    EVT_TURN_QUEUED, EVT_TURN_STARTED, FRAME_DELIMITER, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES,
+    PROTOCOL_VERSION, STORE_LIST_ENTRY_HEADER_BYTES,
 };
 
 #[test]
@@ -74,6 +82,30 @@ fn deferred_gray_event_codes_are_stable_and_nonzero() {
 #[test]
 fn max_frame_bytes_is_4126() {
     assert_eq!(MAX_FRAME_BYTES, 4126);
+}
+
+#[test]
+fn storage_backend_and_unsupported_status_and_cap_storage() {
+    use binbook_diagnostic_protocol::{StorageBackend, Status};
+    assert_eq!(StorageBackend::from_u8(0), Some(StorageBackend::Sd));
+    assert_eq!(StorageBackend::from_u8(1), Some(StorageBackend::Flash));
+    assert_eq!(StorageBackend::from_u8(2), None);
+    assert_eq!(Status::Unsupported, Status::from_u8(5).unwrap());
+    assert!(binbook_diagnostic_protocol::CAP_STORAGE != 0);
+    assert_eq!(binbook_diagnostic_protocol::CAP_STORAGE, 1 << 6);
+}
+
+#[test]
+fn storage_opcodes_are_defined() {
+    use binbook_diagnostic_protocol::Opcode;
+    assert_eq!(Opcode::from_u8(0x0A), Some(Opcode::StoreList));
+    assert_eq!(Opcode::from_u8(0x0B), Some(Opcode::StoreUploadBegin));
+    assert_eq!(Opcode::from_u8(0x0C), Some(Opcode::StoreUploadWrite));
+    assert_eq!(Opcode::from_u8(0x0D), Some(Opcode::StoreUploadCommit));
+    assert_eq!(Opcode::from_u8(0x0E), Some(Opcode::StoreAbort));
+    assert_eq!(Opcode::from_u8(0x0F), Some(Opcode::StoreDelete));
+    assert_eq!(Opcode::from_u8(0x10), Some(Opcode::StoreRead));
+    assert_eq!(Opcode::from_u8(0x11), None);
 }
 
 #[test]
@@ -519,5 +551,233 @@ fn decode_preserves_unknown_opcode_and_safe_sequence_for_error_response() {
     assert_eq!(
         decode_frame(&encoded[..encoded_len], &mut payload),
         Err(binbook_diagnostic_protocol::ProtocolError::UnknownOpcode)
+    );
+}
+
+#[test]
+fn store_list_request_roundtrips() {
+    let mut buf = [0u8; MAX_PAYLOAD_BYTES];
+    let req = binbook_diagnostic_protocol::StoreListRequest {
+        backend: StorageBackend::Sd,
+        path: "/books",
+    };
+    let len = binbook_diagnostic_protocol::encode_store_list_request(&req, &mut buf).unwrap();
+    let decoded = decode_store_list_request(&buf[..len]).unwrap();
+    assert_eq!(decoded.backend, StorageBackend::Sd);
+    assert_eq!(decoded.path, "/books");
+}
+
+#[test]
+fn store_list_request_rejects_bad_backend() {
+    let mut buf = [0u8; 10];
+    buf[0] = 0xFF;
+    buf[1..3].copy_from_slice(&0u16.to_le_bytes());
+    assert_eq!(
+        decode_store_list_request(&buf[..3]),
+        Err(binbook_diagnostic_protocol::ProtocolError::InvalidValue)
+    );
+}
+
+#[test]
+fn store_list_request_rejects_invalid_utf8() {
+    let mut buf = [0u8; 10];
+    buf[0] = StorageBackend::Sd as u8;
+    buf[1..3].copy_from_slice(&2u16.to_le_bytes());
+    buf[3] = 0xFF;
+    buf[4] = 0xFE;
+    assert_eq!(
+        decode_store_list_request(&buf[..5]),
+        Err(binbook_diagnostic_protocol::ProtocolError::InvalidValue)
+    );
+}
+
+#[test]
+fn store_list_entry_encode_decode_roundtrips() {
+    let mut buf = [0u8; MAX_PAYLOAD_BYTES];
+    let name = b"book.binbook";
+    let len = binbook_diagnostic_protocol::encode_store_entry(0, name, 123456, &mut buf).unwrap();
+    let expected = STORE_LIST_ENTRY_HEADER_BYTES + name.len();
+    assert_eq!(len, expected);
+    let (entry_type, decoded_name, size) =
+        binbook_diagnostic_protocol::decode_store_list_entry(&buf[..len]).unwrap();
+    assert_eq!(entry_type, 0);
+    assert_eq!(decoded_name, name);
+    assert_eq!(size, 123456);
+}
+
+#[test]
+fn store_list_entries_encoded_via_callback() {
+    let mut buf = [0u8; MAX_PAYLOAD_BYTES];
+    let mut call_count = 0;
+    let total = binbook_diagnostic_protocol::encode_store_list_entries(
+        &mut buf,
+        |out| {
+            call_count += 1;
+            binbook_diagnostic_protocol::encode_store_entry(0, b"a.txt", 100, out)
+        },
+        1,
+    )
+    .unwrap();
+    assert_eq!(call_count, 1);
+    let count = binbook_diagnostic_protocol::decode_store_list_count(&buf[..total]).unwrap();
+    assert_eq!(count, 1);
+    let (entry_type, name, size) =
+        binbook_diagnostic_protocol::decode_store_list_entry(&buf[2..total]).unwrap();
+    assert_eq!(entry_type, 0);
+    assert_eq!(name, b"a.txt");
+    assert_eq!(size, 100);
+}
+
+#[test]
+fn store_list_entry_rejects_oversized_name() {
+    let large_name = [0u8; 200];
+    let mut buf = [0u8; MAX_PAYLOAD_BYTES];
+    let len = binbook_diagnostic_protocol::encode_store_entry(0, &large_name, 0, &mut buf).unwrap();
+    assert_eq!(
+        binbook_diagnostic_protocol::decode_store_list_entry(&buf[..len]),
+        Err(binbook_diagnostic_protocol::ProtocolError::InvalidValue)
+    );
+}
+
+#[test]
+fn store_read_request_roundtrips() {
+    let mut buf = [0u8; MAX_PAYLOAD_BYTES];
+    let req = binbook_diagnostic_protocol::StoreReadRequest {
+        backend: StorageBackend::Flash,
+        path: "/config.json",
+    };
+    let len = binbook_diagnostic_protocol::encode_store_read_request(&req, &mut buf).unwrap();
+    let decoded = decode_store_read_request(&buf[..len]).unwrap();
+    assert_eq!(decoded.backend, StorageBackend::Flash);
+    assert_eq!(decoded.path, "/config.json");
+}
+
+#[test]
+fn store_read_response_roundtrips() {
+    let data = b"hello, storage!";
+    let mut buf = [0u8; MAX_PAYLOAD_BYTES];
+    let len = binbook_diagnostic_protocol::encode_store_read_response(data, &mut buf).unwrap();
+    assert_eq!(len, 4 + data.len());
+    let decoded = decode_store_read_response(&buf[..len]).unwrap();
+    assert_eq!(decoded, data);
+}
+
+#[test]
+fn store_read_response_rejects_truncated() {
+    assert_eq!(
+        decode_store_read_response(&[0u8; 3]),
+        Err(binbook_diagnostic_protocol::ProtocolError::BadPayloadLength)
+    );
+}
+
+#[test]
+fn store_read_response_rejects_length_mismatch() {
+    let mut payload = [0u8; 10];
+    payload[0..4].copy_from_slice(&5u32.to_le_bytes());
+    assert_eq!(
+        decode_store_read_response(&payload),
+        Err(binbook_diagnostic_protocol::ProtocolError::BadPayloadLength)
+    );
+}
+
+#[test]
+fn store_upload_begin_request_roundtrips() {
+    let mut buf = [0u8; MAX_PAYLOAD_BYTES];
+    let req = binbook_diagnostic_protocol::StoreUploadBeginRequest {
+        backend: StorageBackend::Sd,
+        path: "/books/new.binbook",
+        file_size: 1048576,
+        expected_crc32: 0xDEADBEEF,
+    };
+    let len = encode_store_upload_begin_request(&req, &mut buf).unwrap();
+    let decoded = decode_store_upload_begin_request(&buf[..len]).unwrap();
+    assert_eq!(decoded.backend, StorageBackend::Sd);
+    assert_eq!(decoded.path, "/books/new.binbook");
+    assert_eq!(decoded.file_size, 1048576);
+    assert_eq!(decoded.expected_crc32, 0xDEADBEEF);
+}
+
+#[test]
+fn store_upload_begin_request_rejects_truncated() {
+    assert_eq!(
+        decode_store_upload_begin_request(&[0u8; 10]),
+        Err(binbook_diagnostic_protocol::ProtocolError::BadPayloadLength)
+    );
+}
+
+#[test]
+fn store_upload_begin_response_roundtrips() {
+    let mut buf = [0u8; 4];
+    let len = encode_store_upload_begin_response(42, &mut buf).unwrap();
+    assert_eq!(len, 4);
+    assert_eq!(decode_store_upload_begin_response(&buf).unwrap(), 42);
+}
+
+#[test]
+fn store_upload_write_request_roundtrips() {
+    let data = b"hello, chunk!";
+    let mut buf = [0u8; MAX_PAYLOAD_BYTES];
+    let req = binbook_diagnostic_protocol::StoreUploadWriteRequest {
+        upload_id: 7,
+        offset: 4096,
+        data,
+    };
+    let len = encode_store_upload_write_request(&req, &mut buf).unwrap();
+    let decoded = decode_store_upload_write_request(&buf[..len]).unwrap();
+    assert_eq!(decoded.upload_id, 7);
+    assert_eq!(decoded.offset, 4096);
+    assert_eq!(decoded.data, data);
+}
+
+#[test]
+fn store_upload_write_request_rejects_truncated() {
+    assert_eq!(
+        decode_store_upload_write_request(&[0u8; 7]),
+        Err(binbook_diagnostic_protocol::ProtocolError::BadPayloadLength)
+    );
+}
+
+#[test]
+fn store_upload_write_response_roundtrips() {
+    let mut buf = [0u8; 4];
+    let len = encode_store_upload_write_response(512, &mut buf).unwrap();
+    assert_eq!(len, 4);
+    assert_eq!(decode_store_upload_write_response(&buf).unwrap(), 512);
+}
+
+#[test]
+fn store_upload_commit_request_roundtrips() {
+    let mut buf = [0u8; 4];
+    let len = encode_store_upload_commit_request(99, &mut buf).unwrap();
+    assert_eq!(len, 4);
+    assert_eq!(decode_store_upload_commit_request(&buf).unwrap(), 99);
+}
+
+#[test]
+fn store_abort_request_roundtrips() {
+    let mut buf = [0u8; 4];
+    let len = encode_store_abort_request(5, &mut buf).unwrap();
+    assert_eq!(len, 4);
+    assert_eq!(decode_store_abort_request(&buf).unwrap(), 5);
+}
+
+#[test]
+fn store_delete_request_roundtrips() {
+    let mut buf = [0u8; MAX_PAYLOAD_BYTES];
+    let req = binbook_diagnostic_protocol::StoreDeleteRequest {
+        backend: StorageBackend::Flash,
+        path: "/tmp/old.binbook",
+    };
+    let len = encode_store_delete_request(&req, &mut buf).unwrap();
+    let decoded = decode_store_delete_request(&buf[..len]).unwrap();
+    assert_eq!(decoded.backend, StorageBackend::Flash);
+    assert_eq!(decoded.path, "/tmp/old.binbook");
+}
+
+#[test]
+fn store_delete_request_rejects_truncated() {
+    assert_eq!(
+        decode_store_delete_request(&[0u8; 2]),
+        Err(binbook_diagnostic_protocol::ProtocolError::BadPayloadLength)
     );
 }

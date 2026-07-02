@@ -430,6 +430,9 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
                     }
                 }
             }
+            RuntimeEventKind::MenuTransition => {}
+            RuntimeEventKind::ModeChange { .. } => {}
+            RuntimeEventKind::BookOpen { .. } => {}
         }
         self.snapshot.dropped_log_count = self.log.dropped_records();
         completion

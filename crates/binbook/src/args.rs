@@ -140,6 +140,8 @@ pub enum DiagCommand {
         #[command(subcommand)]
         probe: ProbeCommand,
     },
+    #[command(subcommand)]
+    Storage(StorageCommand),
     Exercise {
         #[command(subcommand)]
         exercise: ExerciseCommand,
@@ -190,4 +192,40 @@ pub enum ProbeCommand {
     WindowCorners,
     ClearWhite,
     FullRefreshCurrent,
+}
+
+#[derive(Subcommand)]
+pub enum StorageCommand {
+    /// List files at a path on a storage backend
+    List {
+        #[arg(short, long)]
+        port: String,
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Read a file from a storage backend
+    Read {
+        #[arg(short, long)]
+        port: String,
+        #[arg(long)]
+        path: String,
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
+    },
+    /// Delete a file from a storage backend
+    Delete {
+        #[arg(short, long)]
+        port: String,
+        #[arg(long)]
+        path: String,
+    },
+    /// Upload a file to a storage backend
+    Upload {
+        #[arg(short, long)]
+        port: String,
+        #[arg(long)]
+        path: String,
+        #[arg(short, long)]
+        file: std::path::PathBuf,
+    },
 }

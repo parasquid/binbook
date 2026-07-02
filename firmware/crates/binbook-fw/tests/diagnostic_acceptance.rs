@@ -30,11 +30,13 @@ impl DispatchFixture {
         let frame_len = encode_frame(&header, payload, &mut self.frame).unwrap();
         let (decoded_header, payload_len) =
             decode_frame(&self.frame[..frame_len], &mut self.decoded_payload).unwrap();
+        let mut storage = binbook_fw::diag_storage::UnavailableStorage;
         dispatch_command(
             decoded_header,
             &self.decoded_payload[..payload_len],
             &mut self.context,
             &mut self.response,
+            &mut storage,
         )
     }
 }
@@ -63,9 +65,9 @@ fn acceptance_hello_and_status_return_decodable_live_payloads() {
     };
     let hello =
         binbook_diagnostic_protocol::decode_hello_response(&fixture.response[..hello_len]).unwrap();
-    assert_eq!(hello.protocol_version, 1);
-    assert_eq!(hello.max_frame_bytes, 512);
-    assert_ne!(hello.capabilities & ALL_CAPABILITIES, 0);
+    assert_eq!(hello.protocol_version, 2);
+    assert_eq!(hello.max_frame_bytes, 4126);
+    assert_eq!(hello.capabilities & ALL_CAPABILITIES, ALL_CAPABILITIES);
 
     let status = fixture.request(request_header(Opcode::Status, 11, 0), &[]);
     let status_len = match status {

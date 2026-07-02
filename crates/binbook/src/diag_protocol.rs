@@ -1,6 +1,8 @@
 use binbook_diagnostic_protocol::{
-    encode_frame, encode_log_get_payload, encode_page_payload, encode_probe_payload, FrameHeader,
-    FrameKind, KeyAction, KeyCode, LogGetPayload, Opcode, PageAction, ProbeCode, Status,
+    encode_frame, encode_log_get_payload, encode_page_payload, encode_probe_payload,
+    encode_store_delete_request, encode_store_list_request, encode_store_read_request,
+    FrameHeader, FrameKind, KeyAction, KeyCode, LogGetPayload, Opcode, PageAction, ProbeCode,
+    Status, StorageBackend, StoreDeleteRequest, StoreListRequest, StoreReadRequest,
     MAX_FRAME_BYTES,
 };
 
@@ -114,6 +116,48 @@ impl ProbeChoice {
             Self::WindowCorners => ProbeCode::WindowCorners,
         }
     }
+}
+
+pub fn store_list_request(sequence: u16, path: &str) -> Vec<u8> {
+    let payload = StoreListRequest {
+        backend: StorageBackend::Sd,
+        path,
+    };
+    let mut payload_buf = [0u8; 512];
+    let plen = encode_store_list_request(&payload, &mut payload_buf).unwrap();
+    let mut header = request_header(sequence, Opcode::StoreList);
+    header.payload_len = plen as u16;
+    let mut buf = [0u8; MAX_FRAME_BYTES];
+    let len = encode_frame(&header, &payload_buf[..plen], &mut buf).unwrap();
+    buf[..len].to_vec()
+}
+
+pub fn store_read_request(sequence: u16, path: &str) -> Vec<u8> {
+    let payload = StoreReadRequest {
+        backend: StorageBackend::Sd,
+        path,
+    };
+    let mut payload_buf = [0u8; 512];
+    let plen = encode_store_read_request(&payload, &mut payload_buf).unwrap();
+    let mut header = request_header(sequence, Opcode::StoreRead);
+    header.payload_len = plen as u16;
+    let mut buf = [0u8; MAX_FRAME_BYTES];
+    let len = encode_frame(&header, &payload_buf[..plen], &mut buf).unwrap();
+    buf[..len].to_vec()
+}
+
+pub fn store_delete_request(sequence: u16, path: &str) -> Vec<u8> {
+    let payload = StoreDeleteRequest {
+        backend: StorageBackend::Sd,
+        path,
+    };
+    let mut payload_buf = [0u8; 512];
+    let plen = encode_store_delete_request(&payload, &mut payload_buf).unwrap();
+    let mut header = request_header(sequence, Opcode::StoreDelete);
+    header.payload_len = plen as u16;
+    let mut buf = [0u8; MAX_FRAME_BYTES];
+    let len = encode_frame(&header, &payload_buf[..plen], &mut buf).unwrap();
+    buf[..len].to_vec()
 }
 
 pub fn display_probe_request(sequence: u16, probe: ProbeChoice) -> Vec<u8> {

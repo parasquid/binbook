@@ -13,6 +13,9 @@ gray2-render.workspace = true
 ssd1677-driver.workspace = true
 embedded-hal.workspace = true
 embedded-hal-async.workspace = true
+embedded-graphics.workspace = true
+embedded-graphics-core.workspace = true
+profont.workspace = true
 
 [features]
 default = []

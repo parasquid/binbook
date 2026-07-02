@@ -4,7 +4,12 @@ use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig};
 use binbook_fw::{
     async_refresh::{DisplayProbeKind, DisplayRequest},
     board::{DisplayDelay, FreqManagedSpiDevice, SharedSpi2},
+    menu::{MenuState, Mode, render_menu, MenuNames},
     runtime_engine::{self, RuntimeEvent, RuntimeEventKind},
+    xteink_x4_display::{
+        framebuffer::Gray2Framebuffer,
+        ui_render::{render_ui_bw, render_ui_gray_overlay},
+    },
 };
 use xteink_x4_display::{engine::DisplayEngine, events::EventSink};
 
@@ -69,6 +74,10 @@ impl EventSink for RuntimeEventSink {
     }
 }
 
+/// Convert a binbook-fw `DisplayRequest` to the xteink-x4-display engine
+/// request. Menu intents are mapped to `Goto { page: 0 }` as a no-op
+/// placeholder — they are consumed by the display task's own mode logic
+/// (handled before reaching `engine.request()`).
 fn display_request(request: DisplayRequest) -> xteink_x4_display::events::DisplayRequest {
     match request {
         DisplayRequest::Turn {
@@ -99,6 +108,15 @@ fn display_request(request: DisplayRequest) -> xteink_x4_display::events::Displa
                 }
             },
             sequence: completion_sequence,
+        },
+        // Menu intents are handled by the display task before engine request;
+        // the placeholder cast here satisfies exhaustive match.
+        DisplayRequest::MenuNext
+        | DisplayRequest::MenuPrev
+        | DisplayRequest::MenuSelect
+        | DisplayRequest::MenuBack => xteink_x4_display::events::DisplayRequest::Goto {
+            page: 0,
+            sequence: 0,
         },
     }
 }
@@ -144,6 +162,13 @@ pub(super) async fn display_task(
     let mut engine = DisplayEngine::new(page_count);
     let mut events = RuntimeEventSink::new(RUNTIME_EVENT_CHANNEL.sender());
 
+    let mut menu_state = MenuState::new(0);
+    let mut menu_fb = Gray2Framebuffer::new();
+    #[cfg(feature = "sd-storage")]
+    let menu_names: MenuNames = super::MENU_BOOK_NAMES.lock().await.clone();
+    #[cfg(not(feature = "sd-storage"))]
+    let menu_names: MenuNames = binbook_fw::heapless::Vec::new();
+
     let _ = engine
         .initialize(
             &mut backend,
@@ -162,18 +187,56 @@ pub(super) async fn display_task(
         .await
         {
             Either::First(request) => {
-                if let DisplayRequest::Turn {
-                    turn,
-                    completion_sequence,
-                } = request
-                {
-                    events.push(RuntimeEvent {
-                        timestamp_ms: now_ms,
-                        kind: RuntimeEventKind::TurnQueued {
-                            sequence: completion_sequence,
-                            turn,
-                        },
-                    });
+                match request {
+                    DisplayRequest::MenuNext | DisplayRequest::MenuPrev => {
+                        engine.cancel_overlay();
+                        let action = if matches!(request, DisplayRequest::MenuPrev) {
+                            binbook_fw::menu::MenuAction::Previous
+                        } else {
+                            binbook_fw::menu::MenuAction::Next
+                        };
+                        let _ = menu_state.transition(action);
+                        render_menu(&mut menu_fb, &menu_state, &menu_names);
+                        let _ = render_ui_bw(&mut backend.display, &menu_fb, &mut backend.delay).await;
+                        let _ = render_ui_gray_overlay(&mut backend.display, &menu_fb, &mut backend.delay).await;
+                        events.push(RuntimeEvent {
+                            timestamp_ms: now_ms,
+                            kind: RuntimeEventKind::MenuTransition,
+                        });
+                    }
+                    DisplayRequest::MenuBack => {
+                        engine.cancel_overlay();
+                        render_menu(&mut menu_fb, &menu_state, &menu_names);
+                        let _ = render_ui_bw(&mut backend.display, &menu_fb, &mut backend.delay).await;
+                        let _ = render_ui_gray_overlay(&mut backend.display, &menu_fb, &mut backend.delay).await;
+                        super::DISPLAY_MODE.store(binbook_fw::async_refresh::MODE_MENU, portable_atomic::Ordering::Relaxed);
+                        events.push(RuntimeEvent {
+                            timestamp_ms: now_ms,
+                            kind: RuntimeEventKind::ModeChange { mode: Mode::Menu },
+                        });
+                    }
+                    DisplayRequest::MenuSelect => {
+                        let selected_index = menu_state.selected();
+                        if selected_index < menu_names.len() {
+                            engine.cancel_overlay();
+                            super::DISPLAY_MODE.store(binbook_fw::async_refresh::MODE_READING, portable_atomic::Ordering::Relaxed);
+                            events.push(RuntimeEvent {
+                                timestamp_ms: now_ms,
+                                kind: RuntimeEventKind::ModeChange { mode: Mode::Reading },
+                            });
+                            events.push(RuntimeEvent {
+                                timestamp_ms: now_ms,
+                                kind: RuntimeEventKind::BookOpen { name_index: selected_index },
+                            });
+                        }
+                    }
+                    DisplayRequest::Turn { turn, completion_sequence } => {
+                        events.push(RuntimeEvent {
+                            timestamp_ms: now_ms,
+                            kind: RuntimeEventKind::TurnQueued { sequence: completion_sequence, turn },
+                        });
+                    }
+                    DisplayRequest::Goto { .. } | DisplayRequest::Probe { .. } => {}
                 }
                 let _ = engine
                     .request(display_request(request), &mut backend, &mut events, now_ms)

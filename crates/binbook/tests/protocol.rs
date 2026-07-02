@@ -183,7 +183,7 @@ fn cli_status_decodes_canonical_u32_layout() {
     let plen =
         binbook_diagnostic_protocol::encode_status_payload(payload, &mut payload_buf).unwrap();
 
-    let mut frame_buf = [0u8; 512];
+    let mut frame_buf = [0u8; binbook_diagnostic_protocol::MAX_FRAME_BYTES];
     let mut hdr = header;
     hdr.payload_len = plen as u16;
     let frame_len = encode_frame(&hdr, &payload_buf[..plen], &mut frame_buf).unwrap();
@@ -202,8 +202,8 @@ fn cli_hello_formats_identity_and_capabilities() {
     let mut payload = [0u8; 64];
     let payload_len = binbook_diagnostic_protocol::encode_hello_response(
         &binbook_diagnostic_protocol::HelloResponse {
-            protocol_version: 1,
-            max_frame_bytes: 512,
+            protocol_version: binbook_diagnostic_protocol::PROTOCOL_VERSION,
+            max_frame_bytes: binbook_diagnostic_protocol::MAX_FRAME_BYTES as u16,
             capabilities: binbook_diagnostic_protocol::ALL_CAPABILITIES,
             firmware_name: "binbook-fw",
             target: "xteink-x4",
@@ -215,7 +215,7 @@ fn cli_hello_formats_identity_and_capabilities() {
     let text = binbook::diag_protocol::format_response(&frame, Opcode::Hello, 7).unwrap();
     assert!(text.contains("firmware=binbook-fw"));
     assert!(text.contains("target=xteink-x4"));
-    assert!(text.contains("KEY,PAGE,STATUS,LOG,CRASH,DISPLAY_PROBE"));
+    assert!(text.contains("KEY,PAGE,STATUS,LOG,CRASH,DISPLAY_PROBE,STORAGE"));
 }
 
 #[test]
@@ -374,7 +374,7 @@ fn response_frame(opcode: Opcode, sequence: u16, status: Status, payload: &[u8])
         sequence,
         payload_len: payload.len() as u16,
     };
-    let mut frame = [0u8; 512];
+    let mut frame = [0u8; binbook_diagnostic_protocol::MAX_FRAME_BYTES];
     let len = encode_frame(&header, payload, &mut frame).unwrap();
     frame[..len].to_vec()
 }

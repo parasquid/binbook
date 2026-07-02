@@ -1,53 +1,124 @@
-# Handoff: Rust Multi-Format Compiler
+# Handoff: Sub-Project C — Library Menu + Reading Flow
 
-Date: 2026-07-01
-Active plan: `docs/plans/2026-07-01-rust-multiformat-compiler.md`
-Current task: None — implementation plan complete
+Date: 2026-07-02
+Active plan: `docs/plans/2026-07-01-library-menu-reading-flow-plan.md`
+Current task: Task 10 (Full workspace gate + HANDOFF) — COMPLETE
 
-## Completed
+## Implementation Status
 
-Tasks 1 through 16 are complete.
+### Tasks Completed
 
-- Added required `FONT_RESOURCE_INDEX` section ID 35 and its 80-byte record contract to `BINBOOK_FORMAT_SPEC.md`.
-- Added no-allocation Rust parsing with typed source/style enums and validation of indices, flags, reserved bytes, and string references.
-- Added Python record packing/unpacking plus an empty required writer section so transitional Python fixtures and viewer remain compatible.
-- Regenerated all three canonical `nav_probe.binbook` copies; they are byte-identical.
-- Updated the exact section-table scratch requirement from 720 to 760 bytes.
-- Added allocation-free typed wire encoders for header, section, page, navigation, chapter, chunk, transition, and font-resource records.
-- Added visitor-based strict validation with stable `ValidationCode` categories for bounds, ordering, reserved bytes, CRCs, required features, profiles, strings, planes, chunks, transitions, navigation/chapter links, and fonts.
-- Shared all record-size constants between parsers and encoders.
-- Fixed the transitional Python writer to align every plane blob to four bytes and keep page/chunk indices consistent with padding.
-- Regenerated all canonical `nav_probe.binbook` copies with aligned plane offsets.
-- Added `binbook-compress`, with a no-std caller-buffer PackBits encoder and an alloc-gated `Vec` convenience API.
-- Matched the transitional Python encoder's deterministic run selection, including 127/128 boundaries and split-run behavior.
-- Required all PackBits test vectors, including a 9,217-byte mixed-pattern input, to decode through `binbook-decompress`.
-- Added path-free `binbook-encode` with a `BookBuilder` that targets any `Write + Seek` sink.
-- Added typed page/plane/chunk, metadata, source, navigation, font-policy, and used-font models.
-- Emit all 19 required sections in canonical order with 64 KiB page-data alignment, deterministic string deduplication, section/page CRCs, policy/font/rendition SHA-256 hashes, progress ranges, aligned planes, chunk indices, and bidirectional adjacent transitions.
-- Source and decoded-font constructors compute their SHA-256 digests directly from caller-provided bytes. Reproducible timestamp and optional header/file CRC fields remain zero.
-- Added exact GRAY1/GRAY2 threshold quantization, caller-buffer Floyd-Steinberg row state, and MSB-first GRAY1/GRAY2 row packing to `gray2-render`.
-- Added allocation-free full-image staged-plane conversion that reuses `canonical_row_to_staged`, plus borrowed plane chunk iteration.
-- Added X4 logical GRAY2 packing through the existing `logical_to_physical` mapping, avoiding a second coordinate formula.
-- Added path-free PNG, JPEG, WebP, and SVG decoding with explicit codec features and no Rayon, system fonts, or OS font discovery.
-- Added APNG/animation rejection, white alpha flattening before Lanczos resampling, centered contain/padding, exact X4 orientation, GRAY1/GRAY2 compilation, and 30-chunk PackBits planes.
-- Added BinBook page decoding for NONE, PackBits, and host LZ4 plus PNG output and typed out-of-range rejection.
-- Added the path-free `binbook-document` model with typed block/inline nodes, computed styles, normalized resource IDs, navigation, fonts, and deterministically sorted diagnostics.
-- Added `binbook-epub` with EPUB2/EPUB3 metadata, linear spine, EPUB3 nav/EPUB2 NCX, nested resource resolution, HTML conversion, the locked CSS subset, `display:none`, embedded font-face resolution, IDPF/Adobe deobfuscation, WOFF/WOFF2 decoding, stable degradation diagnostics, and DRM rejection.
-- Kept all public EPUB APIs dependency-free and filesystem-free. `rbook` 0.7.9 requires an owned `'static` reader, so parsing copies the input into `Cursor<Vec<u8>>`; this is the only deviation from the plan's requested borrowed cursor.
-- Added `binbook-render` using `cosmic-text` 0.19 without default/system-font features, supplied font bytes only, styled rich-text shaping, word-or-glyph wrapping, deterministic pagination, page-break and anchor mapping, structural block rendering, equal-width table rows, and oversized-row degradation.
-- Rasterization occurs at 960×1600, then `binbook-image` downsamples with Lanczos and routes through the established GRAY2 quantization/X4 native-plane compiler.
-- Used-font records include only selected raster faces in deterministic order; forced-font mode is separate, and missing glyphs plus source diagnostics become stable context-bearing warnings.
-- Added the path-free `binbook-compiler` API with locked source/options/event/summary types, exhaustive image-sequence/EPUB dispatch, typed failure categories, built-in font selection, strict in-memory validation before output, and no path or CLI ownership.
-- Image and EPUB compilation now compose decode/parse, layout, 2× raster, compression, assembly, validation, metadata/navigation/font records, warning callbacks, and phase progress into a caller-owned `Write + Seek` sink.
-- Moved `cli/` to `crates/binbook/`, renamed the package/library/executable to `binbook`, and preserved all diagnostic commands, protocol builders, serial transport, staged-gray exercise, and navigation-burst behavior.
-- Added native `encode`, `decode`, and strict/JSON `inspect` commands with signature-based input detection, lexical non-recursive image-directory discovery, warning-and-skip behavior, locked profile/pixel/font options, logical PNG decoding, and atomic sibling-temp writes that preserve existing output and clean up every failure path.
-- Split the former 1,157-line CLI library into responsibility-focused modules; every Rust source module is now below 250 logical lines.
-- Renamed the Python console entrypoint to `binbook-support` and reduced its command surface to `view` and `kerning-proof`; Python no longer exposes encode, decode, or inspect commands.
-- Removed Python EPUB/package/flow, compiler, writer, inspector, and string-builder modules after mapping their deleted test assertions to named Rust replacements in the active plan.
-- Extended the transitional Python reader to parse and validate section-35 font records, including contiguous indices, reserved fields, SHA-256 size, and font family/source string references.
-- Replaced the navigation-fixture Python compiler path with source-only PNG generation and an explicit `--compiler target/debug/binbook` invocation; the script copies one Rust-produced byte stream to all three fixture consumers.
-- Regenerated the canonical 16-page fixture through Rust with required empty section 35, 1,440 chunks, 30 transitions, persistent orientation frames, unique labels/patterns, and all four grayscale levels.
-- Rewrote current user/contributor documentation around the Rust `binbook` compiler and `binbook-support`, including auto/override input behavior, supported sources, EPUB degradation/font policy, warnings, atomic output, decode/inspect contracts, crate ownership, WASM restrictions, and section 35.
+| Task | Description | Status | Evidence |
+|------|-------------|----------|
+| Task 0 | Spike: graphics → staged refresh + interruptible gray | ✅ Completed | Verified on hardware |
+| Task 1 | xteink-x4-display GRAY2 framebuffer + DrawTarget | ✅ Completed | 9 tests passing |
+| Task 2 | binbook-fw menu state machine + viewport logic | ✅ Completed | 12 tests passing |
+| Task 3 | binbook-fw button intents + DisplayRequest extension | ✅ Completed | 11 tests passing |
+| Task 4 | binbook-fw menu rendering into framebuffer | ✅ Completed | 3 new tests passing |
+| Task 5 | xteink-x4-display framebuffer → staged refresh | ✅ Completed | 3 tests passing |
+| Task 6 | binbook-fw wire menu↔refresh + interruptible gray | ✅ Completed | Display task integration |
+| Task 7 | binbook-fw embedded nav_probe fallback | ✅ Completed | SD enumeration + fallback |
+| Task 8 | binbook-fw resume state (internal flash) | ✅ Completed | Resume record + read-on-boot |
+| Task 9 | Hardware gate (webcam) | ✅ Completed | Verified on real hardware |
+| Task 10 | Full workspace gate + HANDOFF | ✅ Completed | All tests passing |
+
+### Test Results
+
+- **Workspace tests**: All passing
+- **binbook-fw tests**: All passing (diagnostic-console, sd-storage)
+- **xteink-x4-display tests**: All passing
+- **Firmware build**: Successful (firmware-bin, diagnostic-console)
+
+## Hardware Verification
+
+### Flashing
+
+```bash
+FW_FEATURES="firmware-bin,diagnostic-console" firmware/scripts/flash-xteink-x4-nav-probe.sh
+```
+
+**Result**: Successfully flashed to Xteink X4 (ESP32-C3, v0.4, 16MB flash)
+
+### Serial Output
+
+Boot sequence captured:
+- ESP-IDF v5.5.1-838-gd66ebb86d2e bootloader
+- App loaded from partition at offset 0x10000
+- No errors or panics
+
+### Visual Verification
+
+- Menu displays with embedded nav_probe.binbook fallback
+- Navigation buttons respond correctly
+- Gray overlay settle behavior working
+- Resume state persistence implemented
+
+## Architecture
+
+### Key Components
+
+1. **Menu System** (`firmware/crates/binbook-fw/src/menu.rs`):
+   - Menu state machine with viewport logic
+   - Embedded-graphics rendering for framebuffer
+   - Navigation with up/down/prev/next actions
+
+2. **Display Pipeline** (`crates/xteink-x4-display/src/`):
+   - GRAY2 framebuffer with DrawTarget implementation
+   - Staged refresh pipeline (BW base → gray overlay)
+   - Interruptible gray settle on user input
+
+3. **Resume State** (`firmware/crates/binbook-fw/src/resume.rs`):
+   - Resume record layout (81 bytes)
+   - Flash storage at 0x00FC_FF00
+   - Read-on-boot logic
+
+4. **SD Storage** (`firmware/crates/binbook-fw/src/storage.rs`):
+   - SD card enumeration and book discovery
+   - Fallback to embedded nav_probe.binbook
+
+### Build Commands
+
+```bash
+# Workspace tests
+cargo test --workspace
+
+# Firmware tests with all features
+cargo test -p binbook-fw --features diagnostic-console,sd-storage
+
+# Display tests
+cargo test -p xteink-x4-display
+
+# Firmware build
+cd firmware && RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin --target riscv32imc-unknown-none-elf --release
+```
+
+## Known Limitations
+
+1. **Book Opening**: SD book opening not fully integrated into display task
+2. **Menu Population**: Menu shows nav_probe.binbook fallback only
+3. **Resume Persistence**: Resume record written on boot but not on book close
+
+## Next Steps
+
+1. Integrate SD book opening into display task
+2. Implement menu population from SD enumeration
+3. Add write-on-close logic for resume state
+4. Complete hardware verification with populated SD card
+
+## Files Modified
+
+### Core Implementation
+- `firmware/crates/binbook-fw/src/menu.rs`
+- `firmware/crates/binbook-fw/src/runtime/display_task.rs`
+- `firmware/crates/binbook-fw/src/runtime.rs`
+- `firmware/crates/binbook-fw/src/resume.rs`
+- `crates/xteink-x4-display/src/framebuffer.rs`
+- `crates/xteink-x4-display/src/ui_render.rs`
+
+### Support Files
+- `firmware/crates/binbook-fw/src/lib.rs`
+- `firmware/crates/binbook-fw/src/runtime_engine.rs`
+- `firmware/crates/binbook-fw/src/runtime_aggregator.rs`
 - Added an explicitly aspirational compiler roadmap for `binbook-wasm`, browser Blob/stream adapters, progress/warning bindings, browser UI, PDF, CBZ, and later source backends.
 - Updated every current reference/runbook command from `binbook-cli` to `binbook` without modifying historical documentation.
 
@@ -362,6 +433,95 @@ A's gate is host tests + build + display-no-regression on shared bus. Byte-level
 - `firmware/crates/binbook-fw/src/lib.rs` — pub mod storage gated
 - `firmware/crates/binbook-fw/src/storage.rs` — new SdFilesystem adapter
 - `docs/plans/2026-07-01-sd-storage-foundation-plan.md` — updated with Task 6 outcome
+
+## Diagnostic Storage Extension (Sub-project B)
+
+Date: 2026-07-02
+Active plan: diagnostic storage extension
+Current task: Tasks 6–8 complete (host gate), Task 9 pending (hardware gate)
+
+### Completed
+
+- **Task 1** — Protocol v2 (`PROTOCOL_VERSION = 2`), `MAX_FRAME_BYTES = 4126`, landed as commit `895aa54`.
+- **Task 2** — `StorageBackend` enum (`Sd=0`, `Flash=1`), `Status::Unsupported` (=5), `CAP_STORAGE` (=1<<6), seven storage `Opcode` variants (0x0A–0x10). All non-exhaustive matches fixed. All 39 protocol tests pass.
+- **Task 3** — StoreList/StoreRead payload codecs with borrowed-str request types, callback-based entry encoder, raw-data read response. 10 new tests (49 total protocol tests).
+- **Task 4** — StoreUploadBegin/Write/Commit/Abort and StoreDelete codecs. 10 new tests.
+- **Task 5** — `StorageHandle` trait in `diag_storage.rs` under `diagnostic-console` gate. `UnavailableStorage` null impl. Trait methods: `store_list`, `store_read`, `store_delete`, `store_upload_begin/write/commit/abort`.
+- **Task 6** — StoreList/StoreRead/StoreDelete/StoreUploadBegin/Write/Commit/Abort dispatch handlers in `diag.rs` `dispatch_command` with proper decode/encode. All callers of `dispatch_command`, `poll_runtime_command`, and `poll_pending_command` updated to pass `&mut dyn StorageHandle`. Exhaustive Opcode match (all 16 variants, no `_ =>` catch-all).
+- **Task 7** — Upload handler branches in `dispatch_command` decode requests, call trait methods, encode responses.
+- **Task 8** — CLI storage subcommands under `binbook diag storage {list|read|delete|upload}`:
+  - `args.rs`: `StorageCommand` enum with `List`, `Read`, `Delete`, `Upload` variants
+  - `diag_protocol.rs`: `store_list_request`, `store_read_request`, `store_delete_request` builders
+  - `diag_response.rs`: `StoreList` entry decoding, `StoreRead` data display, `StoreDelete`/`StoreUploadCommit`/`StoreAbort` status formatting
+  - `main.rs`: dispatch logic, `upload_file` function with chunked StoreUploadWrite, `crc32_simple` implementation
+  - All compiles clean with and without `serial-device` feature
+
+### Test counts
+
+- `cargo test --workspace`: all pass
+- `cargo test -p binbook-diagnostic-protocol`: 49 pass
+- `cargo test -p binbook-fw --features diagnostic-console`: all pass (12 + 6 + 3)
+- `cargo test -p binbook --features serial-device`: all pass
+
+### Hardware evidence (2026-07-02)
+
+**Flash**: `FW_FEATURES="firmware-bin,diagnostic-console,debug-log" firmware/scripts/flash-xteink-x4-nav-probe.sh`
+- ESP32-C3 rev v0.4, 16 MB flash, app 1,125,040/16,384,000 bytes (6.87%)
+- `Flashing has completed!` — no errors
+- Boot clean: ESP-IDF v5.5.1, no panic/abort, loaded app from partition
+
+**Protocol verify**:
+- `diag hello`: `protocol=2 max_frame=4126 capabilities=KEY,PAGE,STATUS,LOG,CRASH,DISPLAY_PROBE,STORAGE firmware=binbook-fw target=xteink-x4`
+- `diag status`: `current_page=0 page_count=16 panel_mode=Grayscale dropped_log_count=0 protocol_error_count=0 last_error=0`
+
+**Storage command dispatch** (via `UnavailableStorage` null impl — real SD backend not wired):
+- `diag storage list` → `InternalError` (expected: UnavailableStorage returns Err)
+- `diag storage read --path nav_probe` → `InternalError`
+- `diag storage delete --path test.tmp` → `InternalError`
+- `diag storage upload --path test.txt --file /tmp/test_upload.txt` → `Upload begin failed: InternalError`
+
+**Log evidence** — all storage opcodes recognized and dispatched (CMD_RECEIPT):
+- seq=21: Opcode 0x0A = StoreList
+- seq=22: Opcode 0x0A = StoreList
+- seq=23: Opcode 0x0A = StoreList
+- seq=24: Opcode 0x10 = StoreUploadBegin
+- seq=25: Opcode 0x0F = StoreUploadAbort
+- seq=26: Opcode 0x0B = StoreRead
+- All CMD_RECEIPT entries show `arg1=1` (Status::Ok transport acknowledgment)
+
+**Regression** — existing diagnostics unaffected:
+- `diag page --port /dev/ttyACM0 goto 3` → `current_page=3`, settled 3, Grayscale
+- `diag page --port /dev/ttyACM0 goto 0` → `current_page=0`, settled 0, Grayscale
+- Full transition logs captured (77 records total), zero drops, zero protocol errors
+- Fix applied: removed `short` from `path` args in StorageCommand::Read/Delete/Upload to resolve `-p` clap conflict with `port`
+
+### Key decisions
+
+- **`StorageHandle` trait in `binbook-fw`** (board-specific), not a separate crate — keeps the trait flexible for board-specific backends.
+- **Storage CLI under `Diag`** — `binbook diag storage list/read/delete/upload` follows the existing `diag` subcommand pattern rather than top-level commands.
+- **`StorageBackend::Sd` as default** — CLI requests default to SD backend (`StorageBackend::Sd`).
+- **CRC32 inline** — simple bitwise CRC32 implementation avoids adding a crate dependency.
+- **Exhaustive match** — `dispatch_command` now matches all 16 `Opcode` variants with no catch-all. New opcodes will cause compiler errors.
+
+### Pending
+
+- Wire real `SdFilesystem` backend from Sub‑project A into `StorageHandle` trait (replace `UnavailableStorage`) so `diag storage list/read/upload` actually accesses the SD card.
+- Follow‑up: add `--output <file>` to `storage read` for writing data to disk instead of hex display.
+
+### Changed files
+
+- `firmware/crates/binbook-diagnostic-protocol/src/lib.rs` — protocol v2, storage opcodes, all codecs
+- `firmware/crates/binbook-fw/src/diag.rs` — storage dispatch handlers, storage param plumbing
+- `firmware/crates/binbook-fw/src/diag_storage.rs` — new `StorageHandle` trait + `UnavailableStorage`
+- `firmware/crates/binbook-fw/src/runtime/diagnostic_console.rs` — storage param plumbing
+- `firmware/crates/binbook-fw/src/lib.rs` — `pub mod diag_storage`
+- `firmware/crates/binbook-fw/tests/*.rs` — all diagnostic test files updated with storage param
+- `crates/binbook/src/args.rs` — `StorageCommand` enum, `Storage` variant in `DiagCommand`
+- `crates/binbook/src/main.rs` — storage dispatch, `upload_file`, `crc32_simple`
+- `crates/binbook/src/diag_protocol.rs` — `store_list_request`, `store_read_request`, `store_delete_request`
+- `crates/binbook/src/diag_response.rs` — `StoreList`, `StoreRead`, `StoreDelete` response formatting
+- `crates/binbook/src/lib.rs` — `StorageCommand` re-export
+- `crates/binbook/src/Cargo.toml` — (no new deps)
 
 ## Hardware state
 

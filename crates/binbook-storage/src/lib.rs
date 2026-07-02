@@ -14,3 +14,4 @@ pub mod read_at;
 
 pub use enumerate::{enumerate_binbooks, enumerate_into, BinbookEntry};
 pub use filesystem::{Filesystem, StorageError};
+pub use read_at::{FsReadAt, FsReadError};

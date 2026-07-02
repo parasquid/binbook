@@ -3,12 +3,12 @@ use portable_atomic::Ordering;
 use esp_hal::analog::adc::{Adc, AdcCalBasic, AdcConfig, Attenuation};
 
 use binbook_fw::{
-    async_refresh::{DisplayRequest, INPUT_POLL_INTERVAL_MS},
+    async_refresh::{button_to_request, DisplayRequest, INPUT_POLL_INTERVAL_MS},
     input::{self, InputState},
     runtime_engine::{RuntimeEvent, RuntimeEventKind},
 };
 
-use super::{RequestSender, REQUEST_EPOCH, RUNTIME_EVENT_CHANNEL};
+use super::{RequestSender, DISPLAY_MODE, REQUEST_EPOCH, RUNTIME_EVENT_CHANNEL};
 
 #[embassy_executor::task]
 pub(super) async fn input_task(
@@ -74,16 +74,11 @@ pub(super) async fn input_task(
                 .await;
         }
         if let input::InputDecision::Press(button) = outcome.decision {
-            if let Some(turn) = input::page_turn_for_button(button) {
-                if request_tx
-                    .try_send(DisplayRequest::Turn {
-                        turn,
-                        completion_sequence: None,
-                    })
-                    .is_ok()
-                {
+            let mode = DISPLAY_MODE.load(Ordering::Relaxed);
+            if let Some(request) = button_to_request(button, mode) {
+                if request_tx.try_send(request).is_ok() {
                     REQUEST_EPOCH.fetch_add(1, Ordering::AcqRel);
-                } else {
+                } else if let DisplayRequest::Turn { turn, .. } = request {
                     RUNTIME_EVENT_CHANNEL
                         .sender()
                         .send(RuntimeEvent {

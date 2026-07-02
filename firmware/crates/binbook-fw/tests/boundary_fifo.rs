@@ -46,12 +46,13 @@ fn accepted_boundary_burst_keeps_fifo_relative_intent_and_completes_every_sequen
     ];
     let mut serial = SerialState::new();
     let mut accepted = [None; 5];
+    let mut storage = binbook_fw::diag_storage::UnavailableStorage;
 
     for (index, key) in keys.into_iter().enumerate() {
         let sequence = 100 + index as u16;
         let (frame, frame_len) = key_frame(sequence, key);
         serial.feed_rx(&frame[..frame_len]);
-        let command = poll_runtime_command(&mut serial, snapshot)
+        let command = poll_runtime_command(&mut serial, snapshot, &mut storage)
             .expect("every accepted key must enter the hardware completion path");
         let RuntimeCommand::Hardware(pending) = command else {
             panic!("sequence {sequence} bypassed the hardware completion path");
@@ -97,10 +98,11 @@ fn boundary_key_is_not_completed_immediately_at_dispatch() {
         last_error: 0,
     };
     let mut serial = SerialState::new();
+    let mut storage = binbook_fw::diag_storage::UnavailableStorage;
     let (frame, frame_len) = key_frame(77, KeyCode::Up);
     serial.feed_rx(&frame[..frame_len]);
 
-    let command = poll_runtime_command(&mut serial, snapshot).unwrap();
+    let command = poll_runtime_command(&mut serial, snapshot, &mut storage).unwrap();
 
     assert_eq!(
         command,

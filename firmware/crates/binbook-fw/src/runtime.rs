@@ -12,10 +12,22 @@ use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
     channel::{Channel, Receiver, Sender},
 };
-use portable_atomic::AtomicU32;
+use portable_atomic::{AtomicU32, AtomicU8};
 
 use binbook_fw::async_refresh::{DisplayRequest, PAGE_TURN_QUEUE_CAPACITY};
 use binbook_fw::runtime_engine::RuntimeEvent;
+
+static DISPLAY_MODE: AtomicU8 = AtomicU8::new(0);
+
+#[cfg(feature = "sd-storage")]
+use embassy_sync::mutex::Mutex;
+#[cfg(feature = "sd-storage")]
+static MENU_BOOK_NAMES: Mutex<CriticalSectionRawMutex, binbook_fw::heapless::Vec<binbook_fw::menu::MenuName, 200>> =
+    Mutex::new(binbook_fw::heapless::Vec::new());
+
+#[cfg(all(feature = "firmware-bin", target_arch = "riscv32"))]
+#[expect(dead_code)]
+const RESUME_FLASH_OFFSET: u32 = 0x00FC_FF00;
 
 type RequestSender =
     Sender<'static, CriticalSectionRawMutex, DisplayRequest, { PAGE_TURN_QUEUE_CAPACITY }>;
@@ -152,6 +164,7 @@ pub(crate) async fn run(spawner: Spawner, peripherals: RuntimePeripherals) {
 
         use binbook_fw::board::{DisplayDelay, FreqManagedSpiDevice};
         use binbook_fw::storage::{FixedTime, SdFilesystem};
+        use binbook_fw::menu::MenuName;
         use binbook_storage::filesystem::Filesystem;
 
         static SD_FS: StaticCell<SdFilesystem<
@@ -162,26 +175,73 @@ pub(crate) async fn run(spawner: Spawner, peripherals: RuntimePeripherals) {
 
         let sd_cs = Output::new(peripherals.gpio12, Level::High, OutputConfig::default());
         let sd_spi = FreqManagedSpiDevice::new(shared_spi2, sd_cs, 400_000);
-        let sd_fs = SD_FS.init(SdFilesystem::new(
+        let mut sd_fs = SD_FS.init(SdFilesystem::new(
             sd_spi,
             DisplayDelay,
             FixedTime,
         ));
 
-        // Test mount: just open the volume to prove the card is readable.
-        // Full enumeration (BinBook discovery) requires a global allocator
-        // and is deferred until B/C gains that path.
-        match sd_fs.for_each_entry(&mut |_name, _size| {
-            #[cfg(feature = "debug-log")]
-            esp_println::println!("[SD] entry: {_name}");
+        let mut book_names = MENU_BOOK_NAMES.lock().await;
+        let mut found_books = false;
+
+        match sd_fs.for_each_entry(&mut |name, _size| {
+            if name.ends_with(".binbook") {
+                if let Ok(name_buf) = MenuName::try_from(name) {
+                    let _ = book_names.push(name_buf);
+                    found_books = true;
+                }
+            }
         }) {
             Ok(()) => {
                 #[cfg(feature = "debug-log")]
-                esp_println::println!("[SD] mount OK — card readable");
+                esp_println::println!("[SD] enumerated {} .binbook files", book_names.len());
             }
             Err(_) => {
                 #[cfg(feature = "debug-log")]
                 esp_println::println!("[SD] mount failed — no card?");
+            }
+        }
+
+        if !found_books {
+            let _ = book_names.push(MenuName::try_from("nav_probe.binbook").unwrap());
+            #[cfg(feature = "debug-log")]
+            esp_println::println!("[SD] no books — using embedded nav_probe fallback");
+        }
+
+        #[cfg(feature = "firmware-bin")]
+        {
+            use esp_hal::peripherals::FLASH;
+            use binbook_fw::resume::ResumeStorage;
+
+            static_cell::const_static!(
+                FLASH_CELL,
+                FLASH,
+                unsafe { FLASH::steal() }
+            );
+            let mut flash_storage = ResumeStorage::new(FLASH_CELL.get_mut(), RESUME_FLASH_OFFSET);
+
+            match flash_storage.read() {
+                Ok(Some(resume)) if !resume.is_empty() => {
+                    let book_name = core::str::from_utf8(&resume.last_book_name)
+                        .ok()
+                        .and_then(|s| s.trim_end_matches('\0').into())
+                        .unwrap_or("nav_probe.binbook");
+
+                    if book_names.iter().any(|name| name.as_str() == book_name) {
+                        DISPLAY_MODE.store(1, portable_atomic::Ordering::Relaxed);
+                        #[cfg(feature = "debug-log")]
+                        esp_println::println!("[RESUME] restoring reading mode: book={}, page={}", book_name, resume.last_page);
+                    } else {
+                        DISPLAY_MODE.store(0, portable_atomic::Ordering::Relaxed);
+                        #[cfg(feature = "debug-log")]
+                        esp_println!("[RESUME] book not found, restoring menu mode");
+                    }
+                }
+                _ => {
+                    DISPLAY_MODE.store(0, portable_atomic::Ordering::Relaxed);
+                    #[cfg(feature = "debug-log")]
+                    esp_println!("[RESUME] no valid resume state, starting in menu mode");
+                }
             }
         }
     }

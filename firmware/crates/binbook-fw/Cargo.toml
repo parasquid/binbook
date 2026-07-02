@@ -14,6 +14,9 @@ embedded-hal-async.workspace = true
 embedded-storage.workspace = true
 binbook-diagnostic-protocol = { workspace = true, optional = true }
 embassy-sync.workspace = true
+embedded-graphics.workspace = true
+heapless.workspace = true
+profont.workspace = true
 nb.workspace = true
 portable-atomic.workspace = true
 

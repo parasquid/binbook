@@ -1,14 +1,20 @@
 use binbook_diagnostic_protocol::{
     decode_frame, decode_key_payload, decode_log_get_payload, decode_page_payload,
-    decode_probe_payload, decode_raw_frame, encode_frame, encode_hello_response, encode_log_record,
+    decode_probe_payload, decode_raw_frame, decode_store_delete_request,
+    decode_store_list_request,
+    decode_store_read_request,     decode_store_abort_request, decode_store_upload_begin_request,
+    decode_store_upload_commit_request, decode_store_upload_write_request, encode_frame, encode_hello_response, encode_log_record,
     encode_log_response_header, encode_page_response, encode_raw_frame, encode_status_payload,
-    FrameHeader, FrameKind, HelloResponse, KeyAction, KeyCode, LogRecordPayload, LogResponseHeader,
-    Opcode, PageAction, PanelModeCode, ProbeCode, RawFrameHeader, Status, StatusPayload,
+    encode_store_upload_begin_response, encode_store_upload_write_response,
+    FrameHeader,
+    FrameKind, HelloResponse, KeyAction, KeyCode, LogRecordPayload, LogResponseHeader, Opcode,
+    PageAction, PanelModeCode, ProbeCode, RawFrameHeader, Status, StatusPayload,
     ALL_CAPABILITIES, FRAME_DELIMITER, LOG_RECORD_BYTES, LOG_RESPONSE_HEADER_BYTES,
     MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
 };
 
 use crate::diag_log::{DiagLog, DiagLogRecord};
+use crate::diag_storage::StorageHandle;
 use crate::input::{apply_page_turn, Button, PageTurn};
 
 const SERIAL_RX_BUF_SIZE: usize = MAX_FRAME_BYTES * 2;
@@ -365,6 +371,7 @@ pub fn dispatch_command(
     payload: &[u8],
     ctx: &mut CommandContext,
     resp_buf: &mut [u8],
+    storage: &mut dyn StorageHandle,
 ) -> DispatchResult {
     if header.kind != FrameKind::Request || header.status != Status::Ok {
         return DispatchResult::Response {
@@ -497,6 +504,169 @@ pub fn dispatch_command(
         Opcode::LogClear => DispatchResult::LogClear,
         Opcode::CrashGet => DispatchResult::CrashGet,
         Opcode::CrashClear => DispatchResult::CrashClear,
+        Opcode::StoreList => {
+            let req = match decode_store_list_request(payload) {
+                Ok(r) => r,
+                Err(_) => {
+                    return DispatchResult::Response {
+                        status: Status::BadRequest,
+                        payload_len: 0,
+                    }
+                }
+            };
+            match storage.store_list(req.backend, req.path, resp_buf) {
+                Ok(len) => DispatchResult::Response {
+                    status: Status::Ok,
+                    payload_len: len,
+                },
+                Err(_) => DispatchResult::Response {
+                    status: Status::InternalError,
+                    payload_len: 0,
+                },
+            }
+        }
+        Opcode::StoreRead => {
+            let req = match decode_store_read_request(payload) {
+                Ok(r) => r,
+                Err(_) => {
+                    return DispatchResult::Response {
+                        status: Status::BadRequest,
+                        payload_len: 0,
+                    }
+                }
+            };
+            match storage.store_read(req.backend, req.path, resp_buf) {
+                Ok(len) => DispatchResult::Response {
+                    status: Status::Ok,
+                    payload_len: len,
+                },
+                Err(_) => DispatchResult::Response {
+                    status: Status::InternalError,
+                    payload_len: 0,
+                },
+            }
+        }
+        Opcode::StoreDelete => {
+            let req = match decode_store_delete_request(payload) {
+                Ok(r) => r,
+                Err(_) => {
+                    return DispatchResult::Response {
+                        status: Status::BadRequest,
+                        payload_len: 0,
+                    }
+                }
+            };
+            match storage.store_delete(req.backend, req.path) {
+                Ok(()) => DispatchResult::Response {
+                    status: Status::Ok,
+                    payload_len: 0,
+                },
+                Err(_) => DispatchResult::Response {
+                    status: Status::InternalError,
+                    payload_len: 0,
+                },
+            }
+        }
+        Opcode::StoreUploadBegin => {
+            let req = match decode_store_upload_begin_request(payload) {
+                Ok(r) => r,
+                Err(_) => {
+                    return DispatchResult::Response {
+                        status: Status::BadRequest,
+                        payload_len: 0,
+                    }
+                }
+            };
+            match storage.store_upload_begin(req.backend, req.path, req.file_size, req.expected_crc32) {
+                Ok(upload_id) => {
+                    match encode_store_upload_begin_response(upload_id, resp_buf) {
+                        Ok(len) => DispatchResult::Response {
+                            status: Status::Ok,
+                            payload_len: len,
+                        },
+                        Err(_) => DispatchResult::Response {
+                            status: Status::InternalError,
+                            payload_len: 0,
+                        },
+                    }
+                }
+                Err(_) => DispatchResult::Response {
+                    status: Status::InternalError,
+                    payload_len: 0,
+                },
+            }
+        }
+        Opcode::StoreUploadWrite => {
+            let req = match decode_store_upload_write_request(payload) {
+                Ok(r) => r,
+                Err(_) => {
+                    return DispatchResult::Response {
+                        status: Status::BadRequest,
+                        payload_len: 0,
+                    }
+                }
+            };
+            match storage.store_upload_write(req.upload_id, req.offset, req.data) {
+                Ok(bytes_accepted) => {
+                    match encode_store_upload_write_response(bytes_accepted, resp_buf) {
+                        Ok(len) => DispatchResult::Response {
+                            status: Status::Ok,
+                            payload_len: len,
+                        },
+                        Err(_) => DispatchResult::Response {
+                            status: Status::InternalError,
+                            payload_len: 0,
+                        },
+                    }
+                }
+                Err(_) => DispatchResult::Response {
+                    status: Status::InternalError,
+                    payload_len: 0,
+                },
+            }
+        }
+        Opcode::StoreUploadCommit => {
+            let upload_id = match decode_store_upload_commit_request(payload) {
+                Ok(id) => id,
+                Err(_) => {
+                    return DispatchResult::Response {
+                        status: Status::BadRequest,
+                        payload_len: 0,
+                    }
+                }
+            };
+            match storage.store_upload_commit(upload_id) {
+                Ok(()) => DispatchResult::Response {
+                    status: Status::Ok,
+                    payload_len: 0,
+                },
+                Err(_) => DispatchResult::Response {
+                    status: Status::InternalError,
+                    payload_len: 0,
+                },
+            }
+        }
+        Opcode::StoreAbort => {
+            let upload_id = match decode_store_abort_request(payload) {
+                Ok(id) => id,
+                Err(_) => {
+                    return DispatchResult::Response {
+                        status: Status::BadRequest,
+                        payload_len: 0,
+                    }
+                }
+            };
+            match storage.store_upload_abort(upload_id) {
+                Ok(()) => DispatchResult::Response {
+                    status: Status::Ok,
+                    payload_len: 0,
+                },
+                Err(_) => DispatchResult::Response {
+                    status: Status::InternalError,
+                    payload_len: 0,
+                },
+            }
+        }
     }
 }
 
@@ -608,6 +778,7 @@ impl RuntimeCommand {
 pub fn poll_runtime_command(
     serial: &mut SerialState,
     snapshot: DiagnosticSnapshot,
+    storage: &mut dyn StorageHandle,
 ) -> Option<RuntimeCommand> {
     let mut frame_buf = [0u8; MAX_FRAME_BYTES];
     let frame_len = serial.next_frame(&mut frame_buf)?;
@@ -653,6 +824,7 @@ pub fn poll_runtime_command(
         &request_payload[..payload_len],
         &mut context,
         &mut response_payload,
+        storage,
     );
     match result {
         DispatchResult::RenderTurn { turn } => Some(RuntimeCommand::Hardware(PendingCommand {
@@ -721,6 +893,7 @@ pub fn poll_pending_command<const N: usize>(
     panel_mode: u8,
     log: &mut DiagLog<N>,
     tick_ms: u32,
+    storage: &mut dyn StorageHandle,
 ) -> Option<PendingCommand> {
     let mut frame_buf = [0u8; MAX_FRAME_BYTES];
     let frame_len = serial.next_frame(&mut frame_buf)?;
@@ -772,6 +945,7 @@ pub fn poll_pending_command<const N: usize>(
         &request_payload[..payload_len],
         &mut context,
         &mut response_payload,
+        storage,
     );
     if header.opcode == Opcode::Key {
         if let Ok(key) = decode_key_payload(&request_payload[..payload_len]) {

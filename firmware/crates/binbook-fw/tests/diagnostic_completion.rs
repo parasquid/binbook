@@ -26,8 +26,9 @@ fn diagnostic_page_response_is_queued_only_after_action_completion() {
 
     let mut serial = SerialState::new();
     let mut log = DiagLog::<8>::new();
+    let mut storage = binbook_fw::diag_storage::UnavailableStorage;
     serial.feed_rx(&encoded[..encoded_len]);
-    let pending = poll_pending_command(&mut serial, 3, 8, 0, 0, &mut log, 100)
+    let pending = poll_pending_command(&mut serial, 3, 8, 0, 0, &mut log, 100, &mut storage)
         .expect("page command should require execution");
     assert_eq!(pending.action, PendingAction::RenderPage { target_page: 0 });
     assert!(
@@ -105,6 +106,7 @@ impl AsyncDiagHarness {
         )
         .unwrap();
         self.serial.feed_rx(&encoded[..encoded_len]);
+        let mut storage = binbook_fw::diag_storage::UnavailableStorage;
         let pending = binbook_fw::diag::poll_pending_command(
             &mut self.serial,
             self.current_page,
@@ -113,6 +115,7 @@ impl AsyncDiagHarness {
             0,
             &mut self.log,
             sequence as u32,
+            &mut storage,
         )
         .expect("directional key should queue a render");
         self.response_sequences.push(pending.header.sequence);

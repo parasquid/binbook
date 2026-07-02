@@ -2,6 +2,7 @@ use crate::error::FirmwareError;
 use crate::{
     async_refresh::{DisplayProbeKind, RefreshPhase},
     input::{Button, InputDecision, PageTurn},
+    menu::Mode,
 };
 
 pub use xteink_x4_display::engine::ControllerRamState;
@@ -111,6 +112,13 @@ pub enum RuntimeEventKind {
         page: u32,
     },
     Completion(RuntimeCompletion),
+    MenuTransition,
+    ModeChange {
+        mode: Mode,
+    },
+    BookOpen {
+        name_index: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

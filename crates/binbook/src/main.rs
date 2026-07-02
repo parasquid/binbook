@@ -1,6 +1,6 @@
 use binbook::{Cli, Commands, DiagCommand};
 #[cfg(feature = "serial-device")]
-use binbook::{ExerciseCommand, PageAction, ProbeCommand};
+use binbook::{ExerciseCommand, PageAction, ProbeCommand, StorageCommand};
 use clap::Parser;
 
 #[cfg(feature = "serial-device")]
@@ -144,6 +144,24 @@ fn run_diag(cmd: DiagCommand) {
                 binbook::DISPLAY_PROBE_TIMEOUT,
             )
         }
+        DiagCommand::Storage(storage_cmd) => match storage_cmd {
+            StorageCommand::List { port, path } => {
+                let path_str = path.as_deref().unwrap_or("/");
+                let frame = diag_protocol::store_list_request(1, path_str);
+                (port.clone(), frame, Opcode::StoreList, Duration::from_secs(5))
+            }
+            StorageCommand::Read { port, path, output: _output } => {
+                let frame = diag_protocol::store_read_request(1, path);
+                (port.clone(), frame, Opcode::StoreRead, Duration::from_secs(10))
+            }
+            StorageCommand::Delete { port, path } => {
+                let frame = diag_protocol::store_delete_request(1, path);
+                (port.clone(), frame, Opcode::StoreDelete, Duration::from_secs(5))
+            }
+            StorageCommand::Upload { port, path, file } => {
+                return upload_file(port, path, file);
+            }
+        },
         DiagCommand::Exercise { .. } => unreachable!("exercise handled above"),
     };
 
@@ -168,6 +186,155 @@ fn run_diag(cmd: DiagCommand) {
             std::process::exit(1);
         }
     }
+}
+
+#[cfg(feature = "serial-device")]
+fn upload_file(port: &str, path: &str, file: &std::path::Path) {
+    use binbook::serial_transport::SerialSession;
+    use binbook_diagnostic_protocol::{
+        decode_frame, decode_store_upload_begin_response, decode_store_upload_write_response,
+        encode_frame, encode_store_upload_begin_request, encode_store_upload_commit_request,
+        encode_store_upload_write_request, FrameHeader, FrameKind, Opcode, Status,
+        StorageBackend, StoreUploadBeginRequest, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES,
+    };
+    use std::time::Duration;
+
+    let data = match std::fs::read(file) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Error reading {}: {e}", file.display());
+            std::process::exit(1);
+        }
+    };
+
+    let crc32 = crc32_simple(&data);
+
+    let mut session = match SerialSession::open(port) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let req = StoreUploadBeginRequest {
+        backend: StorageBackend::Sd,
+        path,
+        file_size: data.len() as u32,
+        expected_crc32: crc32,
+    };
+    let mut payload_buf = [0u8; MAX_PAYLOAD_BYTES];
+    let plen = encode_store_upload_begin_request(&req, &mut payload_buf).unwrap();
+    let header = FrameHeader {
+        kind: FrameKind::Request,
+        opcode: Opcode::StoreUploadBegin,
+        status: Status::Ok,
+        sequence: 1,
+        payload_len: plen as u16,
+    };
+    let mut frame_buf = [0u8; MAX_FRAME_BYTES];
+    let flen = encode_frame(&header, &payload_buf[..plen], &mut frame_buf).unwrap();
+    let resp = match session.send_and_receive(&frame_buf[..flen], Opcode::StoreUploadBegin, 1, Duration::from_secs(5)) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Upload begin failed: {e}");
+            std::process::exit(1);
+        }
+    };
+    let mut resp_payload = [0u8; MAX_PAYLOAD_BYTES];
+    let (_resp_header, resp_plen) = decode_frame(&resp, &mut resp_payload).unwrap();
+    let upload_id = match decode_store_upload_begin_response(&resp_payload[..resp_plen]) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("Invalid upload begin response: {e:?}");
+            std::process::exit(1);
+        }
+    };
+
+    const CHUNK_SIZE: usize = 4096;
+    for (chunk_index, chunk) in data.chunks(CHUNK_SIZE).enumerate() {
+        let offset = (chunk_index * CHUNK_SIZE) as u32;
+        let mut chunk_payload = [0u8; MAX_PAYLOAD_BYTES];
+        let write_req = binbook_diagnostic_protocol::StoreUploadWriteRequest {
+            upload_id,
+            offset,
+            data: chunk,
+        };
+        let wplen = encode_store_upload_write_request(&write_req, &mut chunk_payload).unwrap();
+        let chunk_header = FrameHeader {
+            kind: FrameKind::Request,
+            opcode: Opcode::StoreUploadWrite,
+            status: Status::Ok,
+            sequence: 2 + chunk_index as u16,
+            payload_len: wplen as u16,
+        };
+        let mut chunk_frame = [0u8; MAX_FRAME_BYTES];
+        let cflen = encode_frame(&chunk_header, &chunk_payload[..wplen], &mut chunk_frame).unwrap();
+        let cresp = match session.send_and_receive(
+            &chunk_frame[..cflen],
+            Opcode::StoreUploadWrite,
+            2 + chunk_index as u16,
+            Duration::from_secs(5),
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Upload write chunk {chunk_index} failed: {e}");
+                std::process::exit(1);
+            }
+        };
+        let mut cresp_payload = [0u8; MAX_PAYLOAD_BYTES];
+        let (_cresp_header, cresp_plen) = decode_frame(&cresp, &mut cresp_payload).unwrap();
+        let _accepted = match decode_store_upload_write_response(&cresp_payload[..cresp_plen]) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("Invalid write response for chunk {chunk_index}: {e:?}");
+                std::process::exit(1);
+            }
+        };
+    }
+
+    let mut commit_payload = [0u8; MAX_PAYLOAD_BYTES];
+    let cplen = encode_store_upload_commit_request(upload_id, &mut commit_payload).unwrap();
+    let commit_header = FrameHeader {
+        kind: FrameKind::Request,
+        opcode: Opcode::StoreUploadCommit,
+        status: Status::Ok,
+        sequence: 100,
+        payload_len: cplen as u16,
+    };
+    let mut commit_frame = [0u8; MAX_FRAME_BYTES];
+    let commit_flen = encode_frame(&commit_header, &commit_payload[..cplen], &mut commit_frame).unwrap();
+    match session.send_and_receive(&commit_frame[..commit_flen], Opcode::StoreUploadCommit, 100, Duration::from_secs(5)) {
+        Ok(_) => {
+            println!(
+                "Uploaded {} ({} bytes, CRC32=0x{:08X}) as {}",
+                file.display(),
+                data.len(),
+                crc32,
+                path
+            );
+        }
+        Err(e) => {
+            eprintln!("Upload commit failed: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+#[cfg(feature = "serial-device")]
+fn crc32_simple(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFFFFFF;
+    for &byte in data {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            if crc & 1 != 0 {
+                crc = (crc >> 1) ^ 0xEDB88320;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    !crc
 }
 
 #[cfg(not(feature = "serial-device"))]

@@ -1,4 +1,6 @@
-use binbook_diagnostic_protocol::{decode_frame, FrameKind, Opcode, Status, MAX_FRAME_BYTES};
+use binbook_diagnostic_protocol::{
+    decode_frame, decode_store_list_entry, FrameKind, Opcode, Status, MAX_FRAME_BYTES, CAP_STORAGE,
+};
 
 pub struct StatusResponse {
     pub current_page: u32,
@@ -76,6 +78,7 @@ pub fn format_response(
                 for (bit, name) in [
                     (CAP_KEY, "KEY"), (CAP_PAGE, "PAGE"), (CAP_STATUS, "STATUS"),
                     (CAP_LOG, "LOG"), (CAP_CRASH, "CRASH"), (CAP_DISPLAY_PROBE, "DISPLAY_PROBE"),
+                    (CAP_STORAGE, "STORAGE"),
                 ] { if hello.capabilities & bit != 0 { names.push(name); } }
                 Ok(format!(
                     "protocol={} max_frame={} capabilities={} firmware={} target={}",
@@ -129,6 +132,36 @@ pub fn format_response(
                 if !payload.is_empty() { return Err("unexpected response payload".into()); }
                 Ok("ok".into())
             }
+            Opcode::StoreList => {
+                if payload.len() < 4 {
+                    return Err("invalid StoreList response: too short".into());
+                }
+                let count = u32::from_le_bytes(payload[..4].try_into().unwrap());
+                let mut text = format!("entry_count={}", count);
+                let mut pos = 4usize;
+                while pos < payload.len() {
+                    match decode_store_list_entry(&payload[pos..]) {
+                        Ok((name_len_hint, name_bytes, flags)) => {
+                            let name = core::str::from_utf8(name_bytes).unwrap_or("<invalid utf8>");
+                            text.push_str(&format!("\n  {} flags={}", name, flags));
+                            pos += 2 + name_len_hint as usize + 4;
+                        }
+                        Err(_) => break,
+                    }
+                }
+                Ok(text)
+            }
+            Opcode::StoreRead => {
+                if payload.is_empty() {
+                    return Err("file not found or empty".into());
+                }
+                Ok(format!("data_len={}", payload.len()))
+            }
+            Opcode::StoreDelete | Opcode::StoreUploadCommit | Opcode::StoreAbort => {
+                if !payload.is_empty() { return Err("unexpected response payload".into()); }
+                Ok("ok".into())
+            }
+            _ => Err(format!("unsupported opcode {:?}", header.opcode)),
         }
 }
 

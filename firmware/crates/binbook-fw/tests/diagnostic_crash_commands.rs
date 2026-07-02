@@ -129,7 +129,8 @@ fn diag_crash_clear_uses_distinct_opcode() {
     };
     let mut ctx = CommandContext::new(0, 10, 0, 0);
     let mut resp_buf = [0u8; 496];
-    let result = dispatch_command(header, &[], &mut ctx, &mut resp_buf);
+    let mut storage = binbook_fw::diag_storage::UnavailableStorage;
+    let result = dispatch_command(header, &[], &mut ctx, &mut resp_buf, &mut storage);
     assert_eq!(result, DispatchResult::CrashClear);
 
     let header_get = FrameHeader {
@@ -139,7 +140,7 @@ fn diag_crash_clear_uses_distinct_opcode() {
         sequence: 2,
         payload_len: 0,
     };
-    let result_get = dispatch_command(header_get, &[], &mut ctx, &mut resp_buf);
+    let result_get = dispatch_command(header_get, &[], &mut ctx, &mut resp_buf, &mut storage);
     assert_eq!(result_get, DispatchResult::CrashGet);
     assert_ne!(result, result_get);
 }

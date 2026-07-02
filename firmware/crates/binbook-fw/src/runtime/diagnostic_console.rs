@@ -25,6 +25,7 @@ pub(super) async fn diagnostic_task(
     let (mut usb_rx, mut usb_tx) = usb.split();
     let mut serial = SerialState::new();
     let mut crash_store = CrashStore::new(esp_storage::FlashStorage::new(flash));
+    let mut storage = binbook_fw::diag_storage::UnavailableStorage;
 
     loop {
         let mut usb_read_buf = [0u8; 64];
@@ -55,7 +56,7 @@ pub(super) async fn diagnostic_task(
                 continue;
             }
         };
-        if let Some(command) = poll_runtime_command(&mut serial, snapshot) {
+        if let Some(command) = poll_runtime_command(&mut serial, snapshot, &mut storage) {
             let header = command.header();
             RUNTIME_EVENT_CHANNEL
                 .sender()
