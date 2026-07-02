@@ -1,6 +1,6 @@
 mod common;
 
-use common::{driver, Delay};
+use common::{driver, Busy, Delay};
 use ssd1677_driver::{BusyWaitObserver, BusyWaitOutcome, Error};
 
 #[derive(Default)]
@@ -16,6 +16,20 @@ impl BusyWaitObserver for Observer {
 
     fn busy_wait_end(&mut self, elapsed_ms: u32, outcome: BusyWaitOutcome) {
         self.ends.push((elapsed_ms, outcome));
+    }
+}
+
+struct ReleaseAfterTwoDelays {
+    busy: Busy,
+    delays: Vec<u32>,
+}
+
+impl embedded_hal_async::delay::DelayNs for ReleaseAfterTwoDelays {
+    async fn delay_ns(&mut self, ns: u32) {
+        self.delays.push(ns);
+        if self.delays.len() == 2 {
+            self.busy.0.set(false);
+        }
     }
 }
 
@@ -73,4 +87,24 @@ fn busy_wait_observer_records_ready_and_timeout_paths() {
     assert_eq!(timeout_observer.starts, [(2, Some(true))]);
     assert_eq!(timeout_observer.ends, [(2, BusyWaitOutcome::Timeout)]);
     assert_eq!(timeout_delay.0, [1_000_000; 2]);
+}
+
+#[test]
+fn busy_wait_observer_reports_elapsed_poll_time_when_ready_after_delay() {
+    let (mut driver, _, busy) = driver(4);
+    busy.0.set(true);
+    let mut delay = ReleaseAfterTwoDelays {
+        busy: busy.clone(),
+        delays: Vec::new(),
+    };
+    let mut observer = Observer::default();
+
+    assert_eq!(
+        pollster::block_on(driver.wait_ready_async_observed(&mut delay, &mut observer)),
+        Ok(())
+    );
+
+    assert_eq!(delay.delays, [1_000_000; 2]);
+    assert_eq!(observer.starts, [(4, Some(true))]);
+    assert_eq!(observer.ends, [(2, BusyWaitOutcome::Ready)]);
 }
