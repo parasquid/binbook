@@ -5,13 +5,13 @@ use xteink_x4_display::{
     engine::DisplayBackend,
     events::OperationOutcome,
     panel::X4Panel,
-    render::{self, OverlayControl},
+    render::{self, OverlayControl, RenderObservers},
 };
 
 use binbook_fw::board::DisplayDelay;
 use binbook_fw::runtime_engine::{BusyWaitSite, BusyWaitStatus, RuntimeEvent, RuntimeEventKind};
 
-use super::{REQUEST_EPOCH, RUNTIME_EVENT_CHANNEL};
+use super::{render_timing::RuntimeRenderTimingObserver, REQUEST_EPOCH, RUNTIME_EVENT_CHANNEL};
 
 pub(super) struct HardwareDisplayBackend<'a, SPI: embedded_hal::spi::SpiDevice<u8>, DC, RST, BUSY> {
     pub(super) display: X4Panel<SPI, DC, RST, BUSY>,
@@ -135,14 +135,18 @@ where
             &mut self.red,
         );
         let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::BwRefresh);
-        render::render_bw_differential_observed(
+        let mut timing = RuntimeRenderTimingObserver::new();
+        render::render_bw_differential_timed(
             &mut self.display,
             &mut self.book,
             from,
             target,
             &mut buffers,
             &mut self.delay,
-            &mut observer,
+            RenderObservers {
+                busy: &mut observer,
+                timing: &mut timing,
+            },
         )
         .await
     }

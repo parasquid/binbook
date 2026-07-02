@@ -1,6 +1,7 @@
 mod display_backend;
 mod display_task;
 mod input_task;
+mod render_timing;
 
 #[cfg(feature = "diagnostic-console")]
 mod diagnostic_aggregator;
@@ -14,10 +15,10 @@ use embassy_sync::{
 };
 use portable_atomic::{AtomicU32, AtomicU8};
 
-use binbook_fw::async_refresh::{DisplayRequest, PAGE_TURN_QUEUE_CAPACITY};
+use binbook_fw::async_refresh::{DisplayRequest, PAGE_TURN_QUEUE_CAPACITY, STARTUP_DISPLAY_MODE};
 use binbook_fw::runtime_engine::RuntimeEvent;
 
-static DISPLAY_MODE: AtomicU8 = AtomicU8::new(0);
+static DISPLAY_MODE: AtomicU8 = AtomicU8::new(STARTUP_DISPLAY_MODE);
 
 #[cfg(feature = "sd-storage")]
 use embassy_sync::mutex::Mutex;
