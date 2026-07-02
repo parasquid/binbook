@@ -1216,10 +1216,16 @@ pub const EVT_BW_BASE_SYNC_CANCELLED: u16 = 0x030B;
 pub const EVT_BW_BASE_SYNC_COMPLETE: u16 = 0x030C;
 pub const EVT_DISPLAY_REQUEST_START: u16 = 0x030D;
 pub const EVT_DISPLAY_REQUEST_END: u16 = 0x030E;
+pub const EVT_PAGE_METADATA_READ: u16 = 0x030F;
+pub const EVT_PLANE_WRITE_START: u16 = 0x0310;
+pub const EVT_PLANE_ROW_FILL_SUMMARY: u16 = 0x0311;
+pub const EVT_PLANE_SPI_WRITE_SUMMARY: u16 = 0x0312;
+pub const EVT_PLANE_WRITE_END: u16 = 0x0313;
 pub const EVT_CONTROLLER_RAM_STATE: u16 = 0x0402;
 pub const EVT_WAVEFORM_SELECTED: u16 = 0x0403;
 pub const EVT_BUSY_WAIT_START: u16 = 0x0404;
 pub const EVT_BUSY_WAIT_END: u16 = 0x0405;
+pub const EVT_REFRESH_TRIGGER: u16 = 0x0406;
 
 pub fn crc16_ccitt_false(data: &[u8]) -> u16 {
     let mut crc: u16 = 0xFFFF;

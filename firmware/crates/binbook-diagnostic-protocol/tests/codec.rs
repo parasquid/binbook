@@ -101,6 +101,27 @@ fn timing_event_codes_are_stable_and_nonzero() {
 }
 
 #[test]
+fn page_turn_breakdown_event_codes_are_stable_and_nonzero() {
+    use binbook_diagnostic_protocol::{
+        EVT_PAGE_METADATA_READ, EVT_PLANE_ROW_FILL_SUMMARY, EVT_PLANE_SPI_WRITE_SUMMARY,
+        EVT_PLANE_WRITE_END, EVT_PLANE_WRITE_START, EVT_REFRESH_TRIGGER,
+    };
+
+    let expected = [
+        (EVT_PAGE_METADATA_READ, 0x030F),
+        (EVT_PLANE_WRITE_START, 0x0310),
+        (EVT_PLANE_ROW_FILL_SUMMARY, 0x0311),
+        (EVT_PLANE_SPI_WRITE_SUMMARY, 0x0312),
+        (EVT_PLANE_WRITE_END, 0x0313),
+        (EVT_REFRESH_TRIGGER, 0x0406),
+    ];
+    for (actual, expected) in expected {
+        assert_eq!(actual, expected);
+        assert_ne!(actual, 0);
+    }
+}
+
+#[test]
 fn max_frame_bytes_is_4126() {
     assert_eq!(MAX_FRAME_BYTES, 4126);
 }
