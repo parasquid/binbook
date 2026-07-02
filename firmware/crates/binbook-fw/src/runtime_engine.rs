@@ -1,6 +1,6 @@
 use crate::error::FirmwareError;
 use crate::{
-    async_refresh::{DisplayProbeKind, RefreshPhase},
+    async_refresh::{DisplayProbeKind, DisplayRequest, RefreshPhase},
     input::{Button, InputDecision, PageTurn},
     menu::Mode,
 };
@@ -12,6 +12,135 @@ pub type RuntimePanelMode = xteink_x4_display::events::PanelMode;
 pub enum RuntimeCompletionStatus {
     Ok,
     Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeRequestKind {
+    Turn,
+    Goto,
+    Probe,
+    MenuNext,
+    MenuPrev,
+    MenuSelect,
+    MenuBack,
+}
+
+impl RuntimeRequestKind {
+    pub const fn from_request(request: &DisplayRequest) -> Self {
+        match request {
+            DisplayRequest::Turn { .. } => Self::Turn,
+            DisplayRequest::Goto { .. } => Self::Goto,
+            DisplayRequest::Probe { .. } => Self::Probe,
+            DisplayRequest::MenuNext => Self::MenuNext,
+            DisplayRequest::MenuPrev => Self::MenuPrev,
+            DisplayRequest::MenuSelect => Self::MenuSelect,
+            DisplayRequest::MenuBack => Self::MenuBack,
+        }
+    }
+
+    pub const fn log_code(self) -> i32 {
+        match self {
+            Self::Turn => 0,
+            Self::Goto => 1,
+            Self::Probe => 2,
+            Self::MenuNext => 3,
+            Self::MenuPrev => 4,
+            Self::MenuSelect => 5,
+            Self::MenuBack => 6,
+        }
+    }
+}
+
+#[must_use]
+pub const fn request_sequence(request: &DisplayRequest) -> Option<u16> {
+    match request {
+        DisplayRequest::Turn {
+            completion_sequence,
+            ..
+        } => *completion_sequence,
+        DisplayRequest::Goto {
+            completion_sequence,
+            ..
+        }
+        | DisplayRequest::Probe {
+            completion_sequence,
+            ..
+        } => Some(*completion_sequence),
+        DisplayRequest::MenuNext
+        | DisplayRequest::MenuPrev
+        | DisplayRequest::MenuSelect
+        | DisplayRequest::MenuBack => None,
+    }
+}
+
+#[must_use]
+pub const fn queue_age_ms(received_ms: u64, enqueued_ms: Option<u64>) -> Option<u32> {
+    match enqueued_ms {
+        Some(sent_ms) => {
+            let elapsed = received_ms.saturating_sub(sent_ms);
+            if elapsed > u32::MAX as u64 {
+                Some(u32::MAX)
+            } else {
+                Some(elapsed as u32)
+            }
+        }
+        None => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestEnqueueStatus {
+    Ok,
+    Full,
+    Unmapped,
+}
+
+impl RequestEnqueueStatus {
+    pub const fn log_code(self) -> i32 {
+        match self {
+            Self::Ok => 0,
+            Self::Full => 1,
+            Self::Unmapped => 2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BusyWaitSite {
+    GenericWaitReady,
+    PanelInit,
+    BwRefresh,
+    GrayRefresh,
+    Probe,
+}
+
+impl BusyWaitSite {
+    pub const fn log_code(self) -> i32 {
+        match self {
+            Self::GenericWaitReady => 0,
+            Self::PanelInit => 1,
+            Self::BwRefresh => 2,
+            Self::GrayRefresh => 3,
+            Self::Probe => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BusyWaitStatus {
+    Ready,
+    Timeout,
+    PinError,
+}
+
+impl BusyWaitStatus {
+    pub const fn log_code(self) -> i32 {
+        match self {
+            Self::Ready => 0,
+            Self::Timeout => 1,
+            Self::PinError => 2,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +169,36 @@ pub enum RuntimeEventKind {
     TurnQueued {
         sequence: Option<u16>,
         turn: PageTurn,
+    },
+    RequestEnqueue {
+        kind: RuntimeRequestKind,
+        sequence: Option<u16>,
+        status: RequestEnqueueStatus,
+    },
+    RequestReceive {
+        kind: RuntimeRequestKind,
+        sequence: Option<u16>,
+        queue_age_ms: Option<u32>,
+    },
+    DisplayRequestStart {
+        kind: RuntimeRequestKind,
+        current_page: u32,
+        target_page: Option<u32>,
+    },
+    DisplayRequestEnd {
+        kind: RuntimeRequestKind,
+        duration_ms: u32,
+        status: RuntimeCompletionStatus,
+    },
+    BusyWaitStart {
+        site: BusyWaitSite,
+        timeout_ms: u32,
+        busy_state: Option<bool>,
+    },
+    BusyWaitEnd {
+        site: BusyWaitSite,
+        elapsed_ms: u32,
+        status: BusyWaitStatus,
     },
     InputTransition {
         ch1: u16,
