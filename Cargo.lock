@@ -221,6 +221,7 @@ dependencies = [
  "nb 1.1.0",
  "portable-atomic",
  "profont",
+ "ssd1677-driver",
  "static_cell",
  "xteink-x4-display",
 ]

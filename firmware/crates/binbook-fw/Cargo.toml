@@ -9,6 +9,7 @@ description = "BinBook firmware for Xteink X4"
 [dependencies]
 binbook-core.workspace = true
 xteink-x4-display.workspace = true
+ssd1677-driver.workspace = true
 embedded-hal.workspace = true
 embedded-hal-async.workspace = true
 embedded-storage.workspace = true

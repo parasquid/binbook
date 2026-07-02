@@ -1,4 +1,5 @@
 use portable_atomic::Ordering;
+use ssd1677_driver::{BusyWaitObserver, BusyWaitOutcome};
 
 use xteink_x4_display::{
     engine::DisplayBackend,
@@ -8,7 +9,7 @@ use xteink_x4_display::{
 };
 
 use binbook_fw::board::DisplayDelay;
-use binbook_fw::runtime_engine::{RuntimeEvent, RuntimeEventKind};
+use binbook_fw::runtime_engine::{BusyWaitSite, BusyWaitStatus, RuntimeEvent, RuntimeEventKind};
 
 use super::{REQUEST_EPOCH, RUNTIME_EVENT_CHANNEL};
 
@@ -22,8 +23,46 @@ pub(super) struct HardwareDisplayBackend<'a, SPI: embedded_hal::spi::SpiDevice<u
     pub(super) red: [u8; 100],
 }
 
-impl<'a, SPI, DC, RST, BUSY> DisplayBackend
-    for HardwareDisplayBackend<'a, SPI, DC, RST, BUSY>
+struct RuntimeBusyWaitObserver {
+    site: BusyWaitSite,
+}
+
+impl RuntimeBusyWaitObserver {
+    const fn new(site: BusyWaitSite) -> Self {
+        Self { site }
+    }
+}
+
+impl BusyWaitObserver for RuntimeBusyWaitObserver {
+    fn busy_wait_start(&mut self, timeout_ms: u32, busy_state: Option<bool>) {
+        let _ = RUNTIME_EVENT_CHANNEL.sender().try_send(RuntimeEvent {
+            timestamp_ms: embassy_time::Instant::now().as_millis(),
+            kind: RuntimeEventKind::BusyWaitStart {
+                site: self.site,
+                timeout_ms,
+                busy_state,
+            },
+        });
+    }
+
+    fn busy_wait_end(&mut self, elapsed_ms: u32, outcome: BusyWaitOutcome) {
+        let status = match outcome {
+            BusyWaitOutcome::Ready => BusyWaitStatus::Ready,
+            BusyWaitOutcome::Timeout => BusyWaitStatus::Timeout,
+            BusyWaitOutcome::PinError => BusyWaitStatus::PinError,
+        };
+        let _ = RUNTIME_EVENT_CHANNEL.sender().try_send(RuntimeEvent {
+            timestamp_ms: embassy_time::Instant::now().as_millis(),
+            kind: RuntimeEventKind::BusyWaitEnd {
+                site: self.site,
+                elapsed_ms,
+                status,
+            },
+        });
+    }
+}
+
+impl<'a, SPI, DC, RST, BUSY> DisplayBackend for HardwareDisplayBackend<'a, SPI, DC, RST, BUSY>
 where
     SPI: embedded_hal::spi::SpiDevice<u8>,
     DC: embedded_hal::digital::OutputPin,
@@ -53,7 +92,8 @@ where
             &mut self.black,
             &mut self.red,
         );
-        render::render_staged_overlay(
+        let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::GrayRefresh);
+        render::render_staged_overlay_observed(
             &mut self.display,
             &mut self.book,
             page,
@@ -78,6 +118,7 @@ where
                 },
             },
             &mut self.delay,
+            &mut observer,
         )
         .await
     }
@@ -93,13 +134,15 @@ where
             &mut self.black,
             &mut self.red,
         );
-        render::render_bw_differential(
+        let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::BwRefresh);
+        render::render_bw_differential_observed(
             &mut self.display,
             &mut self.book,
             from,
             target,
             &mut buffers,
             &mut self.delay,
+            &mut observer,
         )
         .await
     }
@@ -134,12 +177,14 @@ where
             &mut self.black,
             &mut self.red,
         );
-        render::recovery_seed(
+        let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::BwRefresh);
+        render::recovery_seed_observed(
             &mut self.display,
             &mut self.book,
             page,
             &mut buffers,
             &mut self.delay,
+            &mut observer,
         )
         .await
     }
@@ -158,20 +203,34 @@ where
                     &mut self.black,
                     &mut self.red,
                 );
-                render::render_absolute_gray(
+                let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::Probe);
+                render::render_absolute_gray_observed(
                     &mut self.display,
                     &mut self.book,
                     page,
                     &mut buffers,
                     &mut self.delay,
+                    &mut observer,
                 )
                 .await
             }
             xteink_x4_display::probes::ProbeKind::ClearWhite => {
-                xteink_x4_display::probes::clear_white(&mut self.display, &mut self.delay).await
+                let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::Probe);
+                xteink_x4_display::probes::clear_white_observed(
+                    &mut self.display,
+                    &mut self.delay,
+                    &mut observer,
+                )
+                .await
             }
             xteink_x4_display::probes::ProbeKind::WindowCorners => {
-                xteink_x4_display::probes::window_corners(&mut self.display, &mut self.delay).await
+                let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::Probe);
+                xteink_x4_display::probes::window_corners_observed(
+                    &mut self.display,
+                    &mut self.delay,
+                    &mut observer,
+                )
+                .await
             }
         }
         #[cfg(not(feature = "diagnostic-console"))]
