@@ -1,3 +1,5 @@
+use ssd1677_driver::{BusyWaitObserver, NoopBusyWaitObserver};
+
 pub const DISPLAY_WIDTH: u16 = 800;
 pub const DISPLAY_HEIGHT: u16 = 480;
 pub const DISPLAY_ROW_BYTES: usize = 100;
@@ -56,6 +58,21 @@ where
     BUSY: embedded_hal::digital::InputPin,
     D: embedded_hal_async::delay::DelayNs,
 {
+    clear_white_observed(panel, delay, &mut NoopBusyWaitObserver).await
+}
+
+pub async fn clear_white_observed<SPI, DC, RST, BUSY, D>(
+    panel: &mut crate::panel::X4Panel<SPI, DC, RST, BUSY>,
+    delay: &mut D,
+    observer: &mut impl BusyWaitObserver,
+) -> crate::DisplayResult<()>
+where
+    SPI: embedded_hal::spi::SpiDevice<u8>,
+    DC: embedded_hal::digital::OutputPin,
+    RST: embedded_hal::digital::OutputPin,
+    BUSY: embedded_hal::digital::InputPin,
+    D: embedded_hal_async::delay::DelayNs,
+{
     panel
         .controller()
         .set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
@@ -69,8 +86,7 @@ where
         .controller()
         .write_red_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, |_, row| row.fill(0xff))?;
     panel
-        .controller()
-        .refresh_async(crate::panel::RefreshMode::Full, delay)
+        .refresh_observed(crate::panel::RefreshMode::Full, delay, observer)
         .await?;
     Ok(())
 }
@@ -78,6 +94,21 @@ where
 pub async fn window_corners<SPI, DC, RST, BUSY, D>(
     panel: &mut crate::panel::X4Panel<SPI, DC, RST, BUSY>,
     delay: &mut D,
+) -> crate::DisplayResult<()>
+where
+    SPI: embedded_hal::spi::SpiDevice<u8>,
+    DC: embedded_hal::digital::OutputPin,
+    RST: embedded_hal::digital::OutputPin,
+    BUSY: embedded_hal::digital::InputPin,
+    D: embedded_hal_async::delay::DelayNs,
+{
+    window_corners_observed(panel, delay, &mut NoopBusyWaitObserver).await
+}
+
+pub async fn window_corners_observed<SPI, DC, RST, BUSY, D>(
+    panel: &mut crate::panel::X4Panel<SPI, DC, RST, BUSY>,
+    delay: &mut D,
+    observer: &mut impl BusyWaitObserver,
 ) -> crate::DisplayResult<()>
 where
     SPI: embedded_hal::spi::SpiDevice<u8>,
@@ -109,8 +140,7 @@ where
             .write_red_solid_window(x, y, width, height, 0)?;
     }
     panel
-        .controller()
-        .refresh_async(crate::panel::RefreshMode::Full, delay)
+        .refresh_observed(crate::panel::RefreshMode::Full, delay, observer)
         .await?;
     Ok(())
 }

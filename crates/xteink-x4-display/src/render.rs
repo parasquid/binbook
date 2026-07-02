@@ -4,6 +4,7 @@ use embedded_hal::{
     spi::SpiDevice,
 };
 use embedded_hal_async::delay::DelayNs;
+use ssd1677_driver::{BusyWaitObserver, NoopBusyWaitObserver};
 
 use crate::{
     buffers::{first_row, require_row, row_triplet, split_three, RenderBuffers},
@@ -21,6 +22,26 @@ pub async fn render_absolute_gray<R, SPI, DC, RST, BUSY, D>(
     page: u32,
     buffers: &mut RenderBuffers<'_>,
     delay: &mut D,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+{
+    render_absolute_gray_observed(panel, book, page, buffers, delay, &mut NoopBusyWaitObserver)
+        .await
+}
+
+pub async fn render_absolute_gray_observed<R, SPI, DC, RST, BUSY, D>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    page: u32,
+    buffers: &mut RenderBuffers<'_>,
+    delay: &mut D,
+    observer: &mut impl BusyWaitObserver,
 ) -> DisplayResult<()>
 where
     R: ReadAt,
@@ -114,8 +135,7 @@ where
     lsb.finish()?;
     base.finish()?;
     panel
-        .controller()
-        .refresh_async(RefreshMode::Grayscale, delay)
+        .refresh_observed(RefreshMode::Grayscale, delay, observer)
         .await?;
     Ok(())
 }
@@ -131,8 +151,39 @@ pub async fn render_staged_overlay<R, SPI, DC, RST, BUSY, D, E, A>(
     book: &mut Book<R>,
     page: u32,
     buffers: &mut RenderBuffers<'_>,
+    control: OverlayControl<E, A>,
+    delay: &mut D,
+) -> DisplayResult<OperationOutcome>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+    E: FnMut() -> u32,
+    A: FnMut(),
+{
+    render_staged_overlay_observed(
+        panel,
+        book,
+        page,
+        buffers,
+        control,
+        delay,
+        &mut NoopBusyWaitObserver,
+    )
+    .await
+}
+
+pub async fn render_staged_overlay_observed<R, SPI, DC, RST, BUSY, D, E, A>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    page: u32,
+    buffers: &mut RenderBuffers<'_>,
     mut control: OverlayControl<E, A>,
     delay: &mut D,
+    observer: &mut impl BusyWaitObserver,
 ) -> DisplayResult<OperationOutcome>
 where
     R: ReadAt,
@@ -189,7 +240,7 @@ where
         return Ok(OperationOutcome::Cancelled);
     }
     (control.on_activate)();
-    panel.activate_staged_gray(delay).await?;
+    panel.activate_staged_gray_observed(delay, observer).await?;
     Ok(OperationOutcome::Completed)
 }
 
@@ -208,4 +259,7 @@ fn fill_absolute_row<R: ReadAt>(
     Ok(())
 }
 
-pub use crate::native::{recovery_seed, render_bw_differential, sync_bw_base};
+pub use crate::native::{
+    recovery_seed, recovery_seed_observed, render_bw_differential, render_bw_differential_observed,
+    sync_bw_base,
+};

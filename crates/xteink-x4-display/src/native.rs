@@ -4,6 +4,7 @@ use embedded_hal::{
     spi::SpiDevice,
 };
 use embedded_hal_async::delay::DelayNs;
+use ssd1677_driver::{BusyWaitObserver, NoopBusyWaitObserver};
 
 use crate::{
     buffers::{first_input, first_row, RenderBuffers},
@@ -69,6 +70,35 @@ where
     BUSY: InputPin,
     D: DelayNs,
 {
+    render_bw_differential_observed(
+        panel,
+        book,
+        from,
+        target,
+        buffers,
+        delay,
+        &mut NoopBusyWaitObserver,
+    )
+    .await
+}
+
+pub async fn render_bw_differential_observed<R, SPI, DC, RST, BUSY, D>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    from: u32,
+    target: u32,
+    buffers: &mut RenderBuffers<'_>,
+    delay: &mut D,
+    observer: &mut impl BusyWaitObserver,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+{
     let from = read_x4_page(book, from)?;
     let target = read_x4_page(book, target)?;
     let input = first_input(buffers.compressed)?;
@@ -89,8 +119,7 @@ where
     )
     .await?;
     panel
-        .controller()
-        .refresh_async(RefreshMode::Partial, delay)
+        .refresh_observed(RefreshMode::Partial, delay, observer)
         .await?;
     Ok(())
 }
@@ -101,6 +130,25 @@ pub async fn recovery_seed<R, SPI, DC, RST, BUSY, D>(
     page: u32,
     buffers: &mut RenderBuffers<'_>,
     delay: &mut D,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+{
+    recovery_seed_observed(panel, book, page, buffers, delay, &mut NoopBusyWaitObserver).await
+}
+
+pub async fn recovery_seed_observed<R, SPI, DC, RST, BUSY, D>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    page: u32,
+    buffers: &mut RenderBuffers<'_>,
+    delay: &mut D,
+    observer: &mut impl BusyWaitObserver,
 ) -> DisplayResult<()>
 where
     R: ReadAt,
@@ -130,8 +178,7 @@ where
     )
     .await?;
     panel
-        .controller()
-        .refresh_async(RefreshMode::Full, delay)
+        .refresh_observed(RefreshMode::Full, delay, observer)
         .await?;
     Ok(())
 }

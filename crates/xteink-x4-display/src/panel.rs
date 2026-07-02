@@ -4,7 +4,7 @@ use embedded_hal::{
     spi::SpiDevice,
 };
 use embedded_hal_async::delay::DelayNs as AsyncDelayNs;
-use ssd1677_driver::{PanelConfig, Ssd1677, Waveform};
+use ssd1677_driver::{BusyWaitObserver, PanelConfig, Ssd1677, Waveform};
 
 use crate::DisplayResult;
 
@@ -81,6 +81,27 @@ where
         delay: &mut impl AsyncDelayNs,
     ) -> DisplayResult<()> {
         self.0.activate_staged_grayscale_async(delay).await?;
+        Ok(())
+    }
+
+    pub async fn activate_staged_gray_observed(
+        &mut self,
+        delay: &mut impl AsyncDelayNs,
+        observer: &mut impl BusyWaitObserver,
+    ) -> DisplayResult<()> {
+        self.0
+            .activate_staged_grayscale_async_observed(delay, observer)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn refresh_observed(
+        &mut self,
+        mode: RefreshMode,
+        delay: &mut impl AsyncDelayNs,
+        observer: &mut impl BusyWaitObserver,
+    ) -> DisplayResult<()> {
+        self.0.refresh_async_observed(mode, delay, observer).await?;
         Ok(())
     }
 
