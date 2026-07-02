@@ -5,6 +5,10 @@ use crate::input::{Button, PageTurn};
 /// Mode constants for `button_to_request`.
 pub const MODE_MENU: u8 = 0;
 pub const MODE_READING: u8 = 1;
+#[cfg(feature = "sd-storage")]
+pub const STARTUP_DISPLAY_MODE: u8 = MODE_MENU;
+#[cfg(not(feature = "sd-storage"))]
+pub const STARTUP_DISPLAY_MODE: u8 = MODE_READING;
 
 /// Map a [`Button`] press to a [`DisplayRequest`] based on the current display
 /// mode. Returns `None` when the button has no action in the given mode.
@@ -26,7 +30,10 @@ pub fn button_to_request(button: Button, mode: u8) -> Option<DisplayRequest> {
                 turn: PageTurn::Next,
                 completion_sequence: None,
             }),
+            #[cfg(feature = "sd-storage")]
             Button::Select | Button::Back => Some(DisplayRequest::MenuBack),
+            #[cfg(not(feature = "sd-storage"))]
+            Button::Select | Button::Back => None,
             Button::Power => None,
         },
         _ => None,
@@ -223,10 +230,6 @@ impl RefreshCoordinator {
         self.next_action
     }
 
-    pub fn skip_base_sync(&mut self) -> RefreshAction {
-        self.record_base_sync_complete()
-    }
-
     pub fn request_arrived(&mut self) -> RefreshAction {
         if self.phase == RefreshPhase::GrayDelay {
             self.gray_deadline_ms = None;
@@ -294,97 +297,5 @@ impl RefreshCoordinator {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn menu_up_maps_to_prev() {
-        assert_eq!(
-            button_to_request(Button::Up, MODE_MENU),
-            Some(DisplayRequest::MenuPrev)
-        );
-    }
-
-    #[test]
-    fn menu_left_maps_to_prev() {
-        assert_eq!(
-            button_to_request(Button::Left, MODE_MENU),
-            Some(DisplayRequest::MenuPrev)
-        );
-    }
-
-    #[test]
-    fn menu_down_maps_to_next() {
-        assert_eq!(
-            button_to_request(Button::Down, MODE_MENU),
-            Some(DisplayRequest::MenuNext)
-        );
-    }
-
-    #[test]
-    fn menu_right_maps_to_next() {
-        assert_eq!(
-            button_to_request(Button::Right, MODE_MENU),
-            Some(DisplayRequest::MenuNext)
-        );
-    }
-
-    #[test]
-    fn menu_select_maps_to_select() {
-        assert_eq!(
-            button_to_request(Button::Select, MODE_MENU),
-            Some(DisplayRequest::MenuSelect)
-        );
-    }
-
-    #[test]
-    fn menu_back_and_power_are_noop() {
-        assert_eq!(button_to_request(Button::Back, MODE_MENU), None);
-        assert_eq!(button_to_request(Button::Power, MODE_MENU), None);
-    }
-
-    #[test]
-    fn reading_up_maps_to_previous_turn() {
-        assert_eq!(
-            button_to_request(Button::Up, MODE_READING),
-            Some(DisplayRequest::Turn {
-                turn: PageTurn::Previous,
-                completion_sequence: None
-            })
-        );
-    }
-
-    #[test]
-    fn reading_down_maps_to_next_turn() {
-        assert_eq!(
-            button_to_request(Button::Down, MODE_READING),
-            Some(DisplayRequest::Turn {
-                turn: PageTurn::Next,
-                completion_sequence: None
-            })
-        );
-    }
-
-    #[test]
-    fn reading_select_and_back_map_to_menuback() {
-        assert_eq!(
-            button_to_request(Button::Select, MODE_READING),
-            Some(DisplayRequest::MenuBack)
-        );
-        assert_eq!(
-            button_to_request(Button::Back, MODE_READING),
-            Some(DisplayRequest::MenuBack)
-        );
-    }
-
-    #[test]
-    fn reading_power_is_noop() {
-        assert_eq!(button_to_request(Button::Power, MODE_READING), None);
-    }
-
-    #[test]
-    fn unknown_mode_returns_none() {
-        assert_eq!(button_to_request(Button::Up, 99), None);
-        assert_eq!(button_to_request(Button::Select, 99), None);
-    }
-}
+#[path = "async_refresh_tests.rs"]
+mod tests;
