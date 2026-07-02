@@ -87,7 +87,8 @@ fn diag_dispatch_page_goto_clamps_at_edges() {
         header,
         &[0x05, 0xFF, 0xFF, 0xFF, 0xFF],
         &mut ctx,
-        &mut resp_buf, &mut storage,
+        &mut resp_buf,
+        &mut storage,
     );
     match result {
         DispatchResult::Response { status, .. } => {
@@ -116,7 +117,8 @@ fn diag_dispatch_page_goto_valid_targets_exact_page() {
         header,
         &[0x05, 0x0A, 0x00, 0x00, 0x00],
         &mut ctx,
-        &mut resp_buf, &mut storage,
+        &mut resp_buf,
+        &mut storage,
     );
     match result {
         DispatchResult::RenderPage { target_page } => {

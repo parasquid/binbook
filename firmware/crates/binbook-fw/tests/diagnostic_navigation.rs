@@ -16,7 +16,8 @@ fn diag_key_right_matches_physical_button_target() {
     let mut ctx = binbook_fw::diag::CommandContext::new(3, 8, 0, 0);
     let mut resp_buf = [0u8; 496];
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
-    let result = binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
+    let result =
+        binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
     match result {
         binbook_fw::diag::DispatchResult::RenderTurn { turn } => {
             assert_eq!(turn, binbook_fw::input::PageTurn::Next);
@@ -45,7 +46,8 @@ fn diag_key_left_matches_physical_button_target() {
     let mut ctx = binbook_fw::diag::CommandContext::new(current_page, page_count, 0, 0);
     let mut resp_buf = [0u8; 496];
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
-    let result = binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
+    let result =
+        binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
     match result {
         binbook_fw::diag::DispatchResult::RenderTurn { turn } => {
             assert_eq!(turn, binbook_fw::input::PageTurn::Previous);
@@ -80,8 +82,14 @@ fn diag_all_key_codes_match_physical_mapping() {
 
         let mut ctx = binbook_fw::diag::CommandContext::new(5, 10, 0, 0);
         let mut resp_buf = [0u8; 496];
-    let mut storage = binbook_fw::diag_storage::UnavailableStorage;
-        let result = binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
+        let mut storage = binbook_fw::diag_storage::UnavailableStorage;
+        let result = binbook_fw::diag::dispatch_command(
+            header,
+            &payload,
+            &mut ctx,
+            &mut resp_buf,
+            &mut storage,
+        );
 
         match result {
             binbook_fw::diag::DispatchResult::RenderTurn { turn } => {
@@ -115,7 +123,8 @@ fn diag_page_goto_zero_from_nonzero_targets_zero() {
     let mut ctx = binbook_fw::diag::CommandContext::new(3, 8, 0, 0);
     let mut resp_buf = [0u8; 496];
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
-    let result = binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
+    let result =
+        binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
     match result {
         binbook_fw::diag::DispatchResult::RenderPage { target_page } => {
             assert_eq!(target_page, 0);
@@ -141,7 +150,8 @@ fn diag_page_goto_nonadjacent_targets_exact_page() {
     let mut ctx = binbook_fw::diag::CommandContext::new(2, 8, 0, 0);
     let mut resp_buf = [0u8; 496];
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
-    let result = binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
+    let result =
+        binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
     match result {
         binbook_fw::diag::DispatchResult::RenderPage { target_page } => {
             assert_eq!(target_page, 6);
@@ -167,7 +177,8 @@ fn diag_page_goto_current_is_no_action() {
     let mut ctx = binbook_fw::diag::CommandContext::new(3, 8, 0, 0);
     let mut resp_buf = [0u8; 496];
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
-    let result = binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
+    let result =
+        binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
     assert_eq!(result, binbook_fw::diag::DispatchResult::NoAction);
 }
 
@@ -186,8 +197,13 @@ fn diag_page_next_and_previous_clamp_at_edges() {
     let mut ctx = binbook_fw::diag::CommandContext::new(7, 8, 0, 0);
     let mut resp_buf = [0u8; 496];
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
-    let result_next =
-        binbook_fw::diag::dispatch_command(header_next, &payload_next, &mut ctx, &mut resp_buf, &mut storage);
+    let result_next = binbook_fw::diag::dispatch_command(
+        header_next,
+        &payload_next,
+        &mut ctx,
+        &mut resp_buf,
+        &mut storage,
+    );
     assert_eq!(
         result_next,
         binbook_fw::diag::DispatchResult::NoAction,
@@ -206,8 +222,13 @@ fn diag_page_next_and_previous_clamp_at_edges() {
     let mut ctx = binbook_fw::diag::CommandContext::new(0, 8, 0, 0);
     let mut resp_buf = [0u8; 496];
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
-    let result_prev =
-        binbook_fw::diag::dispatch_command(header_prev, &payload_prev, &mut ctx, &mut resp_buf, &mut storage);
+    let result_prev = binbook_fw::diag::dispatch_command(
+        header_prev,
+        &payload_prev,
+        &mut ctx,
+        &mut resp_buf,
+        &mut storage,
+    );
     assert_eq!(
         result_prev,
         binbook_fw::diag::DispatchResult::NoAction,
