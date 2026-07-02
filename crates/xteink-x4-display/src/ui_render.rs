@@ -144,7 +144,15 @@ where
                     output.fill(0xff);
                     return;
                 }
-                if let Err(e) = fill_staged_from_fb(fb, strip, Stage::Lsb, &mut staged_msb, &mut staged_lsb, &mut staged_base, output) {
+                if let Err(e) = fill_staged_from_fb(
+                    fb,
+                    strip,
+                    Stage::Lsb,
+                    &mut staged_msb,
+                    &mut staged_lsb,
+                    &mut staged_base,
+                    output,
+                ) {
                     error = Some(e);
                     output.fill(0xff);
                 }
@@ -172,7 +180,15 @@ where
                     output.fill(0xff);
                     return;
                 }
-                if let Err(e) = fill_staged_from_fb(fb, strip, Stage::Msb, &mut staged_msb, &mut staged_lsb, &mut staged_base, output) {
+                if let Err(e) = fill_staged_from_fb(
+                    fb,
+                    strip,
+                    Stage::Msb,
+                    &mut staged_msb,
+                    &mut staged_lsb,
+                    &mut staged_base,
+                    output,
+                ) {
                     error = Some(e);
                     output.fill(0xff);
                 }
@@ -202,7 +218,8 @@ fn fill_absolute_from_fb(
     black: &mut [u8],
 ) -> DisplayResult<()> {
     let row_dst = usize::from(strip) * usize::from(CHUNK_ROWS);
-    let row_end = (row_dst + usize::from(CHUNK_ROWS)).min(usize::from(crate::profile::PHYSICAL_HEIGHT));
+    let row_end =
+        (row_dst + usize::from(CHUNK_ROWS)).min(usize::from(crate::profile::PHYSICAL_HEIGHT));
 
     for phys_y in row_dst..row_end {
         fill_absolute_row_packed(fb, phys_y, red, black)?;
@@ -346,8 +363,8 @@ pub fn logical_gray2_to_black_row(packed: &[u8], row_y: u16) -> [u8; ROW_BYTES] 
         if logical_y >= LOGICAL_HEIGHT {
             continue;
         }
-        let byte_idx = usize::from(row_y) * usize::from(crate::profile::LOGICAL_WIDTH) / 4
-            + phys_x / 4;
+        let byte_idx =
+            usize::from(row_y) * usize::from(crate::profile::LOGICAL_WIDTH) / 4 + phys_x / 4;
         if byte_idx >= packed.len() {
             continue;
         }

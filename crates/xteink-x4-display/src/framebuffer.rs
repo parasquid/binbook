@@ -18,8 +18,7 @@ use embedded_graphics_core::{
 use crate::profile::{LOGICAL_HEIGHT, LOGICAL_WIDTH};
 
 /// Total byte size of the GRAY2 framebuffer (480×800 ÷ 4 px/byte).
-pub const FRAMEBUFFER_BYTES: usize =
-    (LOGICAL_WIDTH as usize) * (LOGICAL_HEIGHT as usize) / 4;
+pub const FRAMEBUFFER_BYTES: usize = (LOGICAL_WIDTH as usize) * (LOGICAL_HEIGHT as usize) / 4;
 
 /// A 2-bit gray pixel value matching the BinBook canonical GRAY2 encoding.
 ///
@@ -185,8 +184,12 @@ impl DrawTarget for Gray2Framebuffer {
         // Manual clip to visible area
         let x0 = area.top_left.x.max(0) as u16;
         let y0 = area.top_left.y.max(0) as u16;
-        let x1 = (area.top_left.x + area.size.width as i32).min(i32::from(LOGICAL_WIDTH)).max(0) as u16;
-        let y1 = (area.top_left.y + area.size.height as i32).min(i32::from(LOGICAL_HEIGHT)).max(0) as u16;
+        let x1 = (area.top_left.x + area.size.width as i32)
+            .min(i32::from(LOGICAL_WIDTH))
+            .max(0) as u16;
+        let y1 = (area.top_left.y + area.size.height as i32)
+            .min(i32::from(LOGICAL_HEIGHT))
+            .max(0) as u16;
         let w = x1.saturating_sub(x0);
         let h = y1.saturating_sub(y0);
 
@@ -236,7 +239,7 @@ impl DrawTarget for Gray2Framebuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-use embedded_graphics::{
+    use embedded_graphics::{
         geometry::Point,
         prelude::{Drawable, Primitive},
         primitives::PrimitiveStyle,
@@ -249,10 +252,7 @@ use embedded_graphics::{
 
         // Draw a horizontal line of 4 black pixels at (0,0)-(3,0)
         Rectangle::new(Point::new(0, 0), Size::new(4, 1))
-            .into_styled(PrimitiveStyle::with_stroke(
-                Gray2Color::BLACK,
-                1,
-            ))
+            .into_styled(PrimitiveStyle::with_stroke(Gray2Color::BLACK, 1))
             .draw(&mut fb)
             .unwrap();
 
