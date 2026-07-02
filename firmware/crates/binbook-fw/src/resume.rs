@@ -5,8 +5,8 @@
 //! existing FlashStorage table.
 
 use crate::error::{FirmwareError, FirmwareResult};
-use embedded_storage::nor_flash::ReadNorFlash;
 use embedded_storage::nor_flash::NorFlash;
+use embedded_storage::nor_flash::ReadNorFlash;
 
 /// Magic bytes to identify valid resume records.
 const RESUME_MAGIC: &[u8; 4] = b"BRSM";
@@ -74,9 +74,8 @@ impl ResumeRecord {
             return Err(FirmwareError::Storage);
         }
 
-        let last_book_name: [u8; 64] = data[8..72]
-            .try_into()
-            .map_err(|_| FirmwareError::Storage)?;
+        let last_book_name: [u8; 64] =
+            data[8..72].try_into().map_err(|_| FirmwareError::Storage)?;
         let last_page = u32::from_le_bytes([data[72], data[73], data[74], data[75]]);
         let menu_top = u32::from_le_bytes([data[76], data[77], data[78], data[79]]);
         let menu_selected = data[80];

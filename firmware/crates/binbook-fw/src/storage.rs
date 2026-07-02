@@ -27,7 +27,9 @@ pub enum SdError {
     NotFound,
 }
 
-impl<D: embedded_sdmmc::BlockDevice> From<embedded_sd_storage::sd_filesystem::StorageError<D>> for SdError {
+impl<D: embedded_sdmmc::BlockDevice> From<embedded_sd_storage::sd_filesystem::StorageError<D>>
+    for SdError
+{
     fn from(e: embedded_sd_storage::sd_filesystem::StorageError<D>) -> Self {
         match e {
             embedded_sd_storage::sd_filesystem::StorageError::Sdmmc(_) => SdError::Sdmmc,
@@ -51,8 +53,8 @@ impl TimeSource for FixedTime {
         // 2026-07-01 12:00:00 — arbitrary but valid.
         // FAT date/time fields: see FAT32 specification.
         let year_off = (2026u16 - 1980) & 0x7f;
-        let date = (year_off << 9) | (7 << 5) | 1;      // year=46, month=7, day=1
-        let time = (12 << 11) | (0 << 5) | (0);           // hour=12, min=0, sec=0
+        let date = (year_off << 9) | (7 << 5) | 1; // year=46, month=7, day=1
+        let time = (12 << 11) | (0 << 5) | (0); // hour=12, min=0, sec=0
         embedded_sdmmc::Timestamp::from_fat(date, time)
     }
 }
@@ -93,22 +95,12 @@ where
 {
     type Error = SdError;
 
-    fn for_each_entry(
-        &mut self,
-        visit: &mut dyn FnMut(&str, u64),
-    ) -> Result<(), Self::Error> {
+    fn for_each_entry(&mut self, visit: &mut dyn FnMut(&str, u64)) -> Result<(), Self::Error> {
         self.inner.for_each_entry(visit).map_err(SdError::from)
     }
 
-    fn read_at(
-        &mut self,
-        name: &str,
-        offset: u64,
-        out: &mut [u8],
-    ) -> Result<(), Self::Error> {
-        self.inner
-            .read_at(name, offset, out)
-            .map_err(SdError::from)
+    fn read_at(&mut self, name: &str, offset: u64, out: &mut [u8]) -> Result<(), Self::Error> {
+        self.inner.read_at(name, offset, out).map_err(SdError::from)
     }
 
     fn file_size(&mut self, name: &str) -> Result<u64, Self::Error> {

@@ -6,13 +6,16 @@
 //!
 //! Menu rendering draws into a [`Gray2Framebuffer`] via `embedded-graphics`.
 
-use xteink_x4_display::{framebuffer::{Gray2Color, Gray2Framebuffer}, profile::LOGICAL_WIDTH};
 use embedded_graphics::{
     geometry::{Point, Size},
     mono_font::MonoTextStyleBuilder,
     prelude::{Drawable, Primitive},
     primitives::{PrimitiveStyleBuilder, Rectangle},
     text::Text,
+};
+use xteink_x4_display::{
+    framebuffer::{Gray2Color, Gray2Framebuffer},
+    profile::LOGICAL_WIDTH,
 };
 
 /// Whether the device is showing the library menu or reading a book.
@@ -136,11 +139,7 @@ impl MenuState {
                 } else {
                     // Wrap: go to last entry, scroll viewport to bottom
                     self.selected = self.count - 1;
-                    self.top = if self.count > VIEWPORT_ROWS {
-                        self.count - VIEWPORT_ROWS
-                    } else {
-                        0
-                    };
+                    self.top = self.count.saturating_sub(VIEWPORT_ROWS);
                 }
                 // Scroll viewport if selection moved above the viewport.
                 if self.selected < self.top {
@@ -217,7 +216,7 @@ pub fn render_menu(fb: &mut Gray2Framebuffer, state: &MenuState, names: &MenuNam
                 Point::new(HIGHLIGHT_STROKE as i32, y),
                 Size::new(
                     (LOGICAL_WIDTH as i32 - 2 * HIGHLIGHT_STROKE as i32) as u32,
-                    MENU_ROW_STRIDE as u32 - 2 * HIGHLIGHT_STROKE as u32,
+                    MENU_ROW_STRIDE as u32 - 2 * HIGHLIGHT_STROKE,
                 ),
             );
             let _ = rect
@@ -393,7 +392,7 @@ mod tests {
 
         render_menu(&mut fb, &state, &names);
 
-        let highlight_y = MENU_ROW_START_Y + 1 * MENU_ROW_STRIDE;
+        let highlight_y = MENU_ROW_START_Y + MENU_ROW_STRIDE;
         let highlight_bottom = highlight_y + MENU_ROW_STRIDE - 2 * HIGHLIGHT_STROKE as i32 - 1;
 
         let highlight_pixels_nonwhite = |y: i32, x_start: i32| -> bool {
