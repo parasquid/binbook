@@ -14,7 +14,8 @@ fn diag_hello_response_has_all_required_fields() {
     let mut ctx = binbook_fw::diag::CommandContext::new(0, 0, 0, 0);
     let mut resp_buf = [0u8; 496];
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
-    let result = binbook_fw::diag::dispatch_command(header, &[], &mut ctx, &mut resp_buf, &mut storage);
+    let result =
+        binbook_fw::diag::dispatch_command(header, &[], &mut ctx, &mut resp_buf, &mut storage);
     match result {
         binbook_fw::diag::DispatchResult::Response { payload_len, .. } => {
             assert!(
@@ -43,7 +44,8 @@ fn diag_status_response_uses_live_state_without_truncation() {
     ctx.dropped_records = 90_003;
     let mut resp_buf = [0u8; 496];
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
-    let result = binbook_fw::diag::dispatch_command(header, &[], &mut ctx, &mut resp_buf, &mut storage);
+    let result =
+        binbook_fw::diag::dispatch_command(header, &[], &mut ctx, &mut resp_buf, &mut storage);
     match result {
         binbook_fw::diag::DispatchResult::Response { payload_len, .. } => {
             assert_eq!(payload_len, 21, "STATUS payload must be 21 bytes");
@@ -73,7 +75,8 @@ fn diag_invalid_page_payload_returns_bad_request() {
     let mut ctx = binbook_fw::diag::CommandContext::new(0, 8, 0, 0);
     let mut resp_buf = [0u8; 496];
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
-    let result = binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
+    let result =
+        binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
     match result {
         binbook_fw::diag::DispatchResult::Response { status, .. } => {
             assert_eq!(status, binbook_diagnostic_protocol::Status::BadRequest);

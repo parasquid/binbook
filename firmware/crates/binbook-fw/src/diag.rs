@@ -1,16 +1,15 @@
 use binbook_diagnostic_protocol::{
     decode_frame, decode_key_payload, decode_log_get_payload, decode_page_payload,
-    decode_probe_payload, decode_raw_frame, decode_store_delete_request,
-    decode_store_list_request,
-    decode_store_read_request,     decode_store_abort_request, decode_store_upload_begin_request,
-    decode_store_upload_commit_request, decode_store_upload_write_request, encode_frame, encode_hello_response, encode_log_record,
+    decode_probe_payload, decode_raw_frame, decode_store_abort_request,
+    decode_store_delete_request, decode_store_list_request, decode_store_read_request,
+    decode_store_upload_begin_request, decode_store_upload_commit_request,
+    decode_store_upload_write_request, encode_frame, encode_hello_response, encode_log_record,
     encode_log_response_header, encode_page_response, encode_raw_frame, encode_status_payload,
-    encode_store_upload_begin_response, encode_store_upload_write_response,
-    FrameHeader,
-    FrameKind, HelloResponse, KeyAction, KeyCode, LogRecordPayload, LogResponseHeader, Opcode,
-    PageAction, PanelModeCode, ProbeCode, RawFrameHeader, Status, StatusPayload,
-    ALL_CAPABILITIES, FRAME_DELIMITER, LOG_RECORD_BYTES, LOG_RESPONSE_HEADER_BYTES,
-    MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
+    encode_store_upload_begin_response, encode_store_upload_write_response, FrameHeader, FrameKind,
+    HelloResponse, KeyAction, KeyCode, LogRecordPayload, LogResponseHeader, Opcode, PageAction,
+    PanelModeCode, ProbeCode, RawFrameHeader, Status, StatusPayload, ALL_CAPABILITIES,
+    FRAME_DELIMITER, LOG_RECORD_BYTES, LOG_RESPONSE_HEADER_BYTES, MAX_FRAME_BYTES,
+    MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
 };
 
 use crate::diag_log::{DiagLog, DiagLogRecord};
@@ -577,19 +576,22 @@ pub fn dispatch_command(
                     }
                 }
             };
-            match storage.store_upload_begin(req.backend, req.path, req.file_size, req.expected_crc32) {
-                Ok(upload_id) => {
-                    match encode_store_upload_begin_response(upload_id, resp_buf) {
-                        Ok(len) => DispatchResult::Response {
-                            status: Status::Ok,
-                            payload_len: len,
-                        },
-                        Err(_) => DispatchResult::Response {
-                            status: Status::InternalError,
-                            payload_len: 0,
-                        },
-                    }
-                }
+            match storage.store_upload_begin(
+                req.backend,
+                req.path,
+                req.file_size,
+                req.expected_crc32,
+            ) {
+                Ok(upload_id) => match encode_store_upload_begin_response(upload_id, resp_buf) {
+                    Ok(len) => DispatchResult::Response {
+                        status: Status::Ok,
+                        payload_len: len,
+                    },
+                    Err(_) => DispatchResult::Response {
+                        status: Status::InternalError,
+                        payload_len: 0,
+                    },
+                },
                 Err(_) => DispatchResult::Response {
                     status: Status::InternalError,
                     payload_len: 0,

@@ -38,7 +38,8 @@ fn diag_log_get_returns_known_command_and_render_records() {
     let mut ctx = binbook_fw::diag::CommandContext::new(0, 10, 0, 0);
     let mut resp_buf = [0u8; 496];
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
-    let result = binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
+    let result =
+        binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
     match result {
         binbook_fw::diag::DispatchResult::LogGet { cursor, max_bytes } => {
             assert_eq!(cursor, 0);
@@ -190,7 +191,8 @@ fn diag_log_clear_dispatch_returns_log_clear_variant() {
     let mut ctx = binbook_fw::diag::CommandContext::new(0, 10, 0, 0);
     let mut resp_buf = [0u8; 496];
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
-    let result = binbook_fw::diag::dispatch_command(header, &[], &mut ctx, &mut resp_buf, &mut storage);
+    let result =
+        binbook_fw::diag::dispatch_command(header, &[], &mut ctx, &mut resp_buf, &mut storage);
     assert_eq!(result, binbook_fw::diag::DispatchResult::LogClear);
 }
 
@@ -211,7 +213,8 @@ fn diag_log_get_dispatch_returns_log_get_variant() {
     let mut ctx = binbook_fw::diag::CommandContext::new(0, 10, 0, 0);
     let mut resp_buf = [0u8; 496];
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
-    let result = binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
+    let result =
+        binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
     match result {
         binbook_fw::diag::DispatchResult::LogGet { cursor, max_bytes } => {
             assert_eq!(cursor, 5);
