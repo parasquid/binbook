@@ -148,15 +148,34 @@ fn run_diag(cmd: DiagCommand) {
             StorageCommand::List { port, path } => {
                 let path_str = path.as_deref().unwrap_or("/");
                 let frame = diag_protocol::store_list_request(1, path_str);
-                (port.clone(), frame, Opcode::StoreList, Duration::from_secs(5))
+                (
+                    port.clone(),
+                    frame,
+                    Opcode::StoreList,
+                    Duration::from_secs(5),
+                )
             }
-            StorageCommand::Read { port, path, output: _output } => {
+            StorageCommand::Read {
+                port,
+                path,
+                output: _output,
+            } => {
                 let frame = diag_protocol::store_read_request(1, path);
-                (port.clone(), frame, Opcode::StoreRead, Duration::from_secs(10))
+                (
+                    port.clone(),
+                    frame,
+                    Opcode::StoreRead,
+                    Duration::from_secs(10),
+                )
             }
             StorageCommand::Delete { port, path } => {
                 let frame = diag_protocol::store_delete_request(1, path);
-                (port.clone(), frame, Opcode::StoreDelete, Duration::from_secs(5))
+                (
+                    port.clone(),
+                    frame,
+                    Opcode::StoreDelete,
+                    Duration::from_secs(5),
+                )
             }
             StorageCommand::Upload { port, path, file } => {
                 return upload_file(port, path, file);
@@ -194,8 +213,8 @@ fn upload_file(port: &str, path: &str, file: &std::path::Path) {
     use binbook_diagnostic_protocol::{
         decode_frame, decode_store_upload_begin_response, decode_store_upload_write_response,
         encode_frame, encode_store_upload_begin_request, encode_store_upload_commit_request,
-        encode_store_upload_write_request, FrameHeader, FrameKind, Opcode, Status,
-        StorageBackend, StoreUploadBeginRequest, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES,
+        encode_store_upload_write_request, FrameHeader, FrameKind, Opcode, Status, StorageBackend,
+        StoreUploadBeginRequest, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES,
     };
     use std::time::Duration;
 
@@ -234,7 +253,12 @@ fn upload_file(port: &str, path: &str, file: &std::path::Path) {
     };
     let mut frame_buf = [0u8; MAX_FRAME_BYTES];
     let flen = encode_frame(&header, &payload_buf[..plen], &mut frame_buf).unwrap();
-    let resp = match session.send_and_receive(&frame_buf[..flen], Opcode::StoreUploadBegin, 1, Duration::from_secs(5)) {
+    let resp = match session.send_and_receive(
+        &frame_buf[..flen],
+        Opcode::StoreUploadBegin,
+        1,
+        Duration::from_secs(5),
+    ) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Upload begin failed: {e}");
@@ -303,8 +327,14 @@ fn upload_file(port: &str, path: &str, file: &std::path::Path) {
         payload_len: cplen as u16,
     };
     let mut commit_frame = [0u8; MAX_FRAME_BYTES];
-    let commit_flen = encode_frame(&commit_header, &commit_payload[..cplen], &mut commit_frame).unwrap();
-    match session.send_and_receive(&commit_frame[..commit_flen], Opcode::StoreUploadCommit, 100, Duration::from_secs(5)) {
+    let commit_flen =
+        encode_frame(&commit_header, &commit_payload[..cplen], &mut commit_frame).unwrap();
+    match session.send_and_receive(
+        &commit_frame[..commit_flen],
+        Opcode::StoreUploadCommit,
+        100,
+        Duration::from_secs(5),
+    ) {
         Ok(_) => {
             println!(
                 "Uploaded {} ({} bytes, CRC32=0x{:08X}) as {}",

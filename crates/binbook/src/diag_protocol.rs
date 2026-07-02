@@ -1,9 +1,8 @@
 use binbook_diagnostic_protocol::{
     encode_frame, encode_log_get_payload, encode_page_payload, encode_probe_payload,
-    encode_store_delete_request, encode_store_list_request, encode_store_read_request,
-    FrameHeader, FrameKind, KeyAction, KeyCode, LogGetPayload, Opcode, PageAction, ProbeCode,
-    Status, StorageBackend, StoreDeleteRequest, StoreListRequest, StoreReadRequest,
-    MAX_FRAME_BYTES,
+    encode_store_delete_request, encode_store_list_request, encode_store_read_request, FrameHeader,
+    FrameKind, KeyAction, KeyCode, LogGetPayload, Opcode, PageAction, ProbeCode, Status,
+    StorageBackend, StoreDeleteRequest, StoreListRequest, StoreReadRequest, MAX_FRAME_BYTES,
 };
 
 pub use crate::diag_response::{
