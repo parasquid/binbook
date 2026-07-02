@@ -188,14 +188,23 @@ def test_nav_probe_pages_keep_their_assigned_dominant_patterns():
     assert images[8].getpixel((75, 75)) == 0
     assert [images[9].getpixel((x, 430)) for x in (60, 80)] == [0, 255]
     assert [images[10].getpixel((60, y)) for y in (420, 440)] == [0, 255]
-    assert [images[11].getpixel((x, y)) for x, y in ((80, 140), (420, 140), (80, 680), (420, 680))] == [
+    assert [
+        images[11].getpixel((x, y))
+        for x, y in ((80, 140), (420, 140), (80, 680), (420, 680))
+    ] == [
         0,
         85,
         170,
         255,
     ]
-    sparse_black = sum(pixel == 0 for pixel in images[12].crop((20, 370, 460, 760)).get_flattened_data())
-    dense_black = sum(pixel == 0 for pixel in images[13].crop((20, 370, 460, 760)).get_flattened_data())
+    sparse_black = sum(
+        pixel == 0
+        for pixel in images[12].crop((20, 370, 460, 760)).get_flattened_data()
+    )
+    dense_black = sum(
+        pixel == 0
+        for pixel in images[13].crop((20, 370, 460, 760)).get_flattened_data()
+    )
     assert 0 < sparse_black < dense_black
     assert images[14].getpixel((60, 60)) == 0
     assert [images[15].getpixel((x, y)) for x in (80, 180, 360) for y in (80, 620)] == [
@@ -248,9 +257,10 @@ def test_nav_probe_transition_masks_compare_decompressed_fast_base_chunks():
         expected_mask = 0
         changed = []
         for chunk_index in range(30):
-            if base_chunks[(transition.from_page_number, chunk_index)] != base_chunks[
-                (transition.to_page_number, chunk_index)
-            ]:
+            if (
+                base_chunks[(transition.from_page_number, chunk_index)]
+                != base_chunks[(transition.to_page_number, chunk_index)]
+            ):
                 expected_mask |= 1 << chunk_index
                 changed.append(chunk_index)
         assert transition.changed_chunk_mask == expected_mask

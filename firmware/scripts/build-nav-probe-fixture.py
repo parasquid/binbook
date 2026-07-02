@@ -19,12 +19,7 @@ from binbook.profiles import DisplayProfile, get_profile
 from binbook.reader import BinBookReader
 
 OUTPUT_FIXTURES = (
-    REPO_ROOT
-    / "firmware"
-    / "crates"
-    / "binbook-fw"
-    / "fixtures"
-    / "nav_probe.binbook",
+    REPO_ROOT / "firmware" / "crates" / "binbook-fw" / "fixtures" / "nav_probe.binbook",
     REPO_ROOT / "crates" / "binbook-core" / "tests" / "fixtures" / "nav_probe.binbook",
     REPO_ROOT
     / "crates"
@@ -82,16 +77,23 @@ def _rotated_edge_label(
     image.paste(0, (x, y), mask.rotate(90, expand=True))
 
 
-def _draw_page_number(image: Image.Image, page_number: int, font: ImageFont.FreeTypeFont) -> None:
+def _draw_page_number(
+    image: Image.Image, page_number: int, font: ImageFont.FreeTypeFont
+) -> None:
     draw = ImageDraw.Draw(image)
     text = f"PAGE {page_number:02d}"
     bbox = draw.textbbox((0, 0), text, font=font, stroke_width=10)
     x = (480 - (bbox[2] - bbox[0])) // 2
-    y = PAGE_LABEL_BOX[1] + (PAGE_LABEL_BOX[3] - PAGE_LABEL_BOX[1] - (bbox[3] - bbox[1])) // 2
+    y = (
+        PAGE_LABEL_BOX[1]
+        + (PAGE_LABEL_BOX[3] - PAGE_LABEL_BOX[1] - (bbox[3] - bbox[1])) // 2
+    )
     draw.text((x, y), text, fill=0, font=font, stroke_width=10, stroke_fill=255)
 
 
-def _draw_common_frame(image: Image.Image, page_number: int, profile: DisplayProfile) -> None:
+def _draw_common_frame(
+    image: Image.Image, page_number: int, profile: DisplayProfile
+) -> None:
     width, height = profile.logical_width, profile.logical_height
     assert (width, height) == (480, 800)
     draw = ImageDraw.Draw(image)

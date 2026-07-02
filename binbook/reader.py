@@ -150,9 +150,7 @@ class BinBookReader:
                 and page.pixel_format == PixelFormat.GRAY2_PACKED
                 and page.plane_dir.bitmap != 0x07
             ):
-                raise ValueError(
-                    "X4 staged GRAY2 pages require plane bitmap 0x07"
-                )
+                raise ValueError("X4 staged GRAY2 pages require plane bitmap 0x07")
             if page.compression_method != CompressionMethod.RLE_PACKBITS:
                 raise ValueError("unsupported page compression method")
             for slot in range(4):
@@ -445,9 +443,7 @@ def _read_fonts(
     if section is None:
         return []
     return [
-        FontResourceIndexEntry.unpack(
-            data, section.offset + index * section.entry_size
-        )
+        FontResourceIndexEntry.unpack(data, section.offset + index * section.entry_size)
         for index in range(section.record_count)
     ]
 

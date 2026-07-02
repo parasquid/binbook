@@ -29,14 +29,44 @@ def commands(args: argparse.Namespace) -> tuple[list[str], list[str]]:
     video = args.output_dir / "nav-burst.mp4"
     evidence = args.output_dir / "evidence.jsonl"
     camera = [
-        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "video4linux2",
-        "-video_size", "1920x1080", "-framerate", "30", "-i", args.video_device,
-        "-c:v", "libx264", "-preset", "veryfast", str(video),
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "video4linux2",
+        "-video_size",
+        "1920x1080",
+        "-framerate",
+        "30",
+        "-i",
+        args.video_device,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        str(video),
     ]
     exercise = [
-        "cargo", "run", "--manifest-path", "crates/binbook/Cargo.toml", "--features", "serial-device",
-        "--", "diag", "exercise", "nav-burst", "--port", args.port, "--rounds",
-        str(args.rounds), "--inter-key-ms", str(args.inter_key_ms), "--output", str(evidence),
+        "cargo",
+        "run",
+        "--manifest-path",
+        "crates/binbook/Cargo.toml",
+        "--features",
+        "serial-device",
+        "--",
+        "diag",
+        "exercise",
+        "nav-burst",
+        "--port",
+        args.port,
+        "--rounds",
+        str(args.rounds),
+        "--inter-key-ms",
+        str(args.inter_key_ms),
+        "--output",
+        str(evidence),
     ]
     return camera, exercise
 
@@ -62,8 +92,20 @@ def load_keys(path: Path) -> list[dict[str, object]]:
 def extract_frame(video: Path, offset: float, output: Path) -> None:
     subprocess.run(
         [
-            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{max(0, offset):.3f}",
-            "-i", str(video), "-frames:v", "1", "-vf", "crop=440:770:770:250", str(output),
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{max(0, offset):.3f}",
+            "-i",
+            str(video),
+            "-frames:v",
+            "1",
+            "-vf",
+            "crop=440:770:770:250",
+            str(output),
         ],
         check=True,
     )
@@ -71,7 +113,16 @@ def extract_frame(video: Path, offset: float, output: Path) -> None:
 
 def video_duration(video: Path) -> float:
     result = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(video)],
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1:nk=1",
+            str(video),
+        ],
         check=True,
         capture_output=True,
         text=True,
@@ -79,7 +130,9 @@ def video_duration(video: Path) -> float:
     return float(result.stdout.strip())
 
 
-def contact_sheet(round_number: int, frames: list[tuple[Path, str]], output_dir: Path) -> None:
+def contact_sheet(
+    round_number: int, frames: list[tuple[Path, str]], output_dir: Path
+) -> None:
     width, height = 220, 420
     sheet = Image.new("RGB", (width * 4, height * ((len(frames) + 3) // 4)), "white")
     for index, (path, caption) in enumerate(frames):
@@ -104,11 +157,21 @@ def extract_evidence(output_dir: Path, video_start_unix_ms: int) -> None:
             sequence = int(record["sequence"])
             expected = int(record["expected_to"])
             offset = (int(record["host_unix_ms"]) - video_start_unix_ms) / 1000
-            path = output_dir / f"round-{round_number:02d}-seq-{sequence:04d}-expected-{expected:02d}.jpg"
+            path = (
+                output_dir
+                / f"round-{round_number:02d}-seq-{sequence:04d}-expected-{expected:02d}.jpg"
+            )
             extract_frame(video, min(offset, duration - 0.05), path)
-            frames.append((path, f"seq {sequence} {record['key']} -> {expected} {record['response_elapsed_ms']}ms"))
+            frames.append(
+                (
+                    path,
+                    f"seq {sequence} {record['key']} -> {expected} {record['response_elapsed_ms']}ms",
+                )
+            )
         settled = output_dir / f"round-{round_number:02d}-settled.jpg"
-        final_offset = (int(round_keys[-1]["host_unix_ms"]) - video_start_unix_ms) / 1000 + 0.7
+        final_offset = (
+            int(round_keys[-1]["host_unix_ms"]) - video_start_unix_ms
+        ) / 1000 + 0.7
         extract_frame(video, min(final_offset, duration - 0.05), settled)
         frames.append((settled, f"round {round_number} settled"))
         contact_sheet(round_number, frames, output_dir)
@@ -127,7 +190,10 @@ def main() -> int:
     transcript_path = args.output_dir / "exercise-transcript.txt"
     stderr_path = args.output_dir / "exercise-stderr.txt"
     try:
-        with transcript_path.open("w") as transcript, stderr_path.open("w") as stderr_transcript:
+        with (
+            transcript_path.open("w") as transcript,
+            stderr_path.open("w") as stderr_transcript,
+        ):
             exercise = subprocess.Popen(
                 exercise_command,
                 stdout=subprocess.PIPE,
@@ -143,8 +209,13 @@ def main() -> int:
                     terminal.flush()
                     destination.write(line)
 
-            stdout_thread = threading.Thread(target=copy_stream, args=(exercise.stdout, transcript, sys.stdout))
-            stderr_thread = threading.Thread(target=copy_stream, args=(exercise.stderr, stderr_transcript, sys.stderr))
+            stdout_thread = threading.Thread(
+                target=copy_stream, args=(exercise.stdout, transcript, sys.stdout)
+            )
+            stderr_thread = threading.Thread(
+                target=copy_stream,
+                args=(exercise.stderr, stderr_transcript, sys.stderr),
+            )
             stdout_thread.start()
             stderr_thread.start()
             exercise_code = exercise.wait()
@@ -157,7 +228,12 @@ def main() -> int:
     evidence = args.output_dir / "evidence.jsonl"
     if camera_code not in (0, 255):
         raise SystemExit(f"camera={camera_code}")
-    if not video.exists() or video.stat().st_size == 0 or not evidence.exists() or evidence.stat().st_size == 0:
+    if (
+        not video.exists()
+        or video.stat().st_size == 0
+        or not evidence.exists()
+        or evidence.stat().st_size == 0
+    ):
         raise SystemExit("video or evidence output is empty")
     extract_evidence(args.output_dir, video_start_unix_ms)
     if exercise_code != 0:
