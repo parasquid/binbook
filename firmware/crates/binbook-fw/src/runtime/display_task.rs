@@ -4,7 +4,7 @@ use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig};
 use binbook_fw::{
     async_refresh::{DisplayProbeKind, DisplayRequest},
     board::{DisplayDelay, FreqManagedSpiDevice, SharedSpi2},
-    menu::{MenuState, Mode, render_menu, MenuNames},
+    menu::{render_menu, MenuNames, MenuState, Mode},
     runtime_engine::{self, RuntimeEvent, RuntimeEventKind},
     xteink_x4_display::{
         framebuffer::Gray2Framebuffer,
@@ -121,6 +121,20 @@ fn display_request(request: DisplayRequest) -> xteink_x4_display::events::Displa
     }
 }
 
+fn target_page_for_request(engine: &DisplayEngine, request: DisplayRequest) -> Option<u32> {
+    match request {
+        DisplayRequest::Turn { turn, .. } => {
+            Some(engine.target_for(runtime_engine::to_display_turn(turn)))
+        }
+        DisplayRequest::Goto { page, .. } => Some(page),
+        DisplayRequest::Probe { .. }
+        | DisplayRequest::MenuNext
+        | DisplayRequest::MenuPrev
+        | DisplayRequest::MenuSelect
+        | DisplayRequest::MenuBack => None,
+    }
+}
+
 #[embassy_executor::task]
 pub(super) async fn display_task(
     shared_spi2: &'static SharedSpi2,
@@ -146,12 +160,7 @@ pub(super) async fn display_task(
         .expect("failed to open embedded BinBook");
     let page_count = book.page_count();
     let mut backend = HardwareDisplayBackend {
-        display: xteink_x4_display::panel::X4Panel::new(
-            spi_device,
-            dc,
-            rst,
-            busy,
-        ),
+        display: xteink_x4_display::panel::X4Panel::new(spi_device, dc, rst, busy),
         book,
         delay: DisplayDelay,
         compressed: [0; 768],
@@ -187,6 +196,16 @@ pub(super) async fn display_task(
         .await
         {
             Either::First(request) => {
+                let request_kind = runtime_engine::RuntimeRequestKind::from_request(&request);
+                let request_sequence = runtime_engine::request_sequence(&request);
+                events.push(RuntimeEvent {
+                    timestamp_ms: now_ms,
+                    kind: RuntimeEventKind::RequestReceive {
+                        kind: request_kind,
+                        sequence: request_sequence,
+                        queue_age_ms: runtime_engine::queue_age_ms(now_ms, None),
+                    },
+                });
                 match request {
                     DisplayRequest::MenuNext | DisplayRequest::MenuPrev => {
                         engine.cancel_overlay();
@@ -197,8 +216,14 @@ pub(super) async fn display_task(
                         };
                         let _ = menu_state.transition(action);
                         render_menu(&mut menu_fb, &menu_state, &menu_names);
-                        let _ = render_ui_bw(&mut backend.display, &menu_fb, &mut backend.delay).await;
-                        let _ = render_ui_gray_overlay(&mut backend.display, &menu_fb, &mut backend.delay).await;
+                        let _ =
+                            render_ui_bw(&mut backend.display, &menu_fb, &mut backend.delay).await;
+                        let _ = render_ui_gray_overlay(
+                            &mut backend.display,
+                            &menu_fb,
+                            &mut backend.delay,
+                        )
+                        .await;
                         events.push(RuntimeEvent {
                             timestamp_ms: now_ms,
                             kind: RuntimeEventKind::MenuTransition,
@@ -207,9 +232,18 @@ pub(super) async fn display_task(
                     DisplayRequest::MenuBack => {
                         engine.cancel_overlay();
                         render_menu(&mut menu_fb, &menu_state, &menu_names);
-                        let _ = render_ui_bw(&mut backend.display, &menu_fb, &mut backend.delay).await;
-                        let _ = render_ui_gray_overlay(&mut backend.display, &menu_fb, &mut backend.delay).await;
-                        super::DISPLAY_MODE.store(binbook_fw::async_refresh::MODE_MENU, portable_atomic::Ordering::Relaxed);
+                        let _ =
+                            render_ui_bw(&mut backend.display, &menu_fb, &mut backend.delay).await;
+                        let _ = render_ui_gray_overlay(
+                            &mut backend.display,
+                            &menu_fb,
+                            &mut backend.delay,
+                        )
+                        .await;
+                        super::DISPLAY_MODE.store(
+                            binbook_fw::async_refresh::MODE_MENU,
+                            portable_atomic::Ordering::Relaxed,
+                        );
                         events.push(RuntimeEvent {
                             timestamp_ms: now_ms,
                             kind: RuntimeEventKind::ModeChange { mode: Mode::Menu },
@@ -219,28 +253,68 @@ pub(super) async fn display_task(
                         let selected_index = menu_state.selected();
                         if selected_index < menu_names.len() {
                             engine.cancel_overlay();
-                            super::DISPLAY_MODE.store(binbook_fw::async_refresh::MODE_READING, portable_atomic::Ordering::Relaxed);
+                            super::DISPLAY_MODE.store(
+                                binbook_fw::async_refresh::MODE_READING,
+                                portable_atomic::Ordering::Relaxed,
+                            );
                             events.push(RuntimeEvent {
                                 timestamp_ms: now_ms,
-                                kind: RuntimeEventKind::ModeChange { mode: Mode::Reading },
+                                kind: RuntimeEventKind::ModeChange {
+                                    mode: Mode::Reading,
+                                },
                             });
                             events.push(RuntimeEvent {
                                 timestamp_ms: now_ms,
-                                kind: RuntimeEventKind::BookOpen { name_index: selected_index },
+                                kind: RuntimeEventKind::BookOpen {
+                                    name_index: selected_index,
+                                },
                             });
                         }
                     }
-                    DisplayRequest::Turn { turn, completion_sequence } => {
+                    DisplayRequest::Turn {
+                        turn,
+                        completion_sequence,
+                    } => {
                         events.push(RuntimeEvent {
                             timestamp_ms: now_ms,
-                            kind: RuntimeEventKind::TurnQueued { sequence: completion_sequence, turn },
+                            kind: RuntimeEventKind::TurnQueued {
+                                sequence: completion_sequence,
+                                turn,
+                            },
                         });
                     }
                     DisplayRequest::Goto { .. } | DisplayRequest::Probe { .. } => {}
                 }
-                let _ = engine
+                let current_page = engine.current_page();
+                let target_page = target_page_for_request(&engine, request);
+                let start_ms = embassy_time::Instant::now().as_millis();
+                events.push(RuntimeEvent {
+                    timestamp_ms: start_ms,
+                    kind: RuntimeEventKind::DisplayRequestStart {
+                        kind: request_kind,
+                        current_page,
+                        target_page,
+                    },
+                });
+                let result = engine
                     .request(display_request(request), &mut backend, &mut events, now_ms)
                     .await;
+                let end_ms = embassy_time::Instant::now().as_millis();
+                events.push(RuntimeEvent {
+                    timestamp_ms: end_ms,
+                    kind: RuntimeEventKind::DisplayRequestEnd {
+                        kind: request_kind,
+                        duration_ms: end_ms.saturating_sub(start_ms).min(u32::MAX as u64) as u32,
+                        status: match result.status {
+                            xteink_x4_display::events::CompletionStatus::Ok => {
+                                runtime_engine::RuntimeCompletionStatus::Ok
+                            }
+                            xteink_x4_display::events::CompletionStatus::Error => {
+                                runtime_engine::RuntimeCompletionStatus::Error
+                            }
+                        },
+                    },
+                });
                 events.flush().await;
             }
             Either::Second(_) => {

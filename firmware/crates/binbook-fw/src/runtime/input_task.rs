@@ -5,7 +5,7 @@ use esp_hal::analog::adc::{Adc, AdcCalBasic, AdcConfig, Attenuation};
 use binbook_fw::{
     async_refresh::{button_to_request, DisplayRequest, INPUT_POLL_INTERVAL_MS},
     input::{self, InputState},
-    runtime_engine::{RuntimeEvent, RuntimeEventKind},
+    runtime_engine::{RequestEnqueueStatus, RuntimeEvent, RuntimeEventKind, RuntimeRequestKind},
 };
 
 use super::{RequestSender, DISPLAY_MODE, REQUEST_EPOCH, RUNTIME_EVENT_CHANNEL};
@@ -76,17 +76,55 @@ pub(super) async fn input_task(
         if let input::InputDecision::Press(button) = outcome.decision {
             let mode = DISPLAY_MODE.load(Ordering::Relaxed);
             if let Some(request) = button_to_request(button, mode) {
+                let request_kind = RuntimeRequestKind::from_request(&request);
+                let request_sequence = binbook_fw::runtime_engine::request_sequence(&request);
                 if request_tx.try_send(request).is_ok() {
+                    RUNTIME_EVENT_CHANNEL
+                        .sender()
+                        .send(RuntimeEvent {
+                            timestamp_ms,
+                            kind: RuntimeEventKind::RequestEnqueue {
+                                kind: request_kind,
+                                sequence: request_sequence,
+                                status: RequestEnqueueStatus::Ok,
+                            },
+                        })
+                        .await;
                     REQUEST_EPOCH.fetch_add(1, Ordering::AcqRel);
-                } else if let DisplayRequest::Turn { turn, .. } = request {
+                } else {
                     RUNTIME_EVENT_CHANNEL
                         .sender()
                         .send(RuntimeEvent {
                             timestamp_ms: embassy_time::Instant::now().as_millis(),
-                            kind: RuntimeEventKind::TurnDropped { turn },
+                            kind: RuntimeEventKind::RequestEnqueue {
+                                kind: request_kind,
+                                sequence: request_sequence,
+                                status: RequestEnqueueStatus::Full,
+                            },
                         })
                         .await;
+                    if let DisplayRequest::Turn { turn, .. } = request {
+                        RUNTIME_EVENT_CHANNEL
+                            .sender()
+                            .send(RuntimeEvent {
+                                timestamp_ms: embassy_time::Instant::now().as_millis(),
+                                kind: RuntimeEventKind::TurnDropped { turn },
+                            })
+                            .await;
+                    }
                 }
+            } else {
+                RUNTIME_EVENT_CHANNEL
+                    .sender()
+                    .send(RuntimeEvent {
+                        timestamp_ms,
+                        kind: RuntimeEventKind::RequestEnqueue {
+                            kind: RuntimeRequestKind::Turn,
+                            sequence: None,
+                            status: RequestEnqueueStatus::Unmapped,
+                        },
+                    })
+                    .await;
             }
         }
     }
