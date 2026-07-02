@@ -22,8 +22,10 @@ static DISPLAY_MODE: AtomicU8 = AtomicU8::new(0);
 #[cfg(feature = "sd-storage")]
 use embassy_sync::mutex::Mutex;
 #[cfg(feature = "sd-storage")]
-static MENU_BOOK_NAMES: Mutex<CriticalSectionRawMutex, binbook_fw::heapless::Vec<binbook_fw::menu::MenuName, 200>> =
-    Mutex::new(binbook_fw::heapless::Vec::new());
+static MENU_BOOK_NAMES: Mutex<
+    CriticalSectionRawMutex,
+    binbook_fw::heapless::Vec<binbook_fw::menu::MenuName, 200>,
+> = Mutex::new(binbook_fw::heapless::Vec::new());
 
 #[cfg(all(feature = "firmware-bin", target_arch = "riscv32"))]
 #[expect(dead_code)]
@@ -86,7 +88,7 @@ static AGGREGATOR_COMPLETION_CHANNEL: Channel<
     { binbook_fw::async_refresh::DISPLAY_COMPLETION_CAPACITY },
 > = Channel::new();
 
-    pub(crate) struct RuntimePeripherals {
+pub(crate) struct RuntimePeripherals {
     pub(crate) adc1: esp_hal::peripherals::ADC1<'static>,
     pub(crate) gpio1: esp_hal::peripherals::GPIO1<'static>,
     pub(crate) gpio2: esp_hal::peripherals::GPIO2<'static>,
@@ -163,23 +165,21 @@ pub(crate) async fn run(spawner: Spawner, peripherals: RuntimePeripherals) {
         use static_cell::StaticCell;
 
         use binbook_fw::board::{DisplayDelay, FreqManagedSpiDevice};
-        use binbook_fw::storage::{FixedTime, SdFilesystem};
         use binbook_fw::menu::MenuName;
+        use binbook_fw::storage::{FixedTime, SdFilesystem};
         use binbook_storage::filesystem::Filesystem;
 
-        static SD_FS: StaticCell<SdFilesystem<
-            FreqManagedSpiDevice<'static, esp_hal::gpio::Output<'static>>,
-            DisplayDelay,
-            FixedTime,
-        >> = StaticCell::new();
+        static SD_FS: StaticCell<
+            SdFilesystem<
+                FreqManagedSpiDevice<'static, esp_hal::gpio::Output<'static>>,
+                DisplayDelay,
+                FixedTime,
+            >,
+        > = StaticCell::new();
 
         let sd_cs = Output::new(peripherals.gpio12, Level::High, OutputConfig::default());
         let sd_spi = FreqManagedSpiDevice::new(shared_spi2, sd_cs, 400_000);
-        let mut sd_fs = SD_FS.init(SdFilesystem::new(
-            sd_spi,
-            DisplayDelay,
-            FixedTime,
-        ));
+        let mut sd_fs = SD_FS.init(SdFilesystem::new(sd_spi, DisplayDelay, FixedTime));
 
         let mut book_names = MENU_BOOK_NAMES.lock().await;
         let mut found_books = false;
@@ -210,14 +210,10 @@ pub(crate) async fn run(spawner: Spawner, peripherals: RuntimePeripherals) {
 
         #[cfg(feature = "firmware-bin")]
         {
-            use esp_hal::peripherals::FLASH;
             use binbook_fw::resume::ResumeStorage;
+            use esp_hal::peripherals::FLASH;
 
-            static_cell::const_static!(
-                FLASH_CELL,
-                FLASH,
-                unsafe { FLASH::steal() }
-            );
+            static_cell::const_static!(FLASH_CELL, FLASH, unsafe { FLASH::steal() });
             let mut flash_storage = ResumeStorage::new(FLASH_CELL.get_mut(), RESUME_FLASH_OFFSET);
 
             match flash_storage.read() {
@@ -230,7 +226,11 @@ pub(crate) async fn run(spawner: Spawner, peripherals: RuntimePeripherals) {
                     if book_names.iter().any(|name| name.as_str() == book_name) {
                         DISPLAY_MODE.store(1, portable_atomic::Ordering::Relaxed);
                         #[cfg(feature = "debug-log")]
-                        esp_println::println!("[RESUME] restoring reading mode: book={}, page={}", book_name, resume.last_page);
+                        esp_println::println!(
+                            "[RESUME] restoring reading mode: book={}, page={}",
+                            book_name,
+                            resume.last_page
+                        );
                     } else {
                         DISPLAY_MODE.store(0, portable_atomic::Ordering::Relaxed);
                         #[cfg(feature = "debug-log")]

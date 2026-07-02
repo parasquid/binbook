@@ -144,7 +144,11 @@ mod shared_spi {
 
     impl<'a, CS: OutputPin> FreqManagedSpiDevice<'a, CS> {
         pub fn new(shared: &'a SharedSpi2, cs: CS, freq_hz: u32) -> Self {
-            Self { shared, cs, freq_hz }
+            Self {
+                shared,
+                cs,
+                freq_hz,
+            }
         }
     }
 
@@ -165,8 +169,12 @@ mod shared_spi {
             let result = operations
                 .iter_mut()
                 .try_for_each(|operation| match operation {
-                    Operation::Read(buffer) => SpiBus::read(&mut *bus, buffer).map_err(|_| FirmwareError::Spi),
-                    Operation::Write(buffer) => SpiBus::write(&mut *bus, buffer).map_err(|_| FirmwareError::Spi),
+                    Operation::Read(buffer) => {
+                        SpiBus::read(&mut *bus, buffer).map_err(|_| FirmwareError::Spi)
+                    }
+                    Operation::Write(buffer) => {
+                        SpiBus::write(&mut *bus, buffer).map_err(|_| FirmwareError::Spi)
+                    }
                     Operation::Transfer(read, write) => {
                         SpiBus::transfer(&mut *bus, read, write).map_err(|_| FirmwareError::Spi)
                     }

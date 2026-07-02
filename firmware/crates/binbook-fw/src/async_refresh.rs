@@ -299,27 +299,42 @@ mod tests {
 
     #[test]
     fn menu_up_maps_to_prev() {
-        assert_eq!(button_to_request(Button::Up, MODE_MENU), Some(DisplayRequest::MenuPrev));
+        assert_eq!(
+            button_to_request(Button::Up, MODE_MENU),
+            Some(DisplayRequest::MenuPrev)
+        );
     }
 
     #[test]
     fn menu_left_maps_to_prev() {
-        assert_eq!(button_to_request(Button::Left, MODE_MENU), Some(DisplayRequest::MenuPrev));
+        assert_eq!(
+            button_to_request(Button::Left, MODE_MENU),
+            Some(DisplayRequest::MenuPrev)
+        );
     }
 
     #[test]
     fn menu_down_maps_to_next() {
-        assert_eq!(button_to_request(Button::Down, MODE_MENU), Some(DisplayRequest::MenuNext));
+        assert_eq!(
+            button_to_request(Button::Down, MODE_MENU),
+            Some(DisplayRequest::MenuNext)
+        );
     }
 
     #[test]
     fn menu_right_maps_to_next() {
-        assert_eq!(button_to_request(Button::Right, MODE_MENU), Some(DisplayRequest::MenuNext));
+        assert_eq!(
+            button_to_request(Button::Right, MODE_MENU),
+            Some(DisplayRequest::MenuNext)
+        );
     }
 
     #[test]
     fn menu_select_maps_to_select() {
-        assert_eq!(button_to_request(Button::Select, MODE_MENU), Some(DisplayRequest::MenuSelect));
+        assert_eq!(
+            button_to_request(Button::Select, MODE_MENU),
+            Some(DisplayRequest::MenuSelect)
+        );
     }
 
     #[test]
@@ -332,7 +347,10 @@ mod tests {
     fn reading_up_maps_to_previous_turn() {
         assert_eq!(
             button_to_request(Button::Up, MODE_READING),
-            Some(DisplayRequest::Turn { turn: PageTurn::Previous, completion_sequence: None })
+            Some(DisplayRequest::Turn {
+                turn: PageTurn::Previous,
+                completion_sequence: None
+            })
         );
     }
 
@@ -340,14 +358,23 @@ mod tests {
     fn reading_down_maps_to_next_turn() {
         assert_eq!(
             button_to_request(Button::Down, MODE_READING),
-            Some(DisplayRequest::Turn { turn: PageTurn::Next, completion_sequence: None })
+            Some(DisplayRequest::Turn {
+                turn: PageTurn::Next,
+                completion_sequence: None
+            })
         );
     }
 
     #[test]
     fn reading_select_and_back_map_to_menuback() {
-        assert_eq!(button_to_request(Button::Select, MODE_READING), Some(DisplayRequest::MenuBack));
-        assert_eq!(button_to_request(Button::Back, MODE_READING), Some(DisplayRequest::MenuBack));
+        assert_eq!(
+            button_to_request(Button::Select, MODE_READING),
+            Some(DisplayRequest::MenuBack)
+        );
+        assert_eq!(
+            button_to_request(Button::Back, MODE_READING),
+            Some(DisplayRequest::MenuBack)
+        );
     }
 
     #[test]
