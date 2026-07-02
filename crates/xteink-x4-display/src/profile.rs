@@ -19,7 +19,15 @@ pub const fn logical_to_physical(logical_x: u16, logical_y: u16) -> (u16, u16) {
     (LOGICAL_HEIGHT - 1 - logical_y, logical_x)
 }
 
-pub fn logical_gray2_to_physical_packed(logical: &[u8], output: &mut [u8]) -> DisplayResult<()> {
+#[must_use]
+pub const fn physical_to_logical(physical_x: u16, physical_y: u16) -> (u16, u16) {
+    (physical_y, LOGICAL_HEIGHT - 1 - physical_x)
+}
+
+pub fn logical_gray2_unpacked_to_physical_packed(
+    logical: &[u8],
+    output: &mut [u8],
+) -> DisplayResult<()> {
     let required_input = usize::from(LOGICAL_WIDTH) * usize::from(LOGICAL_HEIGHT);
     let required_output = usize::from(PHYSICAL_WIDTH) * usize::from(PHYSICAL_HEIGHT) / 4;
     if logical.len() != required_input {
@@ -47,6 +55,10 @@ pub fn logical_gray2_to_physical_packed(logical: &[u8], output: &mut [u8]) -> Di
         }
     }
     Ok(())
+}
+
+pub fn logical_gray2_to_physical_packed(logical: &[u8], output: &mut [u8]) -> DisplayResult<()> {
+    logical_gray2_unpacked_to_physical_packed(logical, output)
 }
 
 pub fn validate_profile(profile: &DisplayProfile) -> DisplayResult<()> {

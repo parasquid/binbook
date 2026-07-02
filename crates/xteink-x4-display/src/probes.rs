@@ -1,8 +1,10 @@
 use ssd1677_driver::{BusyWaitObserver, NoopBusyWaitObserver};
 
-pub const DISPLAY_WIDTH: u16 = 800;
-pub const DISPLAY_HEIGHT: u16 = 480;
-pub const DISPLAY_ROW_BYTES: usize = 100;
+pub use crate::profile::{
+    PHYSICAL_HEIGHT as DISPLAY_HEIGHT, PHYSICAL_WIDTH as DISPLAY_WIDTH,
+    ROW_BYTES as DISPLAY_ROW_BYTES,
+};
+
 pub const PROBE_BOX_WIDTH: u16 = 128;
 pub const PROBE_BOX_HEIGHT: u16 = 96;
 

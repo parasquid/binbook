@@ -3,6 +3,7 @@ mod decode;
 mod error;
 mod fit;
 mod page_decode;
+mod target;
 
 pub use compile::{compile_decoded_image, compile_image, CompileOptions, StorageFormat};
 pub use decode::{decode_image, DecodedImage, ImageFormat};
