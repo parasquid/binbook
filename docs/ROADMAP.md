@@ -1,17 +1,5 @@
 # BinBook Roadmap
 
-## X4 ADC input refactor
-
-Status: implemented in `feat/x4-async-adc-input`, physical-button evidence-gated.
-
-Firmware on this branch uses `Adc::into_async()`, interrupt-completed `read_oneshot().await`, 20 ms periodic sampling, independent stable-candidate state for each ADC ladder, and 30 ms debounce matching the verified SquidScript/X4 reference. ADC thresholds remain the hardware-safe ranges verified on the live device.
-
-ADC conversion completion can be interrupt-driven, but resistor-ladder button detection still requires periodic sampling; GPIO edges cannot distinguish ladder voltages reliably. Continuous ADC/DMA is not the default because it adds power and RAM complexity without removing debounce.
-
-Do not mark this refactor complete until serial/camera stress plus physical input logs confirm ADC sampling and debounce behavior. Acceptance requires rapid mixed-direction host sequences, calibrated threshold tests, queue/drop evidence, pinned builds, flash, serial capture, and live physical-button confirmation.
-
-The serial `page-turn-cadence` diagnostic measures the display/request pipeline with protocol KEY frames. It does not exercise ADC sampling, physical contact bounce, release detection, or the 100 ms physical-input cooldown. A physical-button cadence follow-up should capture `INPUT_TRANSITION`, `INPUT_DECISION`, `REQUEST_ENQUEUE`, `REQUEST_RECEIVE`, `PAGE_TURN`, and gray-overlay events while a human or actuator presses Down at controlled intervals, then compare the fastest accepted physical cadence against the serial cadence report.
-
 ## X4 page-turn latency optimization targets
 
 Status: evidence-gated.
@@ -22,7 +10,7 @@ Baseline before SPI-clock testing used 20 MHz display SPI. A live serial cadence
 
 40 MHz display SPI was tested by changing `firmware/crates/binbook-fw/src/main.rs::DISPLAY_SPI_FREQUENCY_MHZ` from `20` to `40` and flashing diagnostic firmware. The live run improved activation to `725 ms`, reliable completion to `900 ms`, and `dequeue_to_bw_start` to about `373-376 ms`. Per-plane SPI-write time dropped only from about `122 ms` to about `110 ms`, so future agents should not assume the SPI clock change halves transfer time. Keep 40 MHz only if repeated live runs and webcam verification remain stable.
 
-Partial-window BUSY was tested with diagnostic firmware. The probe measured full screen `800x480`, half height `800x240`, wide stripe `800x64`, one strip `800x16`, centered box `200x100`, and page-number box `240x80`. All cases reported `472 ms` BUSY for all three samples. With the current SSD1677 partial-refresh command sequence, BUSY duration does not scale with the RAM window. Do not pursue sectioned refresh as a BUSY-reduction strategy unless a future custom waveform/update-control experiment proves different behavior.
+Partial-window BUSY was tested with diagnostic firmware. The probe measured full screen `800x480`, half height `800x240`, wide stripe `800x64`, one strip `800x16`, centered box `200x100`, and page-number box `240x80`. All cases reported `472 ms` BUSY for all three samples. With the current SSD1677 partial-refresh command sequence, BUSY duration does not scale with the RAM window.
 
 Full-window plane streaming was implemented for non-cancellable full-plane writes. Absolute grayscale, BW differential page turns, and recovery seeding now set one full-screen RAM window per controller plane and stream all 480 rows in one RAM write command. Cancellable staged overlay and background base sync remain strip-based so they can still stop before activation. A live cadence run measured `dequeue_to_bw_start` at about `255-259 ms`, activation threshold at `525 ms`, reliable completion/gray-safe cadence at `775 ms`, and `BW_BUSY_READY` at about `501 ms`.
 
@@ -35,8 +23,6 @@ Before starting any target below, reproduce the current baseline with `binbook d
 2. Dirty-region writes for SPI/decode reduction only. Compare the previous and target fast-base data and skip unchanged regions where both controller RAM targets would remain equivalent. The partial-window BUSY matrix shows this should not be expected to reduce the post-refresh BUSY section, and full-window streaming removed most strip command overhead, so this is only worthwhile if real books have large unchanged regions. Acceptance: fixture tests with unchanged, partially changed, and fully changed pages; hardware logs showing fewer `PLANE_SPI_WRITE_SUMMARY` bytes; visual verification for page sequences with large white margins and dense text.
 
 3. Timestamp precision cleanup. `REQUEST_RECEIVE` currently samples `now_ms` before the select branch completes, so receipt-to-dequeue deltas can be slightly negative at high gaps. Move timestamp sampling closer to event emission or add a monotonic event-order correction in the analyzer. Acceptance: synthetic analyzer tests for signed deltas and live logs showing no unexplained negative dequeue deltas.
-
-4. Custom LUT/update-control investigation. If reducing the BUSY section remains necessary, investigate shorter SSD1677 partial waveforms or update-control variants. Treat this as high risk: acceptance requires repeated hardware runs across temperature-relevant conditions, ghosting inspection by webcam, full cleanup recovery, and a documented rollback path.
 
 Supporting work: row fill/decode optimization is not currently a primary target. Profile `PlaneDecoder::fill` and PackBits/LZ4 paths with realistic pages before changing buffer sizes or compression strategy. Acceptance requires before/after row-fill summaries from live logs and no increase in RAM footprint beyond documented constrained-device limits.
 
