@@ -28,6 +28,14 @@ Supporting work: row fill/decode optimization is not currently a primary target.
 
 Do not optimize against `display_dequeue_after_bw_busy_asserted`; it measures queued work being processed later. Optimize against `serial_accept_after_bw_busy_asserted`, `dequeue_to_bw_start`, `PLANE_SPI_WRITE_SUMMARY`, `PLANE_ROW_FILL_SUMMARY`, `BW_BUSY_READY`, and webcam verification.
 
+## X4 Wi-Fi and BLE capability
+
+Evaluate and integrate ESP32-C3 radio support behind explicit firmware feature gates. Start with Wi-Fi client capability behind a `wifi` feature, then add BLE behind a separate `ble` feature after Wi-Fi boot, connection, and idle-display behavior are stable. Do not enable either path in default firmware builds.
+
+Use the current Espressif Rust radio stack that matches the pinned `esp-hal` generation, and keep radio ownership in `binbook-fw`; reusable BinBook, display, storage, and diagnostic protocol crates must not depend on Wi-Fi or BLE crates. If both Wi-Fi and BLE are needed at the same time, treat coexistence as a separate acceptance target rather than assuming single-radio evidence covers it.
+
+Acceptance requires host tests for feature-gated command/configuration surfaces, firmware builds for no-radio, Wi-Fi-only, BLE-only, and coexistence configurations as applicable, live flash/serial evidence, measured RAM impact, measured idle and active power impact, and verification that display refresh, ADC input, SD/storage, and diagnostic USB behavior remain responsive while radio tasks are active.
+
 ## Python authoring package modularization
 
 Split binary format models/writing, EPUB ingestion, raster rendering, viewer, and kerning-proof server into independently testable modules. Define an explicit public package API, add basedpyright strict checking and Ruff gates, and preserve existing CLI output and BinBook bytes.
