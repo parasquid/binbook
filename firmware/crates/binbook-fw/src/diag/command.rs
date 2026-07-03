@@ -1,11 +1,12 @@
 use binbook_diagnostic_protocol::{
     decode_key_payload, decode_log_get_payload, decode_page_payload, decode_probe_payload,
-    decode_store_abort_request, decode_store_delete_request, decode_store_list_request,
-    decode_store_read_request, decode_store_upload_begin_request,
+    decode_refresh_mode_payload, decode_store_abort_request, decode_store_delete_request,
+    decode_store_list_request, decode_store_read_request, decode_store_upload_begin_request,
     decode_store_upload_commit_request, decode_store_upload_write_request, encode_hello_response,
-    encode_status_payload, encode_store_upload_begin_response, encode_store_upload_write_response,
-    FrameHeader, FrameKind, HelloResponse, KeyAction, KeyCode, Opcode, PageAction, PanelModeCode,
-    ProbeCode, Status, StatusPayload, ALL_CAPABILITIES, MAX_FRAME_BYTES, PROTOCOL_VERSION,
+    encode_refresh_mode_payload, encode_status_payload, encode_store_upload_begin_response,
+    encode_store_upload_write_response, FrameHeader, FrameKind, HelloResponse, KeyAction, KeyCode,
+    Opcode, PageAction, PanelModeCode, ProbeCode, RefreshModeAction, RefreshModeCode,
+    RefreshModePayload, Status, StatusPayload, ALL_CAPABILITIES, MAX_FRAME_BYTES, PROTOCOL_VERSION,
 };
 
 use crate::{
@@ -22,6 +23,8 @@ pub enum DisplayProbeKind {
     ClearWhite,
     WindowCorners,
     PartialWindowBusyMatrix,
+    CustomLutFastA,
+    CustomLutFastB,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +37,7 @@ pub enum DispatchResult {
     CrashGet,
     CrashClear,
     DisplayProbe(DisplayProbeKind),
+    SetRefreshMode { mode: RefreshModeCode },
     Response { status: Status, payload_len: usize },
 }
 
@@ -42,6 +46,7 @@ pub struct CommandContext {
     pub page_count: u32,
     pub last_error: i32,
     pub panel_mode: PanelModeCode,
+    pub refresh_mode: RefreshModeCode,
     pub protocol_errors: u32,
     pub dropped_records: u32,
     pub tick_ms: u32,
@@ -54,6 +59,7 @@ impl CommandContext {
             page_count,
             last_error,
             panel_mode: PanelModeCode::from_u8(panel_mode).unwrap_or(PanelModeCode::Unknown),
+            refresh_mode: RefreshModeCode::Balanced,
             protocol_errors: 0,
             dropped_records: 0,
             tick_ms: 0,
@@ -196,6 +202,45 @@ pub fn dispatch_command(
                 },
             }
         }
+        Opcode::RefreshMode => {
+            let request = match decode_refresh_mode_payload(payload) {
+                Ok(value) => value,
+                Err(_) => {
+                    return DispatchResult::Response {
+                        status: Status::BadRequest,
+                        payload_len: 0,
+                    }
+                }
+            };
+            match request.action {
+                RefreshModeAction::Get => {
+                    let response = RefreshModePayload {
+                        action: RefreshModeAction::Get,
+                        mode: ctx.refresh_mode,
+                    };
+                    match encode_refresh_mode_payload(response, resp_buf) {
+                        Ok(len) => DispatchResult::Response {
+                            status: Status::Ok,
+                            payload_len: len,
+                        },
+                        Err(_) => DispatchResult::Response {
+                            status: Status::InternalError,
+                            payload_len: 0,
+                        },
+                    }
+                }
+                RefreshModeAction::Set => {
+                    if request.mode == RefreshModeCode::Fast && !cfg!(feature = "fast-refresh-mode")
+                    {
+                        return DispatchResult::Response {
+                            status: Status::Unsupported,
+                            payload_len: 0,
+                        };
+                    }
+                    DispatchResult::SetRefreshMode { mode: request.mode }
+                }
+            }
+        }
         Opcode::DisplayProbe => match decode_probe_payload(payload) {
             Ok(ProbeCode::FullRefreshCurrent) => {
                 DispatchResult::DisplayProbe(DisplayProbeKind::FullRefreshCurrent)
@@ -206,6 +251,12 @@ pub fn dispatch_command(
             }
             Ok(ProbeCode::PartialWindowBusyMatrix) => {
                 DispatchResult::DisplayProbe(DisplayProbeKind::PartialWindowBusyMatrix)
+            }
+            Ok(ProbeCode::CustomLutFastA) => {
+                DispatchResult::DisplayProbe(DisplayProbeKind::CustomLutFastA)
+            }
+            Ok(ProbeCode::CustomLutFastB) => {
+                DispatchResult::DisplayProbe(DisplayProbeKind::CustomLutFastB)
             }
             Err(_) => DispatchResult::Response {
                 status: Status::BadRequest,

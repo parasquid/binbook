@@ -11,6 +11,7 @@ mod events;
 mod frame;
 mod key_page;
 mod probe;
+mod refresh_mode;
 mod status_log;
 mod storage;
 mod types;
@@ -23,6 +24,7 @@ pub use key_page::{
     encode_key_payload, encode_page_payload, encode_page_response,
 };
 pub use probe::{decode_probe_payload, encode_probe_payload};
+pub use refresh_mode::{decode_refresh_mode_payload, encode_refresh_mode_payload};
 pub use status_log::{
     decode_crash_response, decode_log_get_payload, decode_log_record, decode_log_response_header,
     decode_status_payload, encode_crash_response, encode_log_get_payload, encode_log_record,

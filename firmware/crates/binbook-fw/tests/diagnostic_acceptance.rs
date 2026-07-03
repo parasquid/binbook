@@ -132,6 +132,8 @@ fn acceptance_hardware_commands_remain_deferred_actions() {
         (0x02, DisplayProbeKind::ClearWhite),
         (0x03, DisplayProbeKind::WindowCorners),
         (0x04, DisplayProbeKind::PartialWindowBusyMatrix),
+        (0x05, DisplayProbeKind::CustomLutFastA),
+        (0x06, DisplayProbeKind::CustomLutFastB),
     ] {
         assert_eq!(
             fixture.request(

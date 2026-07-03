@@ -140,6 +140,7 @@ ad-hoc. Do not add it to `pyproject.toml` — it's only needed for hardware seri
 - Never use `git add -A` or `git add .`. Always stage specific files by path.
 - Never amend, force-push, or rewrite history without explicit user request.
 - Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) for all commit messages. Format: `<type>[optional scope]: <description>` where type is one of `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, or `revert`.
+- When preparing a commit, include formatting changes produced by the required formatter if they belong to the same touched files and are part of making that change pass local checks. Do not mix unrelated formatter churn into the commit.
 - When implementing a written plan, always use a todo tracker and keep it current as tasks move from pending to in progress to complete.
 - Only add `Co-authored-by` trailers when the agent can truthfully claim authorship of the changed files. Do not include misleading co-author footers on commits where the agent merely organized or staged existing work.
 
@@ -257,6 +258,7 @@ content changes.
 - Update `HANDOFF.md` after completing a task when the next agent would benefit from current status, verification evidence, blockers, commands, or remaining work. Keep it ready for another agent to pick up without relying on chat context.
 - `HANDOFF.md` is a current-state snapshot, not a diary. Overwrite the relevant sections with up-to-date information rather than appending new entries. Remove or revise stale content.
 - Write reference docs as current-state facts, not chronological diaries. Omit "we observed", "first this failed", etc.
+- `docs/ROADMAP.md` contains only remaining/future work. When work is completed, remove the corresponding roadmap item instead of marking it done or adding completed-status notes.
 - Describe what code currently does in comments, never what it used to do.
 - When a commit deletes or replaces a file, grep for stale references across docs, README, and commit messages. Fix in the same commit.
 - Specs belong in docs/specs and plans belong in docs/plans DO NOT use any other folders despite what another skill might tell you.

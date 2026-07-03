@@ -35,6 +35,7 @@ fn aggregator<const N: usize>() -> RuntimeAggregator<N, 32> {
         current_page: 0,
         page_count: 4,
         panel_mode: PanelModeCode::Unknown,
+        refresh_mode: binbook_diagnostic_protocol::RefreshModeCode::Balanced,
         dropped_log_count: 0,
         protocol_error_count: 0,
         last_error: 0,

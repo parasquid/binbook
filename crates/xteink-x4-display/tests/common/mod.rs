@@ -29,6 +29,8 @@ pub struct Backend {
     pub gray: DisplayResult<OperationOutcome>,
     pub sync: DisplayResult<OperationOutcome>,
     pub render_bw: DisplayResult<()>,
+    pub preview: DisplayResult<()>,
+    pub cleanup: DisplayResult<()>,
     pub recovery: DisplayResult<()>,
 }
 
@@ -42,6 +44,8 @@ impl Default for Backend {
             gray: Ok(OperationOutcome::Completed),
             sync: Ok(OperationOutcome::Completed),
             render_bw: Ok(()),
+            preview: Ok(()),
+            cleanup: Ok(()),
             recovery: Ok(()),
         }
     }
@@ -61,6 +65,14 @@ impl DisplayBackend for Backend {
     async fn render_bw(&mut self, _: Option<u16>, _: u32, _: u32) -> DisplayResult<()> {
         self.operations.push("render-bw");
         self.render_bw
+    }
+    async fn render_preview(&mut self, _: Option<u16>, _: u32, _: u32) -> DisplayResult<()> {
+        self.operations.push("preview");
+        self.preview
+    }
+    async fn cleanup_preview_bw(&mut self, _: Option<u16>, _: u32, _: u32) -> DisplayResult<()> {
+        self.operations.push("cleanup-bw");
+        self.cleanup
     }
     async fn render_grayscale(&mut self, _: u32, _: u32) -> DisplayResult<OperationOutcome> {
         self.operations.push("render-gray");

@@ -49,6 +49,39 @@ fn diagnostic_page_response_is_queued_only_after_action_completion() {
     );
 }
 
+#[test]
+fn diagnostic_refresh_mode_set_response_returns_active_mode_after_completion() {
+    use binbook_diagnostic_protocol::{
+        decode_frame, decode_refresh_mode_payload, FrameHeader, FrameKind, Opcode, RefreshModeCode,
+        Status,
+    };
+    use binbook_fw::diag::{complete_pending_command, PendingAction, PendingCommand, SerialState};
+
+    let pending = PendingCommand {
+        header: FrameHeader {
+            kind: FrameKind::Request,
+            opcode: Opcode::RefreshMode,
+            status: Status::Ok,
+            sequence: 0x2345,
+            payload_len: 2,
+        },
+        action: PendingAction::SetRefreshMode {
+            mode: RefreshModeCode::Fast,
+        },
+    };
+    let mut serial = SerialState::new();
+
+    complete_pending_command(&mut serial, pending, Status::Ok, 0, &[]).unwrap();
+
+    let mut decoded_payload = [0u8; 32];
+    let (response, response_len) = decode_frame(serial.pending_tx(), &mut decoded_payload).unwrap();
+    assert_eq!(response.sequence, 0x2345);
+    assert_eq!(response.opcode, Opcode::RefreshMode);
+    assert_eq!(response.status, Status::Ok);
+    let decoded = decode_refresh_mode_payload(&decoded_payload[..response_len]).unwrap();
+    assert_eq!(decoded.mode, RefreshModeCode::Fast);
+}
+
 #[cfg(feature = "diagnostic-console")]
 struct AsyncDiagHarness {
     current_page: u32,

@@ -1,6 +1,7 @@
 //! Host-testable refresh coordinator for deferred grayscale refresh.
 
 use crate::input::{Button, PageTurn};
+use crate::xteink_x4_display::events::PageRefreshMode;
 
 /// Mode constants for `button_to_request`.
 pub const MODE_MENU: u8 = 0;
@@ -9,6 +10,7 @@ pub const MODE_READING: u8 = 1;
 pub const STARTUP_DISPLAY_MODE: u8 = MODE_MENU;
 #[cfg(not(feature = "sd-storage"))]
 pub const STARTUP_DISPLAY_MODE: u8 = MODE_READING;
+pub const STARTUP_PAGE_REFRESH_MODE: PageRefreshMode = PageRefreshMode::Balanced;
 
 /// Map a [`Button`] press to a [`DisplayRequest`] based on the current display
 /// mode. Returns `None` when the button has no action in the given mode.
@@ -53,6 +55,8 @@ pub enum DisplayProbeKind {
     ClearWhite,
     WindowCorners,
     PartialWindowBusyMatrix,
+    CustomLutFastA,
+    CustomLutFastB,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +73,10 @@ pub enum DisplayRequest {
     },
     Goto {
         page: u32,
+        completion_sequence: u16,
+    },
+    SetRefreshMode {
+        mode: PageRefreshMode,
         completion_sequence: u16,
     },
     Probe {
@@ -92,6 +100,7 @@ pub struct DisplayCompletion {
 pub enum RefreshPhase {
     BwReady,
     BwRefreshing,
+    PreviewDelay,
     GrayDelay,
     GrayRefreshing,
     BaseSync,

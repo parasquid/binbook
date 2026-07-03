@@ -1,7 +1,8 @@
 use binbook_diagnostic_protocol::{
     encode_frame, encode_log_get_payload, encode_page_payload, encode_probe_payload,
-    encode_store_delete_request, encode_store_list_request, encode_store_read_request, FrameHeader,
-    FrameKind, KeyAction, KeyCode, LogGetPayload, Opcode, PageAction, ProbeCode, Status,
+    encode_refresh_mode_payload, encode_store_delete_request, encode_store_list_request,
+    encode_store_read_request, FrameHeader, FrameKind, KeyAction, KeyCode, LogGetPayload, Opcode,
+    PageAction, ProbeCode, RefreshModeAction, RefreshModeCode, RefreshModePayload, Status,
     StorageBackend, StoreDeleteRequest, StoreListRequest, StoreReadRequest, MAX_FRAME_BYTES,
 };
 
@@ -62,6 +63,29 @@ pub fn status_request(sequence: u16) -> Vec<u8> {
     buf[..len].to_vec()
 }
 
+pub fn refresh_mode_get_request(sequence: u16) -> Vec<u8> {
+    refresh_mode_request(sequence, RefreshModeAction::Get, RefreshModeCode::Balanced)
+}
+
+pub fn refresh_mode_set_request(sequence: u16, mode: RefreshModeCode) -> Vec<u8> {
+    refresh_mode_request(sequence, RefreshModeAction::Set, mode)
+}
+
+fn refresh_mode_request(
+    sequence: u16,
+    action: RefreshModeAction,
+    mode: RefreshModeCode,
+) -> Vec<u8> {
+    let mut header = request_header(sequence, Opcode::RefreshMode);
+    let mut payload_buf = [0u8; 2];
+    let plen =
+        encode_refresh_mode_payload(RefreshModePayload { action, mode }, &mut payload_buf).unwrap();
+    header.payload_len = plen as u16;
+    let mut buf = [0u8; MAX_FRAME_BYTES];
+    let len = encode_frame(&header, &payload_buf[..plen], &mut buf).unwrap();
+    buf[..len].to_vec()
+}
+
 pub fn log_get_request(sequence: u16, cursor: u32, max_bytes: u16) -> Vec<u8> {
     let mut header = request_header(sequence, Opcode::LogGet);
     let mut payload_buf = [0u8; 6];
@@ -106,6 +130,8 @@ pub enum ProbeChoice {
     ClearWhite,
     WindowCorners,
     PartialWindowBusyMatrix,
+    CustomLutFastA,
+    CustomLutFastB,
 }
 
 impl ProbeChoice {
@@ -115,6 +141,8 @@ impl ProbeChoice {
             Self::ClearWhite => ProbeCode::ClearWhite,
             Self::WindowCorners => ProbeCode::WindowCorners,
             Self::PartialWindowBusyMatrix => ProbeCode::PartialWindowBusyMatrix,
+            Self::CustomLutFastA => ProbeCode::CustomLutFastA,
+            Self::CustomLutFastB => ProbeCode::CustomLutFastB,
         }
     }
 }

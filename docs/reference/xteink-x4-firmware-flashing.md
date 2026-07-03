@@ -179,6 +179,43 @@ waveform hint `2`; LUT revision `1` and voltage bytes remain firmware-owned.
 Structured overlay, activation, controller-state, and base-sync evidence is
 retrieved through the diagnostic protocol.
 
+Diagnostic-only custom LUT probes are available for BUSY-time experiments:
+
+```bash
+target/debug/binbook diag probe --port /dev/ttyACM0 custom-lut-fast-a
+target/debug/binbook diag probe --port /dev/ttyACM0 custom-lut-fast-b
+```
+
+Both probes keep normal page-turn behavior pinned to the verified staged
+grayscale LUT. They load a candidate waveform only for the probe, write a
+visible transition pattern to both SSD1677 RAM planes, trigger staged grayscale
+activation, and report BUSY timing through the existing diagnostic log path.
+Treat these candidates as unaccepted until a live hardware run records serial
+timing, webcam-visible output, ghosting behavior across repeated turns, and a
+successful cleanup/recovery path.
+
+For current custom-LUT tuning terminology, tail-byte policy, naming guidance,
+and required metrics, see
+[`xteink-x4-custom-lut-tuning.md`](xteink-x4-custom-lut-tuning.md).
+
+Page refresh modes can be selected at runtime when the diagnostic console is
+enabled:
+
+```bash
+target/debug/binbook diag refresh-mode --port $PORT get
+target/debug/binbook diag refresh-mode --port $PORT set balanced
+target/debug/binbook diag refresh-mode --port $PORT set fast
+```
+
+Balanced is the former differential BW page-turn path with delayed grayscale
+refinement. Fast uses the accepted custom preview and cleanup LUT recipes before
+the delayed grayscale refinement. Firmware boots in Balanced mode; build with
+`fast-refresh-mode` to make Fast available through diagnostics:
+
+```bash
+cd firmware && RUSTC="$(rustup which --toolchain nightly rustc)" rustup run nightly cargo build -p binbook-fw --features firmware-bin,diagnostic-console,fast-refresh-mode --target riscv32imc-unknown-none-elf --release
+```
+
 ## Diagnostic console build
 
 For complete AI-agent hardware verification, including discriminating state checks, visual gates, stream tests, failure handling, and evidence requirements, follow [`xteink-x4-agent-device-verification.md`](xteink-x4-agent-device-verification.md).

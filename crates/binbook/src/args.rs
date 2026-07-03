@@ -120,6 +120,12 @@ pub enum DiagCommand {
         #[arg(short, long)]
         port: String,
     },
+    RefreshMode {
+        #[arg(short, long)]
+        port: String,
+        #[command(subcommand)]
+        action: RefreshModeAction,
+    },
     Logs {
         #[arg(short, long)]
         port: String,
@@ -258,11 +264,28 @@ pub enum PageAction {
 }
 
 #[derive(Subcommand)]
+pub enum RefreshModeAction {
+    Get,
+    Set {
+        #[arg(value_enum)]
+        mode: RefreshModeChoice,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum RefreshModeChoice {
+    Balanced,
+    Fast,
+}
+
+#[derive(Subcommand)]
 pub enum ProbeCommand {
     WindowCorners,
     ClearWhite,
     FullRefreshCurrent,
     PartialWindowBusy,
+    CustomLutFastA,
+    CustomLutFastB,
 }
 
 #[derive(Subcommand)]

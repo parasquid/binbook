@@ -9,7 +9,7 @@ use ssd1677_driver::{BusyWaitObserver, NoopBusyWaitObserver};
 use crate::{
     buffers::{first_input, first_row, RenderBuffers},
     page_source::{read_x4_page, required_plane},
-    panel::{RefreshMode, X4Panel},
+    panel::{CustomLutCandidate, RefreshMode, X4Panel},
     plane_write::{write_plane, write_plane_timed, PlaneWrite},
     render_timing::{
         elapsed_u32, NoopRenderTimingObserver, PlaneRole, RamTarget, RenderObservers,
@@ -56,6 +56,173 @@ where
     } else {
         crate::events::OperationOutcome::Cancelled
     })
+}
+
+pub async fn render_fast_preview<R, SPI, DC, RST, BUSY, D>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    from: u32,
+    target: u32,
+    buffers: &mut RenderBuffers<'_>,
+    delay: &mut D,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+{
+    render_fast_preview_observed(
+        panel,
+        book,
+        from,
+        target,
+        buffers,
+        delay,
+        &mut NoopBusyWaitObserver,
+    )
+    .await
+}
+
+pub async fn render_fast_preview_observed<R, SPI, DC, RST, BUSY, D>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    from: u32,
+    target: u32,
+    buffers: &mut RenderBuffers<'_>,
+    delay: &mut D,
+    observer: &mut impl BusyWaitObserver,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+{
+    let mut timing = NoopRenderTimingObserver;
+    render_fast_preview_timed(
+        panel,
+        book,
+        from,
+        target,
+        buffers,
+        delay,
+        RenderObservers {
+            busy: observer,
+            timing: &mut timing,
+        },
+    )
+    .await
+}
+
+pub async fn render_fast_preview_timed<R, SPI, DC, RST, BUSY, D, B, T>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    from: u32,
+    target: u32,
+    buffers: &mut RenderBuffers<'_>,
+    delay: &mut D,
+    observers: RenderObservers<'_, B, T>,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+    B: BusyWaitObserver,
+    T: RenderTimingObserver,
+{
+    render_lut_preview_timed(
+        panel,
+        book,
+        from,
+        target,
+        buffers,
+        delay,
+        observers,
+        CustomLutCandidate::PreviewFastV1,
+    )
+    .await
+}
+
+pub async fn render_lut_preview_timed<R, SPI, DC, RST, BUSY, D, B, T>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    from: u32,
+    target: u32,
+    buffers: &mut RenderBuffers<'_>,
+    delay: &mut D,
+    observers: RenderObservers<'_, B, T>,
+    candidate: CustomLutCandidate,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+    B: BusyWaitObserver,
+    T: RenderTimingObserver,
+{
+    let timing_observer = observers.timing;
+    write_preview_inputs(panel, book, from, target, buffers, delay, timing_observer).await?;
+    panel.load_custom_lut_candidate(candidate)?;
+    let trigger_start = timing_observer.now_ms();
+    let trigger_result = panel
+        .controller()
+        .trigger_refresh(RefreshMode::StagedGrayscale);
+    let trigger_duration = elapsed_u32(trigger_start, timing_observer.now_ms());
+    timing_observer.refresh_trigger(
+        RefreshMode::StagedGrayscale,
+        trigger_duration,
+        if trigger_result.is_ok() {
+            RenderStageStatus::Ok
+        } else {
+            RenderStageStatus::Error
+        },
+    );
+    trigger_result?;
+    panel.wait_ready_observed(delay, observers.busy).await?;
+    Ok(())
+}
+
+pub async fn cleanup_fast_preview<SPI, DC, RST, BUSY, D>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    delay: &mut D,
+) -> DisplayResult<()>
+where
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+{
+    cleanup_fast_preview_observed(panel, delay, &mut NoopBusyWaitObserver).await
+}
+
+pub async fn cleanup_fast_preview_observed<SPI, DC, RST, BUSY, D>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    delay: &mut D,
+    observer: &mut impl BusyWaitObserver,
+) -> DisplayResult<()>
+where
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+{
+    panel.load_custom_lut_candidate(CustomLutCandidate::CleanupStrongV1)?;
+    panel
+        .refresh_observed(RefreshMode::StagedGrayscale, delay, observer)
+        .await
 }
 
 pub async fn render_bw_differential<R, SPI, DC, RST, BUSY, D>(
@@ -139,6 +306,42 @@ where
     T: RenderTimingObserver,
 {
     let timing_observer = observers.timing;
+    write_preview_inputs(panel, book, from, target, buffers, delay, timing_observer).await?;
+    let trigger_start = timing_observer.now_ms();
+    let trigger_result = panel.controller().trigger_refresh(RefreshMode::Partial);
+    let trigger_duration = elapsed_u32(trigger_start, timing_observer.now_ms());
+    timing_observer.refresh_trigger(
+        RefreshMode::Partial,
+        trigger_duration,
+        if trigger_result.is_ok() {
+            RenderStageStatus::Ok
+        } else {
+            RenderStageStatus::Error
+        },
+    );
+    trigger_result?;
+    panel.wait_ready_observed(delay, observers.busy).await?;
+    Ok(())
+}
+
+async fn write_preview_inputs<R, SPI, DC, RST, BUSY, D, T>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    from: u32,
+    target: u32,
+    buffers: &mut RenderBuffers<'_>,
+    delay: &mut D,
+    timing_observer: &mut T,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+    T: RenderTimingObserver,
+{
     let metadata_start = timing_observer.now_ms();
     let from_page = from;
     let target_page = target;
@@ -168,20 +371,6 @@ where
         timing_observer,
     )
     .await?;
-    let trigger_start = timing_observer.now_ms();
-    let trigger_result = panel.controller().trigger_refresh(RefreshMode::Partial);
-    let trigger_duration = elapsed_u32(trigger_start, timing_observer.now_ms());
-    timing_observer.refresh_trigger(
-        RefreshMode::Partial,
-        trigger_duration,
-        if trigger_result.is_ok() {
-            RenderStageStatus::Ok
-        } else {
-            RenderStageStatus::Error
-        },
-    );
-    trigger_result?;
-    panel.wait_ready_observed(delay, observers.busy).await?;
     Ok(())
 }
 

@@ -52,8 +52,9 @@ pub fn format_response(
 ) -> Result<String, String> {
     use binbook_diagnostic_protocol::{
         decode_crash_response, decode_hello_response, decode_log_record,
-        decode_log_response_header, decode_status_payload, CAP_CRASH, CAP_DISPLAY_PROBE, CAP_KEY,
-        CAP_LOG, CAP_PAGE, CAP_STATUS, LOG_RECORD_BYTES, LOG_RESPONSE_HEADER_BYTES,
+        decode_log_response_header, decode_refresh_mode_payload, decode_status_payload, CAP_CRASH,
+        CAP_DISPLAY_PROBE, CAP_KEY, CAP_LOG, CAP_PAGE, CAP_REFRESH_MODE, CAP_STATUS,
+        LOG_RECORD_BYTES, LOG_RESPONSE_HEADER_BYTES,
     };
     let mut payload = [0u8; MAX_FRAME_BYTES];
     let (header, payload_len) =
@@ -79,6 +80,7 @@ pub fn format_response(
                     (CAP_KEY, "KEY"), (CAP_PAGE, "PAGE"), (CAP_STATUS, "STATUS"),
                     (CAP_LOG, "LOG"), (CAP_CRASH, "CRASH"), (CAP_DISPLAY_PROBE, "DISPLAY_PROBE"),
                     (CAP_STORAGE, "STORAGE"),
+                    (CAP_REFRESH_MODE, "REFRESH_MODE"),
                 ] { if hello.capabilities & bit != 0 { names.push(name); } }
                 Ok(format!(
                     "protocol={} max_frame={} capabilities={} firmware={} target={}",
@@ -96,6 +98,15 @@ pub fn format_response(
                     value.current_page, value.page_count, value.panel_mode, value.dropped_log_count,
                     value.protocol_error_count, value.last_error,
                 ))
+            }
+            Opcode::RefreshMode => {
+                let value = decode_refresh_mode_payload(payload)
+                    .map_err(|e| format!("invalid REFRESH_MODE payload: {e:?}"))?;
+                let mode = match value.mode {
+                    binbook_diagnostic_protocol::RefreshModeCode::Balanced => "balanced",
+                    binbook_diagnostic_protocol::RefreshModeCode::Fast => "fast",
+                };
+                Ok(format!("refresh_mode={mode}"))
             }
             Opcode::Page => {
                 if payload.len() != 4 { return Err("invalid PAGE response length".into()); }

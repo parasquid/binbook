@@ -84,7 +84,7 @@ The basic integration flow is:
 4. Convert canonical rows with `gray2_render` when the consumer owns display policy, or construct `xteink_x4_display::buffers::RenderBuffers` and use the X4 render/engine APIs.
 5. Supply a standard `embedded_hal::spi::SpiDevice`, digital pins, and delay to `ssd1677_driver::Ssd1677` or `xteink_x4_display::panel::X4Panel`.
 
-The `xteink-x4-display` crate is the only reusable owner of X4 dimensions, rotation, staged waveform policy, chunk geometry, page-turn semantics, and refresh state.
+The `xteink-x4-display` crate is the only reusable owner of X4 dimensions, rotation, staged waveform policy, chunk geometry, page-turn semantics, page refresh modes, and refresh state. Its high-level `PageRefreshMode` names reader behavior such as Balanced or Fast. The lower-level `ssd1677_driver::RefreshMode` remains the SSD1677 update-control command policy.
 
 ## X4 full-window plane streaming
 

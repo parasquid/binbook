@@ -1,6 +1,7 @@
 use crate::{engine::ControllerRamState, probes::ProbeKind, DisplayError};
 
 pub const GRAY_SETTLE_DELAY_MS: u64 = 350;
+pub const PREVIEW_CLEANUP_DELAY_MS: u64 = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageTurn {
@@ -8,6 +9,12 @@ pub enum PageTurn {
     Next,
     First,
     Last,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageRefreshMode {
+    Balanced,
+    Fast,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,6 +27,10 @@ pub enum DisplayRequest {
         page: u32,
         sequence: u16,
     },
+    SetRefreshMode {
+        mode: PageRefreshMode,
+        sequence: Option<u16>,
+    },
     Probe {
         kind: ProbeKind,
         sequence: u16,
@@ -30,6 +41,7 @@ pub enum DisplayRequest {
 pub enum DisplayPhase {
     BwReady,
     BwRefreshing,
+    PreviewDelay,
     GrayDelay,
     GrayRefreshing,
     BaseSync,
@@ -68,6 +80,7 @@ pub struct DisplayCompletion {
 pub enum DisplayEventKind {
     PhaseChanged(DisplayPhase),
     PanelModeChanged(PanelMode),
+    RefreshModeChanged(PageRefreshMode),
     ControllerStateChanged(ControllerRamState),
     TurnStarted {
         sequence: Option<u16>,

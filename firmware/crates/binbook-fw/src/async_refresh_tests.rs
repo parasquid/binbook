@@ -1,6 +1,11 @@
 use super::*;
 
 #[test]
+fn startup_page_refresh_mode_defaults_to_balanced() {
+    assert_eq!(STARTUP_PAGE_REFRESH_MODE, PageRefreshMode::Balanced);
+}
+
+#[test]
 fn menu_up_maps_to_prev() {
     assert_eq!(
         button_to_request(Button::Up, MODE_MENU),

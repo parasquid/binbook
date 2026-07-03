@@ -280,6 +280,46 @@ where
         .await
     }
 
+    async fn render_preview(
+        &mut self,
+        sequence: Option<u16>,
+        from: u32,
+        target: u32,
+    ) -> xteink_x4_display::DisplayResult<()> {
+        let mut buffers = xteink_x4_display::buffers::RenderBuffers::new(
+            &mut self.compressed,
+            &mut self.decoded,
+            &mut self.black,
+            &mut self.red,
+        );
+        let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::PreviewRefresh);
+        let mut timing = RuntimeRenderTimingObserver::new(sequence, from, target);
+        render::render_fast_preview_timed(
+            &mut self.display,
+            &mut self.book,
+            from,
+            target,
+            &mut buffers,
+            &mut self.delay,
+            RenderObservers {
+                busy: &mut observer,
+                timing: &mut timing,
+            },
+        )
+        .await
+    }
+
+    async fn cleanup_preview_bw(
+        &mut self,
+        _sequence: Option<u16>,
+        _from: u32,
+        _target: u32,
+    ) -> xteink_x4_display::DisplayResult<()> {
+        let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::PreviewCleanup);
+        render::cleanup_fast_preview_observed(&mut self.display, &mut self.delay, &mut observer)
+            .await
+    }
+
     async fn sync_bw_base(
         &mut self,
         page: u32,
@@ -371,6 +411,26 @@ where
                     &mut self.display,
                     &mut self.delay,
                     1,
+                    &mut observer,
+                )
+                .await
+            }
+            xteink_x4_display::probes::ProbeKind::CustomLutFastA => {
+                let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::Probe);
+                xteink_x4_display::probes::custom_lut_probe_observed(
+                    &mut self.display,
+                    xteink_x4_display::probes::CustomLutCandidate::FastA,
+                    &mut self.delay,
+                    &mut observer,
+                )
+                .await
+            }
+            xteink_x4_display::probes::ProbeKind::CustomLutFastB => {
+                let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::Probe);
+                xteink_x4_display::probes::custom_lut_probe_observed(
+                    &mut self.display,
+                    xteink_x4_display::probes::CustomLutCandidate::FastB,
+                    &mut self.delay,
                     &mut observer,
                 )
                 .await

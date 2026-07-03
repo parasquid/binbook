@@ -6,6 +6,7 @@ use crate::{
 };
 
 pub use xteink_x4_display::engine::ControllerRamState;
+pub type RuntimeRefreshMode = xteink_x4_display::events::PageRefreshMode;
 pub type RuntimePanelMode = xteink_x4_display::events::PanelMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +19,7 @@ pub enum RuntimeCompletionStatus {
 pub enum RuntimeRequestKind {
     Turn,
     Goto,
+    SetRefreshMode,
     Probe,
     MenuNext,
     MenuPrev,
@@ -30,6 +32,7 @@ impl RuntimeRequestKind {
         match request {
             DisplayRequest::Turn { .. } => Self::Turn,
             DisplayRequest::Goto { .. } => Self::Goto,
+            DisplayRequest::SetRefreshMode { .. } => Self::SetRefreshMode,
             DisplayRequest::Probe { .. } => Self::Probe,
             DisplayRequest::MenuNext => Self::MenuNext,
             DisplayRequest::MenuPrev => Self::MenuPrev,
@@ -42,11 +45,12 @@ impl RuntimeRequestKind {
         match self {
             Self::Turn => 0,
             Self::Goto => 1,
-            Self::Probe => 2,
-            Self::MenuNext => 3,
-            Self::MenuPrev => 4,
-            Self::MenuSelect => 5,
-            Self::MenuBack => 6,
+            Self::SetRefreshMode => 2,
+            Self::Probe => 3,
+            Self::MenuNext => 4,
+            Self::MenuPrev => 5,
+            Self::MenuSelect => 6,
+            Self::MenuBack => 7,
         }
     }
 }
@@ -59,6 +63,10 @@ pub const fn request_sequence(request: &DisplayRequest) -> Option<u16> {
             ..
         } => *completion_sequence,
         DisplayRequest::Goto {
+            completion_sequence,
+            ..
+        }
+        | DisplayRequest::SetRefreshMode {
             completion_sequence,
             ..
         }
@@ -111,6 +119,8 @@ pub enum BusyWaitSite {
     PanelInit,
     BwRefresh,
     GrayRefresh,
+    PreviewRefresh,
+    PreviewCleanup,
     Probe,
 }
 
@@ -121,7 +131,9 @@ impl BusyWaitSite {
             Self::PanelInit => 1,
             Self::BwRefresh => 2,
             Self::GrayRefresh => 3,
-            Self::Probe => 4,
+            Self::PreviewRefresh => 4,
+            Self::PreviewCleanup => 5,
+            Self::Probe => 6,
         }
     }
 }
@@ -165,6 +177,7 @@ pub enum RuntimeEventKind {
         page: u32,
     },
     PanelModeChanged(RuntimePanelMode),
+    RefreshModeChanged(RuntimeRefreshMode),
     ControllerRamStateChanged(ControllerRamState),
     TurnQueued {
         sequence: Option<u16>,
@@ -369,6 +382,7 @@ pub fn map_display_event(event: xteink_x4_display::events::DisplayEvent) -> Runt
     let kind = match event.kind {
         Source::PhaseChanged(value) => RuntimeEventKind::PhaseChanged(map_phase(value)),
         Source::PanelModeChanged(value) => RuntimeEventKind::PanelModeChanged(value),
+        Source::RefreshModeChanged(value) => RuntimeEventKind::RefreshModeChanged(value),
         Source::ControllerStateChanged(value) => RuntimeEventKind::ControllerRamStateChanged(value),
         Source::TurnStarted {
             sequence,
@@ -450,6 +464,7 @@ fn map_phase(phase: xteink_x4_display::events::DisplayPhase) -> RefreshPhase {
     match phase {
         xteink_x4_display::events::DisplayPhase::BwReady => RefreshPhase::BwReady,
         xteink_x4_display::events::DisplayPhase::BwRefreshing => RefreshPhase::BwRefreshing,
+        xteink_x4_display::events::DisplayPhase::PreviewDelay => RefreshPhase::PreviewDelay,
         xteink_x4_display::events::DisplayPhase::GrayDelay => RefreshPhase::GrayDelay,
         xteink_x4_display::events::DisplayPhase::GrayRefreshing => RefreshPhase::GrayRefreshing,
         xteink_x4_display::events::DisplayPhase::BaseSync => RefreshPhase::BaseSync,
@@ -468,6 +483,8 @@ fn map_probe(kind: xteink_x4_display::probes::ProbeKind) -> DisplayProbeKind {
         xteink_x4_display::probes::ProbeKind::PartialWindowBusyMatrix => {
             DisplayProbeKind::PartialWindowBusyMatrix
         }
+        xteink_x4_display::probes::ProbeKind::CustomLutFastA => DisplayProbeKind::CustomLutFastA,
+        xteink_x4_display::probes::ProbeKind::CustomLutFastB => DisplayProbeKind::CustomLutFastB,
     }
 }
 

@@ -94,6 +94,13 @@ fn display_request(request: DisplayRequest) -> xteink_x4_display::events::Displa
             page,
             sequence: completion_sequence,
         },
+        DisplayRequest::SetRefreshMode {
+            mode,
+            completion_sequence,
+        } => xteink_x4_display::events::DisplayRequest::SetRefreshMode {
+            mode,
+            sequence: Some(completion_sequence),
+        },
         DisplayRequest::Probe {
             kind,
             completion_sequence,
@@ -108,6 +115,12 @@ fn display_request(request: DisplayRequest) -> xteink_x4_display::events::Displa
                 }
                 DisplayProbeKind::PartialWindowBusyMatrix => {
                     xteink_x4_display::probes::ProbeKind::PartialWindowBusyMatrix
+                }
+                DisplayProbeKind::CustomLutFastA => {
+                    xteink_x4_display::probes::ProbeKind::CustomLutFastA
+                }
+                DisplayProbeKind::CustomLutFastB => {
+                    xteink_x4_display::probes::ProbeKind::CustomLutFastB
                 }
             },
             sequence: completion_sequence,
@@ -130,6 +143,7 @@ fn target_page_for_request(engine: &DisplayEngine, request: DisplayRequest) -> O
             Some(engine.target_for(runtime_engine::to_display_turn(turn)))
         }
         DisplayRequest::Goto { page, .. } => Some(page),
+        DisplayRequest::SetRefreshMode { .. } => Some(engine.current_page()),
         DisplayRequest::Probe { .. }
         | DisplayRequest::MenuNext
         | DisplayRequest::MenuPrev
@@ -171,7 +185,10 @@ pub(super) async fn display_task(
         black: [0; 100],
         red: [0; 100],
     };
-    let mut engine = DisplayEngine::new(page_count);
+    let mut engine = DisplayEngine::new_with_refresh_mode(
+        page_count,
+        binbook_fw::async_refresh::STARTUP_PAGE_REFRESH_MODE,
+    );
     let mut events = RuntimeEventSink::new(RUNTIME_EVENT_CHANNEL.sender());
 
     let mut menu_state = MenuState::new(0);
@@ -286,7 +303,9 @@ pub(super) async fn display_task(
                             },
                         });
                     }
-                    DisplayRequest::Goto { .. } | DisplayRequest::Probe { .. } => {}
+                    DisplayRequest::Goto { .. }
+                    | DisplayRequest::SetRefreshMode { .. }
+                    | DisplayRequest::Probe { .. } => {}
                 }
                 let current_page = engine.current_page();
                 let target_page = target_page_for_request(&engine, request);

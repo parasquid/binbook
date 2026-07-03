@@ -1,4 +1,6 @@
-use binbook_diagnostic_protocol::{FrameHeader, PanelModeCode, Status, StatusPayload};
+use binbook_diagnostic_protocol::{
+    FrameHeader, PanelModeCode, RefreshModeCode, Status, StatusPayload,
+};
 
 use crate::{diag::command::DisplayProbeKind, diag_log::DiagLog, input::PageTurn};
 
@@ -9,6 +11,7 @@ pub struct DiagnosticSnapshot {
     pub current_page: u32,
     pub page_count: u32,
     pub panel_mode: PanelModeCode,
+    pub refresh_mode: RefreshModeCode,
     pub dropped_log_count: u32,
     pub protocol_error_count: u32,
     pub last_error: i32,
@@ -31,6 +34,7 @@ impl DiagnosticSnapshot {
 pub enum PendingAction {
     RenderTurn { turn: PageTurn },
     RenderPage { target_page: u32 },
+    SetRefreshMode { mode: RefreshModeCode },
     DisplayProbe(DisplayProbeKind),
     CrashGet,
     CrashClear,

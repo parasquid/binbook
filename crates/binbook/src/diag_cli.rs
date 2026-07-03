@@ -4,7 +4,7 @@ use binbook_diagnostic_protocol::{KeyCode, Opcode};
 
 use crate::{
     diag_protocol, serial_transport::SerialSession, DiagCommand, ExerciseCommand, PageAction,
-    ProbeCommand, StorageCommand,
+    ProbeCommand, RefreshModeAction, RefreshModeChoice, StorageCommand,
 };
 
 pub fn run_diag(cmd: DiagCommand) {
@@ -149,6 +149,28 @@ pub fn run_diag(cmd: DiagCommand) {
             Opcode::Status,
             Duration::from_secs(2),
         ),
+        DiagCommand::RefreshMode { port, action } => {
+            let frame = match action {
+                RefreshModeAction::Get => diag_protocol::refresh_mode_get_request(1),
+                RefreshModeAction::Set { mode } => {
+                    let code = match mode {
+                        RefreshModeChoice::Balanced => {
+                            binbook_diagnostic_protocol::RefreshModeCode::Balanced
+                        }
+                        RefreshModeChoice::Fast => {
+                            binbook_diagnostic_protocol::RefreshModeCode::Fast
+                        }
+                    };
+                    diag_protocol::refresh_mode_set_request(1, code)
+                }
+            };
+            (
+                port.clone(),
+                frame,
+                Opcode::RefreshMode,
+                Duration::from_secs(2),
+            )
+        }
         DiagCommand::Logs { port, since, clear } => {
             if *clear {
                 (
@@ -192,6 +214,8 @@ pub fn run_diag(cmd: DiagCommand) {
                 ProbeCommand::PartialWindowBusy => {
                     diag_protocol::ProbeChoice::PartialWindowBusyMatrix
                 }
+                ProbeCommand::CustomLutFastA => diag_protocol::ProbeChoice::CustomLutFastA,
+                ProbeCommand::CustomLutFastB => diag_protocol::ProbeChoice::CustomLutFastB,
             };
             (
                 port.clone(),

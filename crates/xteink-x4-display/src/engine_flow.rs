@@ -2,7 +2,7 @@ use crate::{
     engine::{emit, ControllerRamState, DisplayBackend, DisplayEngine},
     events::{
         CompletionStatus, DisplayCompletion, DisplayEventKind, DisplayPhase, EventSink,
-        OperationOutcome, PageTurn, PanelMode, GRAY_SETTLE_DELAY_MS,
+        OperationOutcome, PageTurn, PanelMode, GRAY_SETTLE_DELAY_MS, PREVIEW_CLEANUP_DELAY_MS,
     },
     probes::ProbeKind,
     DisplayError,
@@ -35,6 +35,9 @@ impl DisplayEngine {
                 now,
                 DisplayEventKind::GrayDelayCancelled { page: from },
             );
+        }
+        if self.phase == DisplayPhase::PreviewDelay {
+            self.preview_cleanup = None;
         }
         if target == from {
             if let Some(turn) = boundary {
@@ -80,6 +83,130 @@ impl DisplayEngine {
                 self.recover(target, sequence, error, backend, events, now)
                     .await
             }
+        }
+    }
+
+    pub(crate) async fn preview_navigate<B: DisplayBackend, S: EventSink>(
+        &mut self,
+        target: u32,
+        sequence: Option<u16>,
+        boundary: Option<PageTurn>,
+        backend: &mut B,
+        events: &mut S,
+        now: u64,
+    ) -> DisplayCompletion {
+        let from = self.current_page;
+        if target >= self.page_count {
+            return self.complete(
+                sequence,
+                CompletionStatus::Error,
+                Some(DisplayError::InvalidPage),
+                events,
+                now,
+            );
+        }
+        if self.phase == DisplayPhase::GrayDelay {
+            self.gray_deadline = None;
+            emit(
+                events,
+                now,
+                DisplayEventKind::GrayDelayCancelled { page: from },
+            );
+        }
+        if self.phase == DisplayPhase::PreviewDelay {
+            self.preview_cleanup = None;
+        }
+        if target == from {
+            if let Some(turn) = boundary {
+                emit(
+                    events,
+                    now,
+                    DisplayEventKind::TurnBoundaryNoop {
+                        sequence,
+                        page: from,
+                        turn,
+                    },
+                );
+            }
+            return self.complete(sequence, CompletionStatus::Ok, None, events, now);
+        }
+        emit(
+            events,
+            now,
+            DisplayEventKind::TurnStarted {
+                sequence,
+                from,
+                target,
+            },
+        );
+        self.set_phase(DisplayPhase::BwRefreshing, events, now);
+        match backend.render_preview(sequence, from, target).await {
+            Ok(()) => {
+                let completed = backend.timestamp_ms().unwrap_or(now);
+                self.current_page = target;
+                self.recovery_attempted = false;
+                self.set_mode(PanelMode::Bw, events, completed);
+                self.set_controller(ControllerRamState::NeedsFullBwInputs, events, completed);
+                self.gray_deadline = None;
+                self.preview_cleanup = Some(crate::engine::PreviewCleanup {
+                    sequence,
+                    from,
+                    target,
+                    deadline_ms: completed + PREVIEW_CLEANUP_DELAY_MS,
+                    epoch: backend.request_epoch(),
+                });
+                emit(
+                    events,
+                    completed,
+                    DisplayEventKind::PageDisplayed { from, page: target },
+                );
+                self.set_phase(DisplayPhase::PreviewDelay, events, completed);
+                self.complete(sequence, CompletionStatus::Ok, None, events, completed)
+            }
+            Err(error) => {
+                self.recover(target, sequence, error, backend, events, now)
+                    .await
+            }
+        }
+    }
+
+    pub(crate) async fn cleanup_preview<B: DisplayBackend, S: EventSink>(
+        &mut self,
+        backend: &mut B,
+        events: &mut S,
+        now: u64,
+    ) -> Option<DisplayCompletion> {
+        let Some(cleanup) = self.preview_cleanup.take() else {
+            self.set_phase(DisplayPhase::BwReady, events, now);
+            return None;
+        };
+        if backend.request_epoch() != cleanup.epoch {
+            self.set_phase(DisplayPhase::BwReady, events, now);
+            return None;
+        }
+        self.set_phase(DisplayPhase::BwRefreshing, events, now);
+        match backend
+            .cleanup_preview_bw(cleanup.sequence, cleanup.from, cleanup.target)
+            .await
+        {
+            Ok(()) => {
+                let completed = backend.timestamp_ms().unwrap_or(now);
+                self.set_controller(ControllerRamState::BwBaseReady, events, completed);
+                self.gray_deadline = Some(completed + GRAY_SETTLE_DELAY_MS);
+                self.set_phase(DisplayPhase::GrayDelay, events, completed);
+                None
+            }
+            Err(error) => Some(
+                self.recover(
+                    cleanup.target,
+                    cleanup.sequence,
+                    error,
+                    backend,
+                    events,
+                    now,
+                )
+                .await,
+            ),
         }
     }
 

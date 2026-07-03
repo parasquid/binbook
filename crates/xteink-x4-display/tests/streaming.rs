@@ -11,8 +11,8 @@ use xteink_x4_display::{
     page_source::PlaneDecoder,
     panel::X4Panel,
     render::{
-        render_absolute_gray, render_bw_differential, render_staged_overlay, sync_bw_base,
-        OverlayControl,
+        cleanup_fast_preview, render_absolute_gray, render_bw_differential, render_fast_preview,
+        render_staged_overlay, sync_bw_base, OverlayControl,
     },
     stream::decode_stream,
 };
@@ -210,6 +210,88 @@ fn bw_differential_streams_previous_and_target_planes_with_one_full_window_each(
         1
     );
     assert_eq!(delay.0.iter().filter(|ns| **ns == 0).count(), 1);
+}
+
+#[test]
+fn fast_preview_streams_bw_planes_and_activates_accepted_preview_lut() {
+    let (mut book, mut panel, trace) = fixture();
+    let (mut compressed, mut decoded, mut black, mut red) = buffers();
+    let mut buffers = RenderBuffers::new(&mut compressed, &mut decoded, &mut black, &mut red);
+    let mut delay = Delay::default();
+    block_on(render_fast_preview(
+        &mut panel,
+        &mut book,
+        0,
+        1,
+        &mut buffers,
+        &mut delay,
+    ))
+    .unwrap();
+    let writes = trace.0.borrow();
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|write| write.as_slice() == [ssd1677_driver::Command::WRITE_RAM_RED])
+            .count(),
+        1
+    );
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|write| write.as_slice() == [ssd1677_driver::Command::WRITE_RAM_BW])
+            .count(),
+        1
+    );
+    assert!(writes
+        .iter()
+        .any(|write| write.as_slice() == [ssd1677_driver::Command::WRITE_LUT]));
+    assert!(writes.windows(2).any(|window| {
+        window[0].as_slice() == [ssd1677_driver::Command::WRITE_LUT]
+            && window[1].len() >= 105
+            && &window[1][100..105] == &[0x7f; 5]
+    }));
+    assert!(!writes.windows(2).any(|window| {
+        window[0].as_slice() == [ssd1677_driver::Command::WRITE_LUT]
+            && window[1].len() >= 105
+            && &window[1][100..105] == &[0x6f; 5]
+    }));
+    assert!(!writes.windows(2).any(|window| {
+        window[0].as_slice() == [ssd1677_driver::Command::WRITE_LUT]
+            && window[1].len() >= 105
+            && &window[1][100..105] == &[0x4f; 5]
+    }));
+    assert!(writes
+        .iter()
+        .any(|write| write.as_slice() == [ssd1677_driver::Command::MASTER_ACTIVATION]));
+    assert!(writes.windows(2).any(|window| {
+        window[0].as_slice() == [ssd1677_driver::Command::DISPLAY_UPDATE_CTRL2]
+            && window[1].as_slice()
+                == [ssd1677_driver::Command::UPDATE_CTRL_STAGED_GRAYSCALE | 0xc0]
+    }));
+}
+
+#[test]
+fn fast_preview_cleanup_loads_accepted_cleanup_lut_and_activates_staged_refresh() {
+    let (_, mut panel, trace) = fixture();
+    let mut delay = Delay::default();
+    block_on(cleanup_fast_preview(&mut panel, &mut delay)).unwrap();
+    let writes = trace.0.borrow();
+    assert!(!writes
+        .iter()
+        .any(|write| write.as_slice() == [ssd1677_driver::Command::WRITE_RAM_RED]));
+    assert!(!writes
+        .iter()
+        .any(|write| write.as_slice() == [ssd1677_driver::Command::WRITE_RAM_BW]));
+    assert!(writes.windows(2).any(|window| {
+        window[0].as_slice() == [ssd1677_driver::Command::WRITE_LUT]
+            && window[1].len() >= 105
+            && &window[1][100..105] == &[0xbf; 5]
+    }));
+    assert!(writes.windows(2).any(|window| {
+        window[0].as_slice() == [ssd1677_driver::Command::DISPLAY_UPDATE_CTRL2]
+            && window[1].as_slice()
+                == [ssd1677_driver::Command::UPDATE_CTRL_STAGED_GRAYSCALE | 0xc0]
+    }));
 }
 
 #[test]

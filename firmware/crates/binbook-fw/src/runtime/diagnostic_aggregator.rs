@@ -31,6 +31,7 @@ pub(super) async fn runtime_event_aggregator_task() {
         current_page: 0,
         page_count: book.page_count(),
         panel_mode: binbook_diagnostic_protocol::PanelModeCode::Unknown,
+        refresh_mode: refresh_mode_code(binbook_fw::async_refresh::STARTUP_PAGE_REFRESH_MODE),
         dropped_log_count: 0,
         protocol_error_count: 0,
         last_error: 0,
@@ -93,6 +94,19 @@ pub(super) async fn runtime_event_aggregator_task() {
                 };
                 response_tx.send(response).await;
             }
+        }
+    }
+}
+
+fn refresh_mode_code(
+    mode: binbook_fw::xteink_x4_display::events::PageRefreshMode,
+) -> binbook_diagnostic_protocol::RefreshModeCode {
+    match mode {
+        binbook_fw::xteink_x4_display::events::PageRefreshMode::Balanced => {
+            binbook_diagnostic_protocol::RefreshModeCode::Balanced
+        }
+        binbook_fw::xteink_x4_display::events::PageRefreshMode::Fast => {
+            binbook_diagnostic_protocol::RefreshModeCode::Fast
         }
     }
 }

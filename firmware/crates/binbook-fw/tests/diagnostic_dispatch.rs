@@ -255,6 +255,30 @@ fn diag_probe_partial_window_busy_maps_to_render_request() {
 
 #[cfg(feature = "diagnostic-console")]
 #[test]
+fn diag_probe_custom_lut_candidates_map_to_render_request() {
+    use binbook_fw::diag::{dispatch_command, CommandContext, DispatchResult};
+    use binbook_fw::diag_storage::UnavailableStorage;
+    let header = binbook_diagnostic_protocol::FrameHeader {
+        kind: binbook_diagnostic_protocol::FrameKind::Request,
+        opcode: binbook_diagnostic_protocol::Opcode::DisplayProbe,
+        status: binbook_diagnostic_protocol::Status::Ok,
+        sequence: 10,
+        payload_len: 1,
+    };
+    let mut ctx = CommandContext::new(0, 10, 0, 0);
+    let mut resp_buf = [0u8; 496];
+    let mut storage = UnavailableStorage;
+    for (payload, expected) in [
+        (0x05, binbook_fw::diag::DisplayProbeKind::CustomLutFastA),
+        (0x06, binbook_fw::diag::DisplayProbeKind::CustomLutFastB),
+    ] {
+        let result = dispatch_command(header, &[payload], &mut ctx, &mut resp_buf, &mut storage);
+        assert_eq!(result, DispatchResult::DisplayProbe(expected));
+    }
+}
+
+#[cfg(feature = "diagnostic-console")]
+#[test]
 fn diag_probe_unknown_code_returns_error() {
     use binbook_fw::diag::{dispatch_command, CommandContext, DispatchResult};
     use binbook_fw::diag_storage::UnavailableStorage;

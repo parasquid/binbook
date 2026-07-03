@@ -1,7 +1,7 @@
 use binbook::protocol::{delete_command, list_command, upload_command};
 use binbook_diagnostic_protocol::{
     decode_frame, encode_frame, FrameHeader, FrameKind, KeyCode, Opcode,
-    PageAction as ProtoPageAction, Status,
+    PageAction as ProtoPageAction, RefreshModeAction, RefreshModeCode, Status,
 };
 use clap::Parser;
 use std::time::Duration;
@@ -154,6 +154,8 @@ fn cli_probe_supports_all_probe_codes() {
             binbook::diag_protocol::ProbeChoice::PartialWindowBusyMatrix,
             0x04u8,
         ),
+        (binbook::diag_protocol::ProbeChoice::CustomLutFastA, 0x05u8),
+        (binbook::diag_protocol::ProbeChoice::CustomLutFastB, 0x06u8),
     ];
     for (i, (choice, expected_code)) in probes.iter().enumerate() {
         let frame = binbook::diag_protocol::display_probe_request(60 + i as u16, *choice);
@@ -199,6 +201,82 @@ fn cli_status_decodes_canonical_u32_layout() {
     assert_eq!(decoded.protocol_error_count, 100_004);
     assert_eq!(decoded.panel_mode, 1);
     assert_eq!(decoded.last_error, -12);
+}
+
+#[test]
+fn cli_refresh_mode_requests_encode_action_and_mode() {
+    let get = binbook::diag_protocol::refresh_mode_get_request(31);
+    let mut payload = [0u8; 16];
+    let (header, payload_len) = decode_frame(&get, &mut payload).unwrap();
+    assert_eq!(header.opcode, Opcode::RefreshMode);
+    assert_eq!(header.sequence, 31);
+    assert_eq!(
+        &payload[..payload_len],
+        &[
+            RefreshModeAction::Get as u8,
+            RefreshModeCode::Balanced as u8
+        ]
+    );
+
+    let set = binbook::diag_protocol::refresh_mode_set_request(32, RefreshModeCode::Fast);
+    let (header, payload_len) = decode_frame(&set, &mut payload).unwrap();
+    assert_eq!(header.opcode, Opcode::RefreshMode);
+    assert_eq!(header.sequence, 32);
+    assert_eq!(
+        &payload[..payload_len],
+        &[RefreshModeAction::Set as u8, RefreshModeCode::Fast as u8]
+    );
+}
+
+#[test]
+fn cli_refresh_mode_response_formats_active_mode() {
+    let mut payload = [0u8; 4];
+    let payload_len = binbook_diagnostic_protocol::encode_refresh_mode_payload(
+        binbook_diagnostic_protocol::RefreshModePayload {
+            action: RefreshModeAction::Get,
+            mode: RefreshModeCode::Fast,
+        },
+        &mut payload,
+    )
+    .unwrap();
+    let frame = response_frame(Opcode::RefreshMode, 4, Status::Ok, &payload[..payload_len]);
+
+    let text = binbook::diag_protocol::format_response(&frame, Opcode::RefreshMode, 4).unwrap();
+
+    assert_eq!(text, "refresh_mode=fast");
+}
+
+#[test]
+fn cli_refresh_mode_subcommands_parse() {
+    assert!(binbook::Cli::try_parse_from([
+        "binbook",
+        "diag",
+        "refresh-mode",
+        "--port",
+        "/dev/ttyACM0",
+        "get",
+    ])
+    .is_ok());
+    assert!(binbook::Cli::try_parse_from([
+        "binbook",
+        "diag",
+        "refresh-mode",
+        "--port",
+        "/dev/ttyACM0",
+        "set",
+        "fast",
+    ])
+    .is_ok());
+    assert!(binbook::Cli::try_parse_from([
+        "binbook",
+        "diag",
+        "refresh-mode",
+        "--port",
+        "/dev/ttyACM0",
+        "set",
+        "balanced",
+    ])
+    .is_ok());
 }
 
 #[test]

@@ -52,6 +52,8 @@ firmware-bin = [
 sd-storage = ["dep:embedded-hal-bus", "dep:embedded-sdmmc", "dep:embedded-sd-storage", "dep:binbook-storage"]
 debug-log = []
 chunk-dirty-probe = []
+fast-refresh-mode = []
+preview-lut-turns = ["fast-refresh-mode"]
 diagnostic-console = [
     "dep:binbook-diagnostic-protocol",
     "dep:esp-storage",

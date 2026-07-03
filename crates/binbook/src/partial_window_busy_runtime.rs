@@ -41,9 +41,9 @@ pub fn run_partial_window_busy(
         .open()
         .map_err(|error| format!("failed to open {port}: {error}"))?;
     let mut file = match output {
-        Some(path) => Some(File::create(output_path(path)?).map_err(|error| {
-            format!("create output: {error}")
-        })?),
+        Some(path) => Some(
+            File::create(output_path(path)?).map_err(|error| format!("create output: {error}"))?,
+        ),
         None => None,
     };
     let mut sink: &mut dyn Write = match file.as_mut() {
@@ -102,12 +102,10 @@ pub fn run_partial_window_busy_io<T: Read + Write>(
             json!({"kind":"probe_response","schema_version":1,"round":round,"sequence":probe_sequence,"response_elapsed_ms":started.elapsed().as_millis()}),
         )?;
         let records = collect_round_logs(io, evidence, &mut sequence, round, &mut cursor)?;
-        if records.iter().any(|record| {
-            matches!(
-                record.event,
-                EVT_RENDER_FAILURE | EVT_DISPLAY_ERROR
-            )
-        }) {
+        if records
+            .iter()
+            .any(|record| matches!(record.event, EVT_RENDER_FAILURE | EVT_DISPLAY_ERROR))
+        {
             error_count = error_count.saturating_add(1);
         }
     }
@@ -185,11 +183,7 @@ fn output_path(path: &Path) -> Result<PathBuf, String> {
     Ok(path.join("evidence.jsonl"))
 }
 
-fn write_log(
-    output: &mut dyn Write,
-    round: u16,
-    record: LogRecordPayload,
-) -> Result<(), String> {
+fn write_log(output: &mut dyn Write, round: u16, record: LogRecordPayload) -> Result<(), String> {
     write_json(
         output,
         json!({"kind":"log","schema_version":1,"round":round,"sequence":record.sequence,"tick_ms":record.tick_ms,"level":record.level,"subsystem":record.subsystem,"event":record.event,"arg0":record.arg0,"arg1":record.arg1,"arg2":record.arg2}),

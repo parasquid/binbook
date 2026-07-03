@@ -10,6 +10,7 @@ The authoritative BinBook 0.1 candidate file-format specification lives at
 - [`reference/xteink-x4-firmware-flashing.md`](reference/xteink-x4-firmware-flashing.md) - pinned X4 firmware build and flashing procedure.
 - [`reference/xteink-x4-agent-device-verification.md`](reference/xteink-x4-agent-device-verification.md) - mandatory sequential serial and webcam verification runbook.
 - [`reference/xteink-x4-grayscale-research.md`](reference/xteink-x4-grayscale-research.md) - supporting research for the Xteink X4 grayscale display profile.
+- [`reference/xteink-x4-custom-lut-tuning.md`](reference/xteink-x4-custom-lut-tuning.md) - X4 Balanced/Fast refresh mode notes, custom SSD1677 LUT tuning, tail-byte terminology, metrics, and update guidance.
 - [`ROADMAP.md`](ROADMAP.md) - evidence-gated implementation work.
 
 ## Dated Plans And Specs

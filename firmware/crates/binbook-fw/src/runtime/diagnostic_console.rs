@@ -169,6 +169,7 @@ async fn handle_crash_command<F>(
         }
         PendingAction::RenderTurn { .. }
         | PendingAction::RenderPage { .. }
+        | PendingAction::SetRefreshMode { .. }
         | PendingAction::DisplayProbe(_) => {
             status = Status::BadRequest;
         }
@@ -196,6 +197,17 @@ async fn handle_display_command(
             page: target_page,
             completion_sequence: pending.header.sequence,
         },
+        PendingAction::SetRefreshMode { mode } => DisplayRequest::SetRefreshMode {
+            mode: match mode {
+                binbook_diagnostic_protocol::RefreshModeCode::Balanced => {
+                    binbook_fw::xteink_x4_display::events::PageRefreshMode::Balanced
+                }
+                binbook_diagnostic_protocol::RefreshModeCode::Fast => {
+                    binbook_fw::xteink_x4_display::events::PageRefreshMode::Fast
+                }
+            },
+            completion_sequence: pending.header.sequence,
+        },
         PendingAction::DisplayProbe(probe) => DisplayRequest::Probe {
             kind: match probe {
                 binbook_fw::diag::DisplayProbeKind::FullRefreshCurrent => {
@@ -207,6 +219,12 @@ async fn handle_display_command(
                 }
                 binbook_fw::diag::DisplayProbeKind::PartialWindowBusyMatrix => {
                     DisplayProbeKind::PartialWindowBusyMatrix
+                }
+                binbook_fw::diag::DisplayProbeKind::CustomLutFastA => {
+                    DisplayProbeKind::CustomLutFastA
+                }
+                binbook_fw::diag::DisplayProbeKind::CustomLutFastB => {
+                    DisplayProbeKind::CustomLutFastB
                 }
             },
             completion_sequence: pending.header.sequence,

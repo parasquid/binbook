@@ -1,5 +1,6 @@
 use ssd1677_driver::{BusyWaitObserver, NoopBusyWaitObserver};
 
+pub use crate::panel::{custom_lut_candidate_waveform, CustomLutCandidate};
 pub use crate::profile::{
     PHYSICAL_HEIGHT as DISPLAY_HEIGHT, PHYSICAL_WIDTH as DISPLAY_WIDTH,
     ROW_BYTES as DISPLAY_ROW_BYTES,
@@ -14,6 +15,8 @@ pub enum ProbeKind {
     ClearWhite,
     WindowCorners,
     PartialWindowBusyMatrix,
+    CustomLutFastA,
+    CustomLutFastB,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,7 +205,11 @@ where
             observer.case_start(case_index, round, polarity);
             observer.geometry(case_index, case);
             let bytes_per_plane = case.bytes_per_plane();
-            observer.size(case_index, bytes_per_plane, bytes_per_plane.saturating_mul(2));
+            observer.size(
+                case_index,
+                bytes_per_plane,
+                bytes_per_plane.saturating_mul(2),
+            );
 
             let red_start = observer.now_ms();
             panel.controller().write_red_solid_window(
@@ -232,9 +239,7 @@ where
                 case: case_index,
                 observer,
             };
-            panel
-                .wait_ready_observed(delay, &mut busy_observer)
-                .await?;
+            panel.wait_ready_observed(delay, &mut busy_observer).await?;
             observer.case_end(case_index, elapsed_u32(case_start, observer.now_ms()), 0);
         }
     }
@@ -354,4 +359,50 @@ where
         .refresh_observed(crate::panel::RefreshMode::Full, delay, observer)
         .await?;
     Ok(())
+}
+
+pub async fn custom_lut_probe_observed<SPI, DC, RST, BUSY, D>(
+    panel: &mut crate::panel::X4Panel<SPI, DC, RST, BUSY>,
+    candidate: CustomLutCandidate,
+    delay: &mut D,
+    observer: &mut impl BusyWaitObserver,
+) -> crate::DisplayResult<()>
+where
+    SPI: embedded_hal::spi::SpiDevice<u8>,
+    DC: embedded_hal::digital::OutputPin,
+    RST: embedded_hal::digital::OutputPin,
+    BUSY: embedded_hal::digital::InputPin,
+    D: embedded_hal_async::delay::DelayNs,
+{
+    panel
+        .controller()
+        .set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    panel
+        .controller()
+        .write_red_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, custom_lut_previous_row)?;
+    panel
+        .controller()
+        .set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)?;
+    panel
+        .controller()
+        .write_frame_rows::<DISPLAY_ROW_BYTES>(DISPLAY_HEIGHT, custom_lut_target_row)?;
+    panel.load_custom_lut_candidate(candidate)?;
+    panel
+        .controller()
+        .trigger_refresh(crate::panel::RefreshMode::StagedGrayscale)?;
+    panel.wait_ready_observed(delay, observer).await?;
+    Ok(())
+}
+
+fn custom_lut_previous_row(row: u16, output: &mut [u8; DISPLAY_ROW_BYTES]) {
+    output.fill(0xff);
+    if row < 12 || row >= DISPLAY_HEIGHT - 12 {
+        output.fill(0x00);
+    }
+}
+
+fn custom_lut_target_row(row: u16, output: &mut [u8; DISPLAY_ROW_BYTES]) {
+    output.fill(if (row / 24) % 2 == 0 { 0x00 } else { 0xff });
+    output[0] = 0x00;
+    output[DISPLAY_ROW_BYTES - 1] = 0x00;
 }

@@ -13,9 +13,16 @@ pub const CAP_LOG: u32 = 1 << 3;
 pub const CAP_CRASH: u32 = 1 << 4;
 pub const CAP_DISPLAY_PROBE: u32 = 1 << 5;
 pub const CAP_STORAGE: u32 = 1 << 6;
+pub const CAP_REFRESH_MODE: u32 = 1 << 7;
 
-pub const ALL_CAPABILITIES: u32 =
-    CAP_KEY | CAP_PAGE | CAP_STATUS | CAP_LOG | CAP_CRASH | CAP_DISPLAY_PROBE | CAP_STORAGE;
+pub const ALL_CAPABILITIES: u32 = CAP_KEY
+    | CAP_PAGE
+    | CAP_STATUS
+    | CAP_LOG
+    | CAP_CRASH
+    | CAP_DISPLAY_PROBE
+    | CAP_STORAGE
+    | CAP_REFRESH_MODE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolError {
@@ -79,6 +86,7 @@ pub enum Opcode {
     StoreAbort = 0x0E,
     StoreDelete = 0x0F,
     StoreRead = 0x10,
+    RefreshMode = 0x11,
 }
 
 impl Opcode {
@@ -100,6 +108,7 @@ impl Opcode {
             0x0E => Some(Opcode::StoreAbort),
             0x0F => Some(Opcode::StoreDelete),
             0x10 => Some(Opcode::StoreRead),
+            0x11 => Some(Opcode::RefreshMode),
             _ => None,
         }
     }
@@ -251,6 +260,42 @@ pub enum ProbeCode {
     ClearWhite = 0x02,
     WindowCorners = 0x03,
     PartialWindowBusyMatrix = 0x04,
+    CustomLutFastA = 0x05,
+    CustomLutFastB = 0x06,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RefreshModeAction {
+    Get = 0x01,
+    Set = 0x02,
+}
+
+impl RefreshModeAction {
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0x01 => Some(RefreshModeAction::Get),
+            0x02 => Some(RefreshModeAction::Set),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RefreshModeCode {
+    Balanced = 0x00,
+    Fast = 0x01,
+}
+
+impl RefreshModeCode {
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0x00 => Some(RefreshModeCode::Balanced),
+            0x01 => Some(RefreshModeCode::Fast),
+            _ => None,
+        }
+    }
 }
 
 impl ProbeCode {
@@ -260,6 +305,8 @@ impl ProbeCode {
             0x02 => Some(ProbeCode::ClearWhite),
             0x03 => Some(ProbeCode::WindowCorners),
             0x04 => Some(ProbeCode::PartialWindowBusyMatrix),
+            0x05 => Some(ProbeCode::CustomLutFastA),
+            0x06 => Some(ProbeCode::CustomLutFastB),
             _ => None,
         }
     }
@@ -303,6 +350,12 @@ pub struct StatusPayload {
     pub dropped_log_count: u32,
     pub protocol_error_count: u32,
     pub last_error: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RefreshModePayload {
+    pub action: RefreshModeAction,
+    pub mode: RefreshModeCode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

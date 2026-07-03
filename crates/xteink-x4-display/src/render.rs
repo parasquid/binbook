@@ -16,7 +16,11 @@ use crate::{
     DisplayResult,
 };
 
-pub use crate::native::render_bw_differential_timed;
+pub use crate::native::{
+    cleanup_fast_preview, cleanup_fast_preview_observed, render_bw_differential_timed,
+    render_fast_preview, render_fast_preview_observed, render_fast_preview_timed,
+    render_lut_preview_timed,
+};
 pub use crate::render_timing::{
     PlaneRole, RamTarget, RenderObservers, RenderStageStatus, RenderTimingObserver,
 };

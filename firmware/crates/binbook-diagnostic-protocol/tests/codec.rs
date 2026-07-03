@@ -10,11 +10,11 @@ use binbook_diagnostic_protocol::{
     encode_store_upload_begin_response, encode_store_upload_commit_request,
     encode_store_upload_write_request, encode_store_upload_write_response, FrameHeader, FrameKind,
     HelloResponse, KeyAction, KeyCode, LogGetPayload, LogRecordPayload, Opcode, PageAction,
-    PanelModeCode, ProbeCode, Status, StatusPayload, StorageBackend, EVT_DISPLAY_RECOVERY,
-    EVT_INPUT_DECISION, EVT_INPUT_TRANSITION, EVT_REFRESH_PHASE, EVT_RESEED_COMPLETE,
-    EVT_RESEED_START, EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED, EVT_TURN_QUEUED,
-    EVT_TURN_STARTED, FRAME_DELIMITER, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
-    STORE_LIST_ENTRY_HEADER_BYTES,
+    PanelModeCode, ProbeCode, RefreshModeAction, RefreshModeCode, RefreshModePayload, Status,
+    StatusPayload, StorageBackend, EVT_DISPLAY_RECOVERY, EVT_INPUT_DECISION, EVT_INPUT_TRANSITION,
+    EVT_REFRESH_PHASE, EVT_RESEED_COMPLETE, EVT_RESEED_START, EVT_TURN_BOUNDARY_NOOP,
+    EVT_TURN_DEQUEUED, EVT_TURN_DROPPED, EVT_TURN_QUEUED, EVT_TURN_STARTED, FRAME_DELIMITER,
+    MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION, STORE_LIST_ENTRY_HEADER_BYTES,
 };
 
 #[test]
@@ -138,10 +138,11 @@ fn storage_backend_and_unsupported_status_and_cap_storage() {
     assert_eq!(StorageBackend::from_u8(2), None);
     assert_eq!(Status::Unsupported, Status::from_u8(5).unwrap());
     assert_eq!(binbook_diagnostic_protocol::CAP_STORAGE, 1 << 6);
+    assert_eq!(binbook_diagnostic_protocol::CAP_REFRESH_MODE, 1 << 7);
 }
 
 #[test]
-fn storage_opcodes_are_defined() {
+fn storage_and_refresh_mode_opcodes_are_defined() {
     use binbook_diagnostic_protocol::Opcode;
     assert_eq!(Opcode::from_u8(0x0A), Some(Opcode::StoreList));
     assert_eq!(Opcode::from_u8(0x0B), Some(Opcode::StoreUploadBegin));
@@ -150,7 +151,8 @@ fn storage_opcodes_are_defined() {
     assert_eq!(Opcode::from_u8(0x0E), Some(Opcode::StoreAbort));
     assert_eq!(Opcode::from_u8(0x0F), Some(Opcode::StoreDelete));
     assert_eq!(Opcode::from_u8(0x10), Some(Opcode::StoreRead));
-    assert_eq!(Opcode::from_u8(0x11), None);
+    assert_eq!(Opcode::from_u8(0x11), Some(Opcode::RefreshMode));
+    assert_eq!(Opcode::from_u8(0x12), None);
 }
 
 #[test]
@@ -392,15 +394,35 @@ fn display_probe_payload_roundtrips() {
 #[test]
 fn display_probe_payload_accepts_partial_window_busy_matrix() {
     let mut payload = [0u8; 4];
-    let len =
-        binbook_diagnostic_protocol::encode_probe_payload(ProbeCode::PartialWindowBusyMatrix, &mut payload)
-            .unwrap();
+    let len = binbook_diagnostic_protocol::encode_probe_payload(
+        ProbeCode::PartialWindowBusyMatrix,
+        &mut payload,
+    )
+    .unwrap();
     assert_eq!(len, 1);
     assert_eq!(payload[0], 0x04);
     assert_eq!(
         binbook_diagnostic_protocol::decode_probe_payload(&payload[..len]).unwrap(),
         ProbeCode::PartialWindowBusyMatrix
     );
+}
+
+#[test]
+fn display_probe_payload_accepts_custom_lut_candidates() {
+    let cases = [
+        (ProbeCode::CustomLutFastA, 0x05),
+        (ProbeCode::CustomLutFastB, 0x06),
+    ];
+    for (probe, expected) in cases {
+        let mut payload = [0u8; 4];
+        let len = binbook_diagnostic_protocol::encode_probe_payload(probe, &mut payload).unwrap();
+        assert_eq!(len, 1);
+        assert_eq!(payload[0], expected);
+        assert_eq!(
+            binbook_diagnostic_protocol::decode_probe_payload(&payload[..len]).unwrap(),
+            probe
+        );
+    }
 }
 
 #[test]
@@ -433,6 +455,33 @@ fn status_preserves_u32_fields_and_signed_error() {
     assert_eq!(decoded.dropped_log_count, 90_003);
     assert_eq!(decoded.protocol_error_count, 100_004);
     assert_eq!(decoded.last_error, -12);
+}
+
+#[test]
+fn refresh_mode_payload_preserves_action_and_mode() {
+    let value = RefreshModePayload {
+        action: RefreshModeAction::Set,
+        mode: RefreshModeCode::Fast,
+    };
+    let mut buf = [0u8; MAX_PAYLOAD_BYTES];
+    let len = binbook_diagnostic_protocol::encode_refresh_mode_payload(value, &mut buf).unwrap();
+    assert_eq!(len, 2);
+    assert_eq!(
+        &buf[..len],
+        &[RefreshModeAction::Set as u8, RefreshModeCode::Fast as u8]
+    );
+    let decoded = binbook_diagnostic_protocol::decode_refresh_mode_payload(&buf[..len]).unwrap();
+    assert_eq!(decoded, value);
+
+    let get = RefreshModePayload {
+        action: RefreshModeAction::Get,
+        mode: RefreshModeCode::Balanced,
+    };
+    let len = binbook_diagnostic_protocol::encode_refresh_mode_payload(get, &mut buf).unwrap();
+    assert_eq!(
+        binbook_diagnostic_protocol::decode_refresh_mode_payload(&buf[..len]).unwrap(),
+        get
+    );
 }
 
 #[test]

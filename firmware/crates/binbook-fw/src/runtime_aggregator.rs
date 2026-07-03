@@ -12,9 +12,9 @@ use crate::{
         EVT_DISPLAY_REQUEST_END, EVT_DISPLAY_REQUEST_START, EVT_GRAY_DELAY_CANCELLED,
         EVT_GRAY_OVERLAY_ACTIVATE, EVT_GRAY_OVERLAY_CANCELLED, EVT_GRAY_OVERLAY_COMPLETE,
         EVT_GRAY_OVERLAY_START, EVT_INPUT_DECISION, EVT_INPUT_TRANSITION, EVT_PAGE_METADATA_READ,
-        EVT_PANEL_MODE, EVT_PLANE_ROW_FILL_SUMMARY, EVT_PLANE_SPI_WRITE_SUMMARY,
-        EVT_PARTIAL_WINDOW_BUSY, EVT_PARTIAL_WINDOW_CASE_END, EVT_PARTIAL_WINDOW_CASE_START,
-        EVT_PARTIAL_WINDOW_GEOMETRY, EVT_PARTIAL_WINDOW_RAM_WRITE, EVT_PARTIAL_WINDOW_SIZE,
+        EVT_PANEL_MODE, EVT_PARTIAL_WINDOW_BUSY, EVT_PARTIAL_WINDOW_CASE_END,
+        EVT_PARTIAL_WINDOW_CASE_START, EVT_PARTIAL_WINDOW_GEOMETRY, EVT_PARTIAL_WINDOW_RAM_WRITE,
+        EVT_PARTIAL_WINDOW_SIZE, EVT_PLANE_ROW_FILL_SUMMARY, EVT_PLANE_SPI_WRITE_SUMMARY,
         EVT_PLANE_WRITE_END, EVT_PLANE_WRITE_START, EVT_REFRESH_PHASE, EVT_REFRESH_TRIGGER,
         EVT_RENDER_FAILURE, EVT_RENDER_START, EVT_RENDER_SUCCESS, EVT_REQUEST_ENQUEUE,
         EVT_REQUEST_RECEIVE, EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED,
@@ -177,6 +177,9 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
             RuntimeEventKind::PanelModeChanged(mode) => {
                 self.snapshot.panel_mode = panel_mode(mode);
                 self.push(tick_ms, LEVEL_INFO, EVT_PANEL_MODE, mode as i32, 0, 0);
+            }
+            RuntimeEventKind::RefreshModeChanged(mode) => {
+                self.snapshot.refresh_mode = refresh_mode(mode);
             }
             RuntimeEventKind::ControllerRamStateChanged(state) => {
                 self.push(
@@ -805,6 +808,19 @@ fn panel_mode(mode: RuntimePanelMode) -> PanelModeCode {
         RuntimePanelMode::Unknown => PanelModeCode::Unknown,
         RuntimePanelMode::Grayscale => PanelModeCode::Grayscale,
         RuntimePanelMode::Bw => PanelModeCode::Bw,
+    }
+}
+
+fn refresh_mode(
+    mode: crate::runtime_engine::RuntimeRefreshMode,
+) -> binbook_diagnostic_protocol::RefreshModeCode {
+    match mode {
+        xteink_x4_display::events::PageRefreshMode::Balanced => {
+            binbook_diagnostic_protocol::RefreshModeCode::Balanced
+        }
+        xteink_x4_display::events::PageRefreshMode::Fast => {
+            binbook_diagnostic_protocol::RefreshModeCode::Fast
+        }
     }
 }
 

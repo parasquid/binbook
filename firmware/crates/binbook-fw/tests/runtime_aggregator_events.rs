@@ -130,27 +130,62 @@ fn partial_window_probe_events_keep_case_geometry_and_timing() {
     let result = aggregator.log().read_from_sequence(0, &mut records);
     assert_eq!(result.record_count, 6);
     assert_eq!(
-        (records[0].event, records[0].arg0, records[0].arg1, records[0].arg2),
+        (
+            records[0].event,
+            records[0].arg0,
+            records[0].arg1,
+            records[0].arg2
+        ),
         (EVT_PARTIAL_WINDOW_CASE_START, 3, 2, 1)
     );
     assert_eq!(
-        (records[1].event, records[1].arg0, records[1].arg1, records[1].arg2),
+        (
+            records[1].event,
+            records[1].arg0,
+            records[1].arg1,
+            records[1].arg2
+        ),
         (EVT_PARTIAL_WINDOW_GEOMETRY, 3, 0, 208)
     );
     assert_eq!(
-        (records[2].event, records[2].arg0, records[2].arg1, records[2].arg2),
+        (
+            records[2].event,
+            records[2].arg0,
+            records[2].arg1,
+            records[2].arg2
+        ),
         (EVT_PARTIAL_WINDOW_SIZE, 3, 6400, 12800)
     );
     assert_eq!(
-        (records[3].event, records[3].arg0, records[3].arg1, records[3].arg2),
+        (
+            records[3].event,
+            records[3].arg0,
+            records[3].arg1,
+            records[3].arg2
+        ),
         (EVT_PARTIAL_WINDOW_RAM_WRITE, 3, 7, 8)
     );
     assert_eq!(
-        (records[4].event, records[4].arg0, records[4].arg1, records[4].arg2),
-        (EVT_PARTIAL_WINDOW_BUSY, 3, 245, BusyWaitStatus::Ready.log_code())
+        (
+            records[4].event,
+            records[4].arg0,
+            records[4].arg1,
+            records[4].arg2
+        ),
+        (
+            EVT_PARTIAL_WINDOW_BUSY,
+            3,
+            245,
+            BusyWaitStatus::Ready.log_code()
+        )
     );
     assert_eq!(
-        (records[5].event, records[5].arg0, records[5].arg1, records[5].arg2),
+        (
+            records[5].event,
+            records[5].arg0,
+            records[5].arg1,
+            records[5].arg2
+        ),
         (EVT_PARTIAL_WINDOW_CASE_END, 3, 264, 0)
     );
 }
@@ -160,10 +195,25 @@ fn aggregator<const N: usize>() -> RuntimeAggregator<N, 32> {
         current_page: 0,
         page_count: 4,
         panel_mode: PanelModeCode::Unknown,
+        refresh_mode: binbook_diagnostic_protocol::RefreshModeCode::Balanced,
         dropped_log_count: 0,
         protocol_error_count: 0,
         last_error: 0,
     })
+}
+
+#[test]
+fn refresh_mode_changed_updates_diagnostic_snapshot() {
+    let mut aggregator = aggregator::<2>();
+    aggregator.commit(event(
+        12,
+        RuntimeEventKind::RefreshModeChanged(binbook_fw::runtime_engine::RuntimeRefreshMode::Fast),
+    ));
+
+    assert_eq!(
+        aggregator.snapshot().refresh_mode,
+        binbook_diagnostic_protocol::RefreshModeCode::Fast
+    );
 }
 #[test]
 fn queue_drops_and_real_phase_events_are_recorded_with_origin_timestamps() {

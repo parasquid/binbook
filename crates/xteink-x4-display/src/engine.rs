@@ -1,7 +1,8 @@
 use crate::{
     events::{
         CompletionStatus, DisplayCompletion, DisplayEvent, DisplayEventKind, DisplayPhase,
-        DisplayRequest, EventSink, OperationOutcome, PageTurn, PanelMode, GRAY_SETTLE_DELAY_MS,
+        DisplayRequest, EventSink, OperationOutcome, PageRefreshMode, PageTurn, PanelMode,
+        GRAY_SETTLE_DELAY_MS,
     },
     probes::ProbeKind,
     DisplayError, DisplayResult,
@@ -33,6 +34,18 @@ pub trait DisplayBackend {
         from: u32,
         target: u32,
     ) -> DisplayResult<()>;
+    async fn render_preview(
+        &mut self,
+        sequence: Option<u16>,
+        from: u32,
+        target: u32,
+    ) -> DisplayResult<()>;
+    async fn cleanup_preview_bw(
+        &mut self,
+        sequence: Option<u16>,
+        from: u32,
+        target: u32,
+    ) -> DisplayResult<()>;
     async fn render_grayscale(&mut self, page: u32, epoch: u32) -> DisplayResult<OperationOutcome>;
     async fn sync_bw_base(&mut self, page: u32, epoch: u32) -> DisplayResult<OperationOutcome>;
     async fn recover_bw(&mut self, page: u32) -> DisplayResult<()>;
@@ -44,21 +57,39 @@ pub struct DisplayEngine {
     pub(crate) current_page: u32,
     pub(crate) phase: DisplayPhase,
     pub(crate) panel_mode: PanelMode,
+    pub(crate) refresh_mode: PageRefreshMode,
     pub(crate) controller_state: ControllerRamState,
     pub(crate) gray_deadline: Option<u64>,
+    pub(crate) preview_cleanup: Option<PreviewCleanup>,
     pub(crate) recovery_attempted: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PreviewCleanup {
+    pub(crate) sequence: Option<u16>,
+    pub(crate) from: u32,
+    pub(crate) target: u32,
+    pub(crate) deadline_ms: u64,
+    pub(crate) epoch: u32,
 }
 
 impl DisplayEngine {
     #[must_use]
     pub const fn new(page_count: u32) -> Self {
+        Self::new_with_refresh_mode(page_count, PageRefreshMode::Balanced)
+    }
+
+    #[must_use]
+    pub const fn new_with_refresh_mode(page_count: u32, refresh_mode: PageRefreshMode) -> Self {
         Self {
             page_count,
             current_page: 0,
             phase: DisplayPhase::Recovering,
             panel_mode: PanelMode::Unknown,
+            refresh_mode,
             controller_state: ControllerRamState::NeedsFullBwInputs,
             gray_deadline: None,
+            preview_cleanup: None,
             recovery_attempted: false,
         }
     }
@@ -71,6 +102,9 @@ impl DisplayEngine {
     }
     pub const fn panel_mode(&self) -> PanelMode {
         self.panel_mode
+    }
+    pub const fn refresh_mode(&self) -> PageRefreshMode {
+        self.refresh_mode
     }
     pub const fn controller_state(&self) -> ControllerRamState {
         self.controller_state
@@ -92,14 +126,19 @@ impl DisplayEngine {
         self.current_page = page;
         self.phase = DisplayPhase::BwReady;
         self.controller_state = ControllerRamState::BwBaseReady;
+        self.gray_deadline = None;
+        self.preview_cleanup = None;
         Ok(())
     }
 
     pub fn begin_overlay(&mut self) {
+        self.preview_cleanup = None;
         self.phase = DisplayPhase::GrayRefreshing;
         self.controller_state = ControllerRamState::GrayOverlayResident;
     }
     pub fn cancel_overlay(&mut self) {
+        self.gray_deadline = None;
+        self.preview_cleanup = None;
         self.phase = DisplayPhase::BwReady;
         self.controller_state = ControllerRamState::NeedsFullBwInputs;
     }
@@ -175,12 +214,31 @@ impl DisplayEngine {
             }
             DisplayRequest::Turn { turn, sequence } => {
                 let target = self.target_for(turn);
-                self.navigate(target, sequence, Some(turn), backend, events, now)
-                    .await
+                match self.refresh_mode {
+                    PageRefreshMode::Balanced => {
+                        self.navigate(target, sequence, Some(turn), backend, events, now)
+                            .await
+                    }
+                    PageRefreshMode::Fast => {
+                        self.preview_navigate(target, sequence, Some(turn), backend, events, now)
+                            .await
+                    }
+                }
             }
-            DisplayRequest::Goto { page, sequence } => {
-                self.navigate(page, Some(sequence), None, backend, events, now)
-                    .await
+            DisplayRequest::Goto { page, sequence } => match self.refresh_mode {
+                PageRefreshMode::Balanced => {
+                    self.navigate(page, Some(sequence), None, backend, events, now)
+                        .await
+                }
+                PageRefreshMode::Fast => {
+                    self.preview_navigate(page, Some(sequence), None, backend, events, now)
+                        .await
+                }
+            },
+            DisplayRequest::SetRefreshMode { mode, sequence } => {
+                self.refresh_mode = mode;
+                emit(events, now, DisplayEventKind::RefreshModeChanged(mode));
+                self.complete(sequence, CompletionStatus::Ok, None, events, now)
             }
         }
     }
@@ -191,10 +249,21 @@ impl DisplayEngine {
         events: &mut S,
         now: u64,
     ) -> Option<DisplayCompletion> {
-        if self.phase != DisplayPhase::GrayDelay || now < self.gray_deadline.unwrap_or(u64::MAX) {
-            return None;
+        if self.phase == DisplayPhase::PreviewDelay {
+            if now
+                < self
+                    .preview_cleanup
+                    .map(|cleanup| cleanup.deadline_ms)
+                    .unwrap_or(u64::MAX)
+            {
+                return None;
+            }
+            return Some(self.cleanup_preview(backend, events, now).await).flatten();
         }
-        Some(self.overlay(backend, events, now).await).flatten()
+        if self.phase == DisplayPhase::GrayDelay && now >= self.gray_deadline.unwrap_or(u64::MAX) {
+            return Some(self.overlay(backend, events, now).await).flatten();
+        }
+        None
     }
 }
 
@@ -214,7 +283,9 @@ pub const fn apply_page_turn(current: u32, count: u32, turn: PageTurn) -> u32 {
 
 fn sequence(request: DisplayRequest) -> Option<u16> {
     match request {
-        DisplayRequest::Turn { sequence, .. } => sequence,
+        DisplayRequest::Turn { sequence, .. } | DisplayRequest::SetRefreshMode { sequence, .. } => {
+            sequence
+        }
         DisplayRequest::Goto { sequence, .. } | DisplayRequest::Probe { sequence, .. } => {
             Some(sequence)
         }

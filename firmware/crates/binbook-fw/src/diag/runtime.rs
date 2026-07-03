@@ -1,7 +1,8 @@
 use binbook_diagnostic_protocol::{
     decode_frame, decode_key_payload, decode_raw_frame, encode_frame, encode_log_response_header,
-    encode_page_response, encode_raw_frame, FrameHeader, FrameKind, LogResponseHeader, Opcode,
-    RawFrameHeader, Status, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES,
+    encode_page_response, encode_raw_frame, encode_refresh_mode_payload, FrameHeader, FrameKind,
+    LogResponseHeader, Opcode, RawFrameHeader, RefreshModeAction, RefreshModePayload, Status,
+    MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES,
 };
 
 use crate::{diag_log::DiagLog, diag_storage::StorageHandle};
@@ -68,6 +69,7 @@ pub fn poll_runtime_command(
         snapshot.last_error,
         snapshot.panel_mode as u8,
     );
+    context.refresh_mode = snapshot.refresh_mode;
     context.protocol_errors = serial.protocol_error_count();
     context.dropped_records = snapshot.dropped_log_count;
     let mut response_payload = [0u8; MAX_PAYLOAD_BYTES];
@@ -89,6 +91,10 @@ pub fn poll_runtime_command(
                 action: PendingAction::RenderPage { target_page },
             }))
         }
+        DispatchResult::SetRefreshMode { mode } => Some(RuntimeCommand::Hardware(PendingCommand {
+            header,
+            action: PendingAction::SetRefreshMode { mode },
+        })),
         DispatchResult::DisplayProbe(probe) => Some(RuntimeCommand::Hardware(PendingCommand {
             header,
             action: PendingAction::DisplayProbe(probe),
@@ -204,7 +210,7 @@ pub fn poll_pending_command<const N: usize>(
     if header.opcode == Opcode::Page {
         let target = match result {
             DispatchResult::RenderPage { target_page } => target_page,
-            DispatchResult::NoAction => current_page,
+            DispatchResult::NoAction | DispatchResult::SetRefreshMode { .. } => current_page,
             _ => current_page,
         };
         log.push(
@@ -224,6 +230,7 @@ pub fn poll_pending_command<const N: usize>(
         DispatchResult::RenderPage { target_page } => {
             Some(PendingAction::RenderPage { target_page })
         }
+        DispatchResult::SetRefreshMode { mode } => Some(PendingAction::SetRefreshMode { mode }),
         DispatchResult::DisplayProbe(probe) => Some(PendingAction::DisplayProbe(probe)),
         DispatchResult::CrashGet => Some(PendingAction::CrashGet),
         DispatchResult::CrashClear => Some(PendingAction::CrashClear),
@@ -307,6 +314,15 @@ pub fn complete_pending_command(
     } else if pending.header.opcode == Opcode::Page {
         encode_page_response(resulting_page, &mut payload)
             .map_err(|_| TransportError::BufferFull)?
+    } else if let PendingAction::SetRefreshMode { mode } = pending.action {
+        encode_refresh_mode_payload(
+            RefreshModePayload {
+                action: RefreshModeAction::Set,
+                mode,
+            },
+            &mut payload,
+        )
+        .map_err(|_| TransportError::BufferFull)?
     } else {
         if action_payload.len() > payload.len() {
             return Err(TransportError::BufferFull);
