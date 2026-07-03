@@ -1,7 +1,7 @@
 #![cfg(feature = "diagnostic-console")]
 
 #[test]
-fn diag_key_right_matches_physical_button_target() {
+fn diag_key_right_preserves_physical_button() {
     let header = binbook_diagnostic_protocol::FrameHeader {
         kind: binbook_diagnostic_protocol::FrameKind::Request,
         opcode: binbook_diagnostic_protocol::Opcode::Key,
@@ -19,16 +19,16 @@ fn diag_key_right_matches_physical_button_target() {
     let result =
         binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
     match result {
-        binbook_fw::diag::DispatchResult::RenderTurn { turn } => {
-            assert_eq!(turn, binbook_fw::input::PageTurn::Next);
+        binbook_fw::diag::DispatchResult::KeyPress { button } => {
+            assert_eq!(button, binbook_fw::input::Button::Right);
         }
-        other => panic!("expected RenderTurn, got {:?}", other),
+        other => panic!("expected KeyPress, got {:?}", other),
     }
 }
 
 #[cfg(feature = "diagnostic-console")]
 #[test]
-fn diag_key_left_matches_physical_button_target() {
+fn diag_key_left_preserves_physical_button() {
     let current_page = 3u32;
     let page_count = 8u32;
 
@@ -49,17 +49,17 @@ fn diag_key_left_matches_physical_button_target() {
     let result =
         binbook_fw::diag::dispatch_command(header, &payload, &mut ctx, &mut resp_buf, &mut storage);
     match result {
-        binbook_fw::diag::DispatchResult::RenderTurn { turn } => {
-            assert_eq!(turn, binbook_fw::input::PageTurn::Previous);
+        binbook_fw::diag::DispatchResult::KeyPress { button } => {
+            assert_eq!(button, binbook_fw::input::Button::Left);
         }
-        other => panic!("expected RenderTurn, got {:?}", other),
+        other => panic!("expected KeyPress, got {:?}", other),
     }
 }
 
 #[cfg(feature = "diagnostic-console")]
 #[test]
 fn diag_all_key_codes_match_physical_mapping() {
-    use binbook_fw::input::{target_page_for_button, Button};
+    use binbook_fw::input::Button;
 
     let cases: &[(binbook_diagnostic_protocol::KeyCode, Button)] = &[
         (binbook_diagnostic_protocol::KeyCode::Right, Button::Right),
@@ -92,16 +92,14 @@ fn diag_all_key_codes_match_physical_mapping() {
         );
 
         match result {
-            binbook_fw::diag::DispatchResult::RenderTurn { turn } => {
+            binbook_fw::diag::DispatchResult::KeyPress { button: actual } => {
                 assert_eq!(
-                    turn,
-                    target_page_for_button(*button),
+                    actual, *button,
                     "key {:?} should match button {:?}",
-                    code,
-                    button
+                    code, button
                 );
             }
-            other => panic!("key {:?}: expected RenderTurn, got {:?}", code, other),
+            other => panic!("key {:?}: expected KeyPress, got {:?}", code, other),
         }
     }
 }

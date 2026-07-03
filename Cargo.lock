@@ -951,9 +951,12 @@ dependencies = [
 name = "embedded-sd-storage"
 version = "0.1.0"
 dependencies = [
+ "binbook-core",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "embedded-sdmmc",
+ "heapless 0.8.0",
+ "lamfat",
 ]
 
 [[package]]
@@ -1625,6 +1628,16 @@ dependencies = [
  "euclid",
  "polycool",
  "smallvec",
+]
+
+[[package]]
+name = "lamfat"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e63196e3c4f2b76a2ed28ef28ac24b58ad09df12dda29be4ccc0ddf7090b0f53"
+dependencies = [
+ "bitflags 2.13.0",
+ "log",
 ]
 
 [[package]]

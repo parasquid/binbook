@@ -86,6 +86,84 @@ pub(super) async fn diagnostic_task(
     }
 }
 
+#[cfg(all(feature = "sd-storage", target_arch = "riscv32"))]
+#[embassy_executor::task]
+pub(super) async fn diagnostic_task_with_sd(
+    usb_device: esp_hal::peripherals::USB_DEVICE<'static>,
+    flash: esp_hal::peripherals::FLASH<'static>,
+    sd_fs: &'static mut binbook_fw::storage::SdFilesystem<
+        binbook_fw::board::FreqManagedSpiDevice<'static, esp_hal::gpio::Output<'static>>,
+        binbook_fw::board::DisplayDelay,
+        binbook_fw::storage::FixedTime,
+    >,
+) {
+    use esp_hal::usb_serial_jtag::UsbSerialJtag;
+
+    let usb = UsbSerialJtag::new(usb_device);
+    let (mut usb_rx, mut usb_tx) = usb.split();
+    let mut serial = SerialState::new();
+    let mut crash_store = CrashStore::new(esp_storage::FlashStorage::new(flash));
+    let mut storage = binbook_fw::diag_storage::FilesystemStorage::new(sd_fs);
+
+    loop {
+        let mut usb_read_buf = [0u8; 64];
+        let received = usb_rx.drain_rx_fifo(&mut usb_read_buf);
+        if received > 0 {
+            serial.feed_rx(&usb_read_buf[..received]);
+        }
+
+        while let Ok(committed) = AGGREGATOR_COMPLETION_CHANNEL.receiver().try_receive() {
+            let status = match committed.completion.status {
+                RuntimeCompletionStatus::Ok => Status::Ok,
+                RuntimeCompletionStatus::Error => Status::Error,
+            };
+            let _ = complete_pending_command(
+                &mut serial,
+                committed.pending,
+                status,
+                committed.completion.page,
+                &[],
+            );
+        }
+
+        let snapshot = match query_aggregator(AggregatorQuery::Status).await {
+            AggregatorResponse::Status(snapshot) => snapshot,
+            AggregatorResponse::Reserve(_)
+            | AggregatorResponse::Log { .. }
+            | AggregatorResponse::Ack => {
+                continue;
+            }
+        };
+        if let Some(command) = poll_runtime_command(&mut serial, snapshot, &mut storage) {
+            let header = command.header();
+            RUNTIME_EVENT_CHANNEL
+                .sender()
+                .send(RuntimeEvent {
+                    timestamp_ms: embassy_time::Instant::now().as_millis(),
+                    kind: RuntimeEventKind::ProtocolCommand {
+                        opcode: header.opcode as u8,
+                        sequence: header.sequence,
+                    },
+                })
+                .await;
+            handle_command(&mut serial, &mut crash_store, snapshot, command).await;
+        }
+
+        if !serial.pending_tx().is_empty() {
+            let pending_len = serial.pending_tx().len();
+            if usb_tx.write(serial.pending_tx()).is_ok() {
+                serial.consume_tx(pending_len);
+            }
+        }
+
+        let _ = query_aggregator(AggregatorQuery::ProtocolErrors(
+            serial.protocol_error_count(),
+        ))
+        .await;
+        embassy_time::Timer::after_millis(10).await;
+    }
+}
+
 async fn handle_command<F>(
     serial: &mut SerialState,
     crash_store: &mut CrashStore<F>,
@@ -167,7 +245,8 @@ async fn handle_crash_command<F>(
                     .await;
             }
         }
-        PendingAction::RenderTurn { .. }
+        PendingAction::KeyPress { .. }
+        | PendingAction::RenderTurn { .. }
         | PendingAction::RenderPage { .. }
         | PendingAction::SetRefreshMode { .. }
         | PendingAction::DisplayProbe(_) => {
@@ -189,6 +268,33 @@ async fn handle_display_command(
     pending: binbook_fw::diag::PendingCommand,
 ) {
     let request = match pending.action {
+        PendingAction::KeyPress { button } => {
+            let mode = super::DISPLAY_MODE.load(portable_atomic::Ordering::Relaxed);
+            match binbook_fw::async_refresh::button_to_request(button, mode) {
+                Some(DisplayRequest::MenuNext { .. }) => DisplayRequest::MenuNext {
+                    completion_sequence: Some(pending.header.sequence),
+                },
+                Some(DisplayRequest::MenuPrev { .. }) => DisplayRequest::MenuPrev {
+                    completion_sequence: Some(pending.header.sequence),
+                },
+                Some(DisplayRequest::MenuSelect { .. }) => DisplayRequest::MenuSelect {
+                    completion_sequence: Some(pending.header.sequence),
+                },
+                Some(DisplayRequest::MenuBack { .. }) => DisplayRequest::MenuBack {
+                    completion_sequence: Some(pending.header.sequence),
+                },
+                Some(DisplayRequest::Turn { turn, .. }) => DisplayRequest::Turn {
+                    turn,
+                    completion_sequence: Some(pending.header.sequence),
+                },
+                Some(request) => request,
+                None => {
+                    let _ =
+                        complete_pending_command(serial, pending, Status::Ok, current_page, &[]);
+                    return;
+                }
+            }
+        }
         PendingAction::RenderTurn { turn } => DisplayRequest::Turn {
             turn,
             completion_sequence: Some(pending.header.sequence),

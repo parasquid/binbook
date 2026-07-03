@@ -331,7 +331,8 @@ where
             &mut self.black,
             &mut self.red,
         );
-        render::sync_bw_base(
+        let mut timing = RuntimeRenderTimingObserver::new(None, page, page);
+        render::sync_bw_base_timed(
             &mut self.display,
             &mut self.book,
             page,
@@ -339,6 +340,7 @@ where
             expected_epoch,
             || REQUEST_EPOCH.load(Ordering::Acquire),
             &mut self.delay,
+            &mut timing,
         )
         .await
     }

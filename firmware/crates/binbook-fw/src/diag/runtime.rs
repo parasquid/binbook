@@ -81,6 +81,10 @@ pub fn poll_runtime_command(
         storage,
     );
     match result {
+        DispatchResult::KeyPress { button } => Some(RuntimeCommand::Hardware(PendingCommand {
+            header,
+            action: PendingAction::KeyPress { button },
+        })),
         DispatchResult::RenderTurn { turn } => Some(RuntimeCommand::Hardware(PendingCommand {
             header,
             action: PendingAction::RenderTurn { turn },
@@ -226,6 +230,7 @@ pub fn poll_pending_command<const N: usize>(
         );
     }
     let pending = match result {
+        DispatchResult::KeyPress { button } => Some(PendingAction::KeyPress { button }),
         DispatchResult::RenderTurn { turn } => Some(PendingAction::RenderTurn { turn }),
         DispatchResult::RenderPage { target_page } => {
             Some(PendingAction::RenderPage { target_page })

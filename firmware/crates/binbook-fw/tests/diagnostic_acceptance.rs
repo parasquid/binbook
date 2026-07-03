@@ -6,7 +6,7 @@ use binbook_diagnostic_protocol::{
 };
 use binbook_fw::{
     diag::{dispatch_command, CommandContext, DispatchResult, DisplayProbeKind},
-    input::PageTurn,
+    input::Button,
 };
 
 struct DispatchFixture {
@@ -100,8 +100,8 @@ fn acceptance_navigation_preserves_intent_without_mutating_committed_page() {
             request_header(Opcode::Key, 21, 2),
             &[KeyCode::Right as u8, KeyAction::Press as u8],
         ),
-        DispatchResult::RenderTurn {
-            turn: PageTurn::Next,
+        DispatchResult::KeyPress {
+            button: Button::Right,
         }
     );
     assert_eq!(
@@ -109,8 +109,8 @@ fn acceptance_navigation_preserves_intent_without_mutating_committed_page() {
             request_header(Opcode::Key, 22, 2),
             &[KeyCode::Left as u8, KeyAction::Press as u8],
         ),
-        DispatchResult::RenderTurn {
-            turn: PageTurn::Previous,
+        DispatchResult::KeyPress {
+            button: Button::Left,
         }
     );
 }

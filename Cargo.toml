@@ -38,7 +38,7 @@ binbook-epub = { path = "crates/binbook-epub" }
 binbook-decompress = { path = "crates/binbook-decompress" }
 gray2-render = { path = "crates/gray2-render" }
 ssd1677-driver = { path = "crates/ssd1677-driver" }
-binbook-storage = { path = "crates/binbook-storage" }
+binbook-storage = { path = "crates/binbook-storage", default-features = false }
 embedded-sd-storage = { path = "crates/embedded-sd-storage" }
 xteink-x4-display = { path = "crates/xteink-x4-display" }
 binbook-diagnostic-protocol = { path = "firmware/crates/binbook-diagnostic-protocol" }
@@ -78,6 +78,7 @@ embedded-graphics-core = { version = "0.4", default-features = false }
 profont = { version = "0.7", default-features = false }
 static_cell = { version = "2.1.1", default-features = false }
 embedded-sdmmc = "0.9.0"
+lamfat = { version = "0.4.2", default-features = false, features = ["lfn", "unicode"] }
 embedded-hal-bus = "0.3"
 heapless = { version = "0.8", default-features = false }
 

@@ -10,5 +10,9 @@ description = "Backend-agnostic BinBook file enumeration and ReadAt"
 binbook-core.workspace = true
 heapless = { version = "0.8", default-features = false }
 
+[features]
+default = ["alloc"]
+alloc = []
+
 [lints]
 workspace = true

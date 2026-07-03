@@ -9,7 +9,9 @@ fn startup_page_refresh_mode_defaults_to_balanced() {
 fn menu_up_maps_to_prev() {
     assert_eq!(
         button_to_request(Button::Up, MODE_MENU),
-        Some(DisplayRequest::MenuPrev)
+        Some(DisplayRequest::MenuPrev {
+            completion_sequence: None,
+        })
     );
 }
 
@@ -17,7 +19,9 @@ fn menu_up_maps_to_prev() {
 fn menu_left_maps_to_prev() {
     assert_eq!(
         button_to_request(Button::Left, MODE_MENU),
-        Some(DisplayRequest::MenuPrev)
+        Some(DisplayRequest::MenuPrev {
+            completion_sequence: None,
+        })
     );
 }
 
@@ -25,7 +29,9 @@ fn menu_left_maps_to_prev() {
 fn menu_down_maps_to_next() {
     assert_eq!(
         button_to_request(Button::Down, MODE_MENU),
-        Some(DisplayRequest::MenuNext)
+        Some(DisplayRequest::MenuNext {
+            completion_sequence: None,
+        })
     );
 }
 
@@ -33,7 +39,9 @@ fn menu_down_maps_to_next() {
 fn menu_right_maps_to_next() {
     assert_eq!(
         button_to_request(Button::Right, MODE_MENU),
-        Some(DisplayRequest::MenuNext)
+        Some(DisplayRequest::MenuNext {
+            completion_sequence: None,
+        })
     );
 }
 
@@ -41,7 +49,9 @@ fn menu_right_maps_to_next() {
 fn menu_select_maps_to_select() {
     assert_eq!(
         button_to_request(Button::Select, MODE_MENU),
-        Some(DisplayRequest::MenuSelect)
+        Some(DisplayRequest::MenuSelect {
+            completion_sequence: None,
+        })
     );
 }
 
@@ -97,11 +107,15 @@ fn startup_up_and_down_map_to_page_turns_without_library_menu() {
 fn startup_up_and_down_map_to_menu_navigation_with_library_menu() {
     assert_eq!(
         button_to_request(Button::Up, STARTUP_DISPLAY_MODE),
-        Some(DisplayRequest::MenuPrev)
+        Some(DisplayRequest::MenuPrev {
+            completion_sequence: None,
+        })
     );
     assert_eq!(
         button_to_request(Button::Down, STARTUP_DISPLAY_MODE),
-        Some(DisplayRequest::MenuNext)
+        Some(DisplayRequest::MenuNext {
+            completion_sequence: None,
+        })
     );
 }
 
@@ -110,11 +124,15 @@ fn startup_up_and_down_map_to_menu_navigation_with_library_menu() {
 fn reading_select_and_back_map_to_menuback() {
     assert_eq!(
         button_to_request(Button::Select, MODE_READING),
-        Some(DisplayRequest::MenuBack)
+        Some(DisplayRequest::MenuBack {
+            completion_sequence: None,
+        })
     );
     assert_eq!(
         button_to_request(Button::Back, MODE_READING),
-        Some(DisplayRequest::MenuBack)
+        Some(DisplayRequest::MenuBack {
+            completion_sequence: None,
+        })
     );
 }
 

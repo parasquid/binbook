@@ -4,6 +4,7 @@ use binbook_diagnostic_protocol::{
     encode_store_read_request, FrameHeader, FrameKind, KeyAction, KeyCode, LogGetPayload, Opcode,
     PageAction, ProbeCode, RefreshModeAction, RefreshModeCode, RefreshModePayload, Status,
     StorageBackend, StoreDeleteRequest, StoreListRequest, StoreReadRequest, MAX_FRAME_BYTES,
+    MAX_PAYLOAD_BYTES,
 };
 
 pub use crate::diag_response::{
@@ -148,9 +149,9 @@ impl ProbeChoice {
 }
 
 pub fn store_list_request(sequence: u16, path: &str) -> Vec<u8> {
+    let _ = path;
     let payload = StoreListRequest {
         backend: StorageBackend::Sd,
-        path,
     };
     let mut payload_buf = [0u8; 512];
     let plen = encode_store_list_request(&payload, &mut payload_buf).unwrap();
@@ -162,9 +163,15 @@ pub fn store_list_request(sequence: u16, path: &str) -> Vec<u8> {
 }
 
 pub fn store_read_request(sequence: u16, path: &str) -> Vec<u8> {
+    store_read_request_range(sequence, path, 0, (MAX_PAYLOAD_BYTES - 5) as u32)
+}
+
+pub fn store_read_request_range(sequence: u16, path: &str, offset: u32, max_bytes: u32) -> Vec<u8> {
     let payload = StoreReadRequest {
         backend: StorageBackend::Sd,
-        path,
+        name: path,
+        offset,
+        max_bytes,
     };
     let mut payload_buf = [0u8; 512];
     let plen = encode_store_read_request(&payload, &mut payload_buf).unwrap();
@@ -178,7 +185,7 @@ pub fn store_read_request(sequence: u16, path: &str) -> Vec<u8> {
 pub fn store_delete_request(sequence: u16, path: &str) -> Vec<u8> {
     let payload = StoreDeleteRequest {
         backend: StorageBackend::Sd,
-        path,
+        name: path,
     };
     let mut payload_buf = [0u8; 512];
     let plen = encode_store_delete_request(&payload, &mut payload_buf).unwrap();

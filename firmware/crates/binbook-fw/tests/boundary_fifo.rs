@@ -5,11 +5,8 @@ use binbook_diagnostic_protocol::{
     PanelModeCode, Status, MAX_FRAME_BYTES,
 };
 use binbook_fw::{
-    diag::{
-        complete_pending_command, poll_runtime_command, DiagnosticSnapshot, PendingAction,
-        RuntimeCommand, SerialState,
-    },
-    input::{apply_page_turn, PageTurn},
+    diag::{poll_runtime_command, DiagnosticSnapshot, PendingAction, RuntimeCommand, SerialState},
+    input::Button,
 };
 
 fn key_frame(sequence: u16, key: KeyCode) -> ([u8; MAX_FRAME_BYTES], usize) {
@@ -28,7 +25,7 @@ fn key_frame(sequence: u16, key: KeyCode) -> ([u8; MAX_FRAME_BYTES], usize) {
 }
 
 #[test]
-fn accepted_boundary_burst_keeps_fifo_relative_intent_and_completes_every_sequence() {
+fn accepted_key_burst_preserves_button_intent_and_sequence() {
     let snapshot = DiagnosticSnapshot {
         current_page: 0,
         page_count: 16,
@@ -62,30 +59,28 @@ fn accepted_boundary_burst_keeps_fifo_relative_intent_and_completes_every_sequen
         assert!(serial.pending_tx().is_empty());
     }
 
-    let mut page = 0;
-    let mut pages = [0; 5];
-    let mut response_sequences = [0; 5];
+    let expected_buttons = [
+        Button::Up,
+        Button::Down,
+        Button::Up,
+        Button::Up,
+        Button::Down,
+    ];
+    let mut buttons = [Button::Power; 5];
+    let mut sequences = [0; 5];
     for (index, pending) in accepted.into_iter().flatten().enumerate() {
-        let PendingAction::RenderTurn { turn } = pending.action else {
+        let PendingAction::KeyPress { button } = pending.action else {
             panic!(
-                "sequence {} was not accepted as a relative turn",
+                "sequence {} was not accepted as a key press",
                 pending.header.sequence
             );
         };
-        page = apply_page_turn(page, snapshot.page_count, turn);
-        pages[index] = page;
-        complete_pending_command(&mut serial, pending, Status::Ok, page, &[]).unwrap();
-        let mut response_payload = [0u8; 8];
-        let (response, _) =
-            binbook_diagnostic_protocol::decode_frame(serial.pending_tx(), &mut response_payload)
-                .unwrap();
-        response_sequences[index] = response.sequence;
-        let response_len = serial.pending_tx().len();
-        serial.consume_tx(response_len);
+        buttons[index] = button;
+        sequences[index] = pending.header.sequence;
     }
 
-    assert_eq!(pages, [0, 1, 0, 0, 1]);
-    assert_eq!(response_sequences, [100, 101, 102, 103, 104]);
+    assert_eq!(buttons, expected_buttons);
+    assert_eq!(sequences, [100, 101, 102, 103, 104]);
 }
 
 #[test]
@@ -116,8 +111,42 @@ fn boundary_key_is_not_completed_immediately_at_dispatch() {
                 sequence: 77,
                 payload_len: 2,
             },
-            action: PendingAction::RenderTurn {
-                turn: PageTurn::Previous,
+            action: PendingAction::KeyPress { button: Button::Up },
+        })
+    );
+    assert!(serial.pending_tx().is_empty());
+}
+
+#[test]
+fn diagnostic_key_preserves_button_intent_for_runtime_mode_mapping() {
+    let snapshot = DiagnosticSnapshot {
+        current_page: 0,
+        page_count: 16,
+        panel_mode: PanelModeCode::Grayscale,
+        refresh_mode: binbook_diagnostic_protocol::RefreshModeCode::Balanced,
+        dropped_log_count: 0,
+        protocol_error_count: 0,
+        last_error: 0,
+    };
+    let mut serial = SerialState::new();
+    let mut storage = binbook_fw::diag_storage::UnavailableStorage;
+    let (frame, frame_len) = key_frame(88, KeyCode::Select);
+    serial.feed_rx(&frame[..frame_len]);
+
+    let command = poll_runtime_command(&mut serial, snapshot, &mut storage).unwrap();
+
+    assert_eq!(
+        command,
+        RuntimeCommand::Hardware(binbook_fw::diag::PendingCommand {
+            header: FrameHeader {
+                kind: FrameKind::Request,
+                opcode: Opcode::Key,
+                status: Status::Ok,
+                sequence: 88,
+                payload_len: 2,
+            },
+            action: PendingAction::KeyPress {
+                button: Button::Select,
             },
         })
     );

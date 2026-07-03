@@ -28,6 +28,9 @@ static MENU_BOOK_NAMES: Mutex<
     binbook_fw::heapless::Vec<binbook_fw::menu::MenuName, 200>,
 > = Mutex::new(binbook_fw::heapless::Vec::new());
 
+#[cfg(feature = "sd-storage")]
+const SD_SPI_FREQ_HZ: u32 = 4_000_000;
+
 #[cfg(all(feature = "firmware-bin", target_arch = "riscv32"))]
 #[expect(dead_code)]
 const RESUME_FLASH_OFFSET: u32 = 0x00FC_FF00;
@@ -131,22 +134,10 @@ pub(crate) async fn run(spawner: Spawner, peripherals: RuntimePeripherals) {
         )
         .unwrap(),
     );
-    spawner.spawn(
-        display_task::display_task(
-            shared_spi2,
-            peripherals.gpio21,
-            peripherals.gpio4,
-            peripherals.gpio5,
-            peripherals.gpio6,
-            REQUEST_CHANNEL.receiver(),
-        )
-        .unwrap(),
-    );
-
     #[cfg(feature = "diagnostic-console")]
     spawner.spawn(diagnostic_aggregator::runtime_event_aggregator_task().unwrap());
 
-    #[cfg(feature = "diagnostic-console")]
+    #[cfg(all(feature = "diagnostic-console", not(feature = "sd-storage")))]
     spawner.spawn(
         diagnostic_console::diagnostic_task(peripherals.usb_device, peripherals.flash).unwrap(),
     );
@@ -179,8 +170,8 @@ pub(crate) async fn run(spawner: Spawner, peripherals: RuntimePeripherals) {
         > = StaticCell::new();
 
         let sd_cs = Output::new(peripherals.gpio12, Level::High, OutputConfig::default());
-        let sd_spi = FreqManagedSpiDevice::new(shared_spi2, sd_cs, 400_000);
-        let mut sd_fs = SD_FS.init(SdFilesystem::new(sd_spi, DisplayDelay, FixedTime));
+        let sd_spi = FreqManagedSpiDevice::new(shared_spi2, sd_cs, SD_SPI_FREQ_HZ);
+        let sd_fs = SD_FS.init(SdFilesystem::new(sd_spi, DisplayDelay, FixedTime));
 
         let mut book_names = MENU_BOOK_NAMES.lock().await;
         let mut found_books = false;
@@ -209,13 +200,24 @@ pub(crate) async fn run(spawner: Spawner, peripherals: RuntimePeripherals) {
             esp_println::println!("[SD] no books — using embedded nav_probe fallback");
         }
 
-        #[cfg(feature = "firmware-bin")]
+        #[cfg(all(feature = "diagnostic-console", target_arch = "riscv32"))]
+        spawner.spawn(
+            diagnostic_console::diagnostic_task_with_sd(
+                peripherals.usb_device,
+                peripherals.flash,
+                sd_fs,
+            )
+            .unwrap(),
+        );
+
+        #[cfg(all(feature = "firmware-bin", not(feature = "diagnostic-console")))]
         {
             use binbook_fw::resume::ResumeStorage;
             use esp_hal::peripherals::FLASH;
 
-            static_cell::const_static!(FLASH_CELL, FLASH, unsafe { FLASH::steal() });
-            let mut flash_storage = ResumeStorage::new(FLASH_CELL.get_mut(), RESUME_FLASH_OFFSET);
+            static FLASH_CELL: StaticCell<FLASH> = StaticCell::new();
+            let flash = FLASH_CELL.init(unsafe { FLASH::steal() });
+            let mut flash_storage = ResumeStorage::new(flash, RESUME_FLASH_OFFSET);
 
             match flash_storage.read() {
                 Ok(Some(resume)) if !resume.is_empty() => {
@@ -246,4 +248,16 @@ pub(crate) async fn run(spawner: Spawner, peripherals: RuntimePeripherals) {
             }
         }
     }
+
+    spawner.spawn(
+        display_task::display_task(
+            shared_spi2,
+            peripherals.gpio21,
+            peripherals.gpio4,
+            peripherals.gpio5,
+            peripherals.gpio6,
+            REQUEST_CHANNEL.receiver(),
+        )
+        .unwrap(),
+    );
 }

@@ -7,9 +7,12 @@ repository.workspace = true
 description = "Generic SPI-mode SD + FAT16/32 storage over embedded-hal"
 
 [dependencies]
+binbook-core.workspace = true
 embedded-hal.workspace = true
 embedded-hal-async.workspace = true
 embedded-sdmmc.workspace = true
+heapless.workspace = true
+lamfat.workspace = true
 
 [lints]
 workspace = true

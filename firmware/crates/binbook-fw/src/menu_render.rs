@@ -15,13 +15,13 @@ use crate::menu::{MenuNames, MenuState};
 /// Vertical pixel offset for the first menu row.
 pub const MENU_ROW_START_Y: i32 = 76;
 /// Vertical stride between consecutive menu rows.
-pub const MENU_ROW_STRIDE: i32 = 52;
+pub const MENU_ROW_STRIDE: i32 = 96;
 /// Padding from the left edge for entry text.
 pub const MENU_TEXT_LEFT: i32 = 16;
 /// Horizontal padding from the right edge for page-count suffix.
 pub const MENU_TEXT_RIGHT: i32 = 16;
 /// Thickness of the selection highlight stroke.
-pub const HIGHLIGHT_STROKE: u32 = 1;
+pub const HIGHLIGHT_STROKE: u32 = 4;
 
 /// Render the current menu viewport into `fb`.
 ///
@@ -36,16 +36,9 @@ pub fn render_menu(fb: &mut Gray2Framebuffer, state: &MenuState, names: &MenuNam
         let index = state.top() + row;
         let name = names.get(index).map_or_else(|| "?", |n| n.as_str());
         let y = MENU_ROW_START_Y + row as i32 * MENU_ROW_STRIDE;
+        let selected = index == state.selected();
 
-        if !name.is_empty() {
-            let style = MonoTextStyleBuilder::new()
-                .font(&profont::PROFONT_12_POINT)
-                .text_color(Gray2Color::BLACK)
-                .build();
-            let _ = Text::new(name, Point::new(MENU_TEXT_LEFT, y + 16), style).draw(fb);
-        }
-
-        if index == state.selected() {
+        if selected {
             let rect = Rectangle::new(
                 Point::new(HIGHLIGHT_STROKE as i32, y),
                 Size::new(
@@ -56,11 +49,22 @@ pub fn render_menu(fb: &mut Gray2Framebuffer, state: &MenuState, names: &MenuNam
             let _ = rect
                 .into_styled(
                     PrimitiveStyleBuilder::new()
-                        .stroke_width(HIGHLIGHT_STROKE)
-                        .stroke_color(Gray2Color::BLACK)
+                        .fill_color(Gray2Color::BLACK)
                         .build(),
                 )
                 .draw(fb);
+        }
+
+        if !name.is_empty() {
+            let style = MonoTextStyleBuilder::new()
+                .font(&profont::PROFONT_24_POINT)
+                .text_color(if selected {
+                    Gray2Color::WHITE
+                } else {
+                    Gray2Color::BLACK
+                })
+                .build();
+            let _ = Text::new(name, Point::new(MENU_TEXT_LEFT, y + 36), style).draw(fb);
         }
     }
 }

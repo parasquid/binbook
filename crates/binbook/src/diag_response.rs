@@ -144,18 +144,21 @@ pub fn format_response(
                 Ok("ok".into())
             }
             Opcode::StoreList => {
-                if payload.len() < 4 {
+                if payload.len() < 2 {
                     return Err("invalid StoreList response: too short".into());
                 }
-                let count = u32::from_le_bytes(payload[..4].try_into().unwrap());
+                let count = u16::from_le_bytes(payload[..2].try_into().unwrap());
                 let mut text = format!("entry_count={}", count);
-                let mut pos = 4usize;
+                let mut pos = 2usize;
                 while pos < payload.len() {
                     match decode_store_list_entry(&payload[pos..]) {
-                        Ok((name_len_hint, name_bytes, flags)) => {
-                            let name = core::str::from_utf8(name_bytes).unwrap_or("<invalid utf8>");
-                            text.push_str(&format!("\n  {} flags={}", name, flags));
-                            pos += 2 + name_len_hint as usize + 4;
+                        Ok(entry) => {
+                            text.push_str(&format!(
+                                "\n  {} size={} pages={}",
+                                entry.name, entry.file_size, entry.page_count
+                            ));
+                            pos += binbook_diagnostic_protocol::STORE_LIST_ENTRY_HEADER_BYTES
+                                + entry.name.len();
                         }
                         Err(_) => break,
                     }
@@ -163,10 +166,9 @@ pub fn format_response(
                 Ok(text)
             }
             Opcode::StoreRead => {
-                if payload.is_empty() {
-                    return Err("file not found or empty".into());
-                }
-                Ok(format!("data_len={}", payload.len()))
+                let decoded = binbook_diagnostic_protocol::decode_store_read_response(payload)
+                    .map_err(|error| format!("invalid StoreRead response: {error:?}"))?;
+                Ok(format!("data_len={} eof={}", decoded.data.len(), decoded.eof))
             }
             Opcode::StoreDelete | Opcode::StoreUploadCommit | Opcode::StoreAbort => {
                 if !payload.is_empty() { return Err("unexpected response payload".into()); }

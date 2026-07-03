@@ -337,6 +337,18 @@ mod tests {
             }
             false
         };
+        let text_area_has_pixels = |row: i32| -> bool {
+            let y_start = MENU_ROW_START_Y + row * MENU_ROW_STRIDE;
+            for y in y_start..y_start + MENU_ROW_STRIDE {
+                for x in MENU_TEXT_LEFT..LOGICAL_WIDTH as i32 {
+                    let pixel = fb.get_pixel(x as u16, y as u16);
+                    if pixel.value() < 3 {
+                        return true;
+                    }
+                }
+            }
+            false
+        };
 
         assert!(
             highlight_pixels_nonwhite(highlight_y, HIGHLIGHT_STROKE as i32),
@@ -347,11 +359,11 @@ mod tests {
             "highlight bottom border should have black pixels"
         );
         assert!(
-            highlight_pixels_nonwhite(MENU_ROW_START_Y + 16, MENU_TEXT_LEFT),
+            text_area_has_pixels(0),
             "row 0 text should have non-white pixels"
         );
         assert!(
-            highlight_pixels_nonwhite(MENU_ROW_START_Y + 2 * MENU_ROW_STRIDE + 16, MENU_TEXT_LEFT),
+            text_area_has_pixels(2),
             "row 2 text should have non-white pixels"
         );
         let y_overflow = MENU_ROW_START_Y + 3 * MENU_ROW_STRIDE + 10;
@@ -370,17 +382,19 @@ mod tests {
         render_menu(&mut fb, &state, &names);
 
         let row_text_has_pixels = |y: i32| -> bool {
-            for x in MENU_TEXT_LEFT..MENU_TEXT_LEFT + 50 {
-                let pixel = fb.get_pixel(x as u16, y as u16);
-                if pixel.value() < 3 {
-                    return true;
+            for scan_y in y..y + MENU_ROW_STRIDE {
+                for x in MENU_TEXT_LEFT..MENU_TEXT_LEFT + 80 {
+                    let pixel = fb.get_pixel(x as u16, scan_y as u16);
+                    if pixel.value() < 3 {
+                        return true;
+                    }
                 }
             }
             false
         };
 
         assert!(
-            row_text_has_pixels(MENU_ROW_START_Y + 16),
+            row_text_has_pixels(MENU_ROW_START_Y),
             "row 0 should have placeholder text pixels"
         );
     }

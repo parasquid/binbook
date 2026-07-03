@@ -34,10 +34,10 @@ impl RuntimeRequestKind {
             DisplayRequest::Goto { .. } => Self::Goto,
             DisplayRequest::SetRefreshMode { .. } => Self::SetRefreshMode,
             DisplayRequest::Probe { .. } => Self::Probe,
-            DisplayRequest::MenuNext => Self::MenuNext,
-            DisplayRequest::MenuPrev => Self::MenuPrev,
-            DisplayRequest::MenuSelect => Self::MenuSelect,
-            DisplayRequest::MenuBack => Self::MenuBack,
+            DisplayRequest::MenuNext { .. } => Self::MenuNext,
+            DisplayRequest::MenuPrev { .. } => Self::MenuPrev,
+            DisplayRequest::MenuSelect { .. } => Self::MenuSelect,
+            DisplayRequest::MenuBack { .. } => Self::MenuBack,
         }
     }
 
@@ -74,10 +74,45 @@ pub const fn request_sequence(request: &DisplayRequest) -> Option<u16> {
             completion_sequence,
             ..
         } => Some(*completion_sequence),
-        DisplayRequest::MenuNext
-        | DisplayRequest::MenuPrev
-        | DisplayRequest::MenuSelect
-        | DisplayRequest::MenuBack => None,
+        DisplayRequest::MenuNext {
+            completion_sequence,
+        }
+        | DisplayRequest::MenuPrev {
+            completion_sequence,
+        }
+        | DisplayRequest::MenuSelect {
+            completion_sequence,
+        }
+        | DisplayRequest::MenuBack {
+            completion_sequence,
+        } => *completion_sequence,
+    }
+}
+
+#[must_use]
+pub const fn is_menu_request(request: &DisplayRequest) -> bool {
+    matches!(
+        request,
+        DisplayRequest::MenuNext { .. }
+            | DisplayRequest::MenuPrev { .. }
+            | DisplayRequest::MenuSelect { .. }
+            | DisplayRequest::MenuBack { .. }
+    )
+}
+
+#[must_use]
+pub const fn menu_completion(
+    request: &DisplayRequest,
+    current_page: u32,
+) -> Option<RuntimeCompletion> {
+    match request_sequence(request) {
+        Some(sequence) if is_menu_request(request) => Some(RuntimeCompletion {
+            sequence: Some(sequence),
+            status: RuntimeCompletionStatus::Ok,
+            page: current_page,
+            error: None,
+        }),
+        _ => None,
     }
 }
 

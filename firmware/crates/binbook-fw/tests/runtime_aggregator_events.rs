@@ -478,6 +478,44 @@ fn request_kind_for_turn_is_stable() {
 }
 
 #[test]
+fn menu_requests_are_terminal_display_task_actions_with_optional_completion() {
+    let request = DisplayRequest::MenuNext {
+        completion_sequence: Some(42),
+    };
+
+    assert!(binbook_fw::runtime_engine::is_menu_request(&request));
+    assert_eq!(
+        RuntimeRequestKind::from_request(&request),
+        RuntimeRequestKind::MenuNext
+    );
+    assert_eq!(
+        binbook_fw::runtime_engine::request_sequence(&request),
+        Some(42)
+    );
+
+    let completion = binbook_fw::runtime_engine::menu_completion(&request, 7)
+        .expect("sequenced menu request should synthesize a completion");
+    assert_eq!(completion.sequence, Some(42));
+    assert_eq!(completion.status, RuntimeCompletionStatus::Ok);
+    assert_eq!(completion.page, 7);
+    assert_eq!(completion.error, None);
+}
+
+#[test]
+fn physical_menu_requests_do_not_synthesize_protocol_completions() {
+    let request = DisplayRequest::MenuPrev {
+        completion_sequence: None,
+    };
+
+    assert!(binbook_fw::runtime_engine::is_menu_request(&request));
+    assert_eq!(binbook_fw::runtime_engine::request_sequence(&request), None);
+    assert_eq!(
+        binbook_fw::runtime_engine::menu_completion(&request, 3),
+        None
+    );
+}
+
+#[test]
 fn request_enqueue_status_for_full_channel_is_dropped() {
     assert_eq!(RequestEnqueueStatus::Full.log_code(), 1);
     assert_ne!(

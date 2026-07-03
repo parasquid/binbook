@@ -2,7 +2,11 @@ use binbook_diagnostic_protocol::{
     FrameHeader, PanelModeCode, RefreshModeCode, Status, StatusPayload,
 };
 
-use crate::{diag::command::DisplayProbeKind, diag_log::DiagLog, input::PageTurn};
+use crate::{
+    diag::command::DisplayProbeKind,
+    diag_log::DiagLog,
+    input::{Button, PageTurn},
+};
 
 use super::resolve_log_get;
 
@@ -32,6 +36,7 @@ impl DiagnosticSnapshot {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingAction {
+    KeyPress { button: Button },
     RenderTurn { turn: PageTurn },
     RenderPage { target_page: u32 },
     SetRefreshMode { mode: RefreshModeCode },

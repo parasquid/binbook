@@ -11,7 +11,7 @@ use embedded_hal::spi::SpiDevice;
 use embedded_sdmmc::filesystem::TimeSource;
 use embedded_sdmmc::SdCard;
 
-use binbook_storage::filesystem::Filesystem;
+use binbook_storage::filesystem::{Filesystem, WritableFilesystem};
 use embedded_sd_storage::SdStorage;
 
 // ---------------------------------------------------------------------------
@@ -27,12 +27,22 @@ pub enum SdError {
     NotFound,
 }
 
-impl<D: embedded_sdmmc::BlockDevice> From<embedded_sd_storage::sd_filesystem::StorageError<D>>
-    for SdError
+impl<D> From<embedded_sd_storage::sd_filesystem::StorageError<D>> for SdError
+where
+    D: embedded_sdmmc::BlockDevice,
+    D::Error: core::fmt::Debug,
 {
     fn from(e: embedded_sd_storage::sd_filesystem::StorageError<D>) -> Self {
         match e {
-            embedded_sd_storage::sd_filesystem::StorageError::Sdmmc(_) => SdError::Sdmmc,
+            embedded_sd_storage::sd_filesystem::StorageError::Device(_)
+            | embedded_sd_storage::sd_filesystem::StorageError::Fat(_)
+            | embedded_sd_storage::sd_filesystem::StorageError::NameTooLong
+            | embedded_sd_storage::sd_filesystem::StorageError::UploadInProgress
+            | embedded_sd_storage::sd_filesystem::StorageError::NoUploadInProgress
+            | embedded_sd_storage::sd_filesystem::StorageError::UploadNameMismatch
+            | embedded_sd_storage::sd_filesystem::StorageError::UploadTooFragmented
+            | embedded_sd_storage::sd_filesystem::StorageError::FileTooFragmented
+            | embedded_sd_storage::sd_filesystem::StorageError::BadUploadOffset => SdError::Sdmmc,
             embedded_sd_storage::sd_filesystem::StorageError::NotFound => SdError::NotFound,
         }
     }
@@ -96,14 +106,158 @@ where
     type Error = SdError;
 
     fn for_each_entry(&mut self, visit: &mut dyn FnMut(&str, u64)) -> Result<(), Self::Error> {
-        self.inner.for_each_entry(visit).map_err(SdError::from)
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] for_each_entry begin");
+        let result = self.inner.for_each_entry(visit).map_err(SdError::from);
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] for_each_entry end: {:?}", result);
+        result
     }
 
     fn read_at(&mut self, name: &str, offset: u64, out: &mut [u8]) -> Result<(), Self::Error> {
-        self.inner.read_at(name, offset, out).map_err(SdError::from)
+        #[cfg(feature = "debug-log")]
+        esp_println::println!(
+            "[SD] read_at begin name={} offset={} len={}",
+            name,
+            offset,
+            out.len()
+        );
+        let result = self.inner.read_at(name, offset, out).map_err(SdError::from);
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] read_at end: {:?}", result);
+        result
     }
 
     fn file_size(&mut self, name: &str) -> Result<u64, Self::Error> {
-        self.inner.file_size(name).map_err(SdError::from)
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] file_size begin name={}", name);
+        let result = self.inner.file_size(name).map_err(SdError::from);
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] file_size end: {:?}", result);
+        result
+    }
+
+    fn for_each_binbook_entry(
+        &mut self,
+        visit: &mut dyn FnMut(&str, u64, u32),
+    ) -> Result<(), Self::Error> {
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] for_each_binbook_entry begin");
+        let result = self.inner.for_each_entry(&mut |name, size| {
+            if name.ends_with(".binbook") {
+                visit(name, size, 0);
+            }
+        });
+        let result = result.map_err(SdError::from);
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] for_each_binbook_entry end: {:?}", result);
+        result
+    }
+}
+
+impl<SPI, DELAY, TIME> WritableFilesystem for SdFilesystem<SPI, DELAY, TIME>
+where
+    SPI: SpiDevice<u8>,
+    DELAY: DelayNs,
+    TIME: TimeSource,
+{
+    fn create_or_truncate(&mut self, name: &str) -> Result<(), Self::Error> {
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] create_or_truncate begin name={}", name);
+        let result = self.inner.create_or_truncate(name).map_err(SdError::from);
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] create_or_truncate end: {:?}", result);
+        result
+    }
+
+    fn write_at(&mut self, name: &str, offset: u64, data: &[u8]) -> Result<(), Self::Error> {
+        #[cfg(feature = "debug-log")]
+        esp_println::println!(
+            "[SD] write_at begin name={} offset={} len={}",
+            name,
+            offset,
+            data.len()
+        );
+        let result = self
+            .inner
+            .write_at(name, offset, data)
+            .map_err(SdError::from);
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] write_at end: {:?}", result);
+        result
+    }
+
+    fn flush(&mut self, name: &str) -> Result<(), Self::Error> {
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] flush begin name={}", name);
+        let result = self.inner.flush(name).map_err(SdError::from);
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] flush end: {:?}", result);
+        result
+    }
+
+    fn delete_file(&mut self, name: &str) -> Result<(), Self::Error> {
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] delete_file begin name={}", name);
+        let result = self.inner.delete_file(name).map_err(SdError::from);
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] delete_file end: {:?}", result);
+        result
+    }
+
+    fn begin_upload(&mut self, name: &str, expected_size: u64) -> Result<(), Self::Error> {
+        #[cfg(feature = "debug-log")]
+        esp_println::println!(
+            "[SD] begin_upload begin name={} expected_size={}",
+            name,
+            expected_size
+        );
+        let result = self
+            .inner
+            .begin_upload(name, expected_size)
+            .map_err(SdError::from);
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] begin_upload end: {:?}", result);
+        result
+    }
+
+    fn write_upload_chunk(
+        &mut self,
+        name: &str,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<(), Self::Error> {
+        #[cfg(feature = "debug-log")]
+        esp_println::println!(
+            "[SD] write_upload_chunk begin name={} offset={} len={}",
+            name,
+            offset,
+            data.len()
+        );
+        let result = self
+            .inner
+            .write_upload_chunk(name, offset, data)
+            .map_err(SdError::from);
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] write_upload_chunk end: {:?}", result);
+        result
+    }
+
+    fn commit_upload(&mut self, name: &str) -> Result<(), Self::Error> {
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] commit_upload begin name={}", name);
+        let result = self.inner.commit_upload(name).map_err(SdError::from);
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] commit_upload end: {:?}", result);
+        result
+    }
+
+    fn abort_upload(&mut self, name: &str) -> Result<(), Self::Error> {
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] abort_upload begin name={}", name);
+        let result = self.inner.abort_upload(name).map_err(SdError::from);
+        #[cfg(feature = "debug-log")]
+        esp_println::println!("[SD] abort_upload end: {:?}", result);
+        result
     }
 }

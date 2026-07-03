@@ -24,7 +24,7 @@ pub async fn sync_bw_base<R, SPI, DC, RST, BUSY, D, E>(
     page: u32,
     buffers: &mut RenderBuffers<'_>,
     expected_epoch: u32,
-    mut epoch: E,
+    epoch: E,
     delay: &mut D,
 ) -> DisplayResult<crate::events::OperationOutcome>
 where
@@ -36,8 +36,41 @@ where
     D: DelayNs,
     E: FnMut() -> u32,
 {
+    sync_bw_base_timed(
+        panel,
+        book,
+        page,
+        buffers,
+        expected_epoch,
+        epoch,
+        delay,
+        &mut NoopRenderTimingObserver,
+    )
+    .await
+}
+
+pub async fn sync_bw_base_timed<R, SPI, DC, RST, BUSY, D, E, T>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    page: u32,
+    buffers: &mut RenderBuffers<'_>,
+    expected_epoch: u32,
+    mut epoch: E,
+    delay: &mut D,
+    timing_observer: &mut T,
+) -> DisplayResult<crate::events::OperationOutcome>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+    E: FnMut() -> u32,
+    T: RenderTimingObserver,
+{
     let page = read_x4_page(book, page)?;
-    let completed = write_plane(
+    let completed = write_plane_timed(
         panel,
         book,
         required_plane(page.planes, PlaneSlot::FastBase)?,
@@ -49,6 +82,8 @@ where
             &mut epoch,
             delay,
         ),
+        PlaneRole::PreviousFastBase,
+        timing_observer,
     )
     .await?;
     Ok(if completed {

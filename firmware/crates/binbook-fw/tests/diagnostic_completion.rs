@@ -1,6 +1,6 @@
 #![cfg(feature = "diagnostic-console")]
 
-use binbook_fw::input::PageTurn;
+use binbook_fw::input::Button;
 #[test]
 fn diagnostic_page_response_is_queued_only_after_action_completion() {
     use binbook_diagnostic_protocol::{
@@ -89,7 +89,7 @@ struct AsyncDiagHarness {
     serial: binbook_fw::diag::SerialState,
     log: binbook_fw::diag_log::DiagLog<8>,
     pending: Vec<binbook_fw::diag::PendingCommand>,
-    received_turns: Vec<PageTurn>,
+    received_buttons: Vec<Button>,
     response_sequences: Vec<u16>,
 }
 
@@ -102,20 +102,22 @@ impl AsyncDiagHarness {
             serial: binbook_fw::diag::SerialState::new(),
             log: binbook_fw::diag_log::DiagLog::<8>::new(),
             pending: Vec::new(),
-            received_turns: Vec::new(),
+            received_buttons: Vec::new(),
             response_sequences: Vec::new(),
         }
     }
 
     fn receive_key(&mut self, sequence: u16, key: binbook_diagnostic_protocol::KeyCode) {
-        let turn = match key {
-            binbook_diagnostic_protocol::KeyCode::Right
-            | binbook_diagnostic_protocol::KeyCode::Down => PageTurn::Next,
-            binbook_diagnostic_protocol::KeyCode::Left
-            | binbook_diagnostic_protocol::KeyCode::Up => PageTurn::Previous,
-            other => panic!("unexpected key for page turn test: {:?}", other),
+        let button = match key {
+            binbook_diagnostic_protocol::KeyCode::Right => Button::Right,
+            binbook_diagnostic_protocol::KeyCode::Down => Button::Down,
+            binbook_diagnostic_protocol::KeyCode::Left => Button::Left,
+            binbook_diagnostic_protocol::KeyCode::Up => Button::Up,
+            binbook_diagnostic_protocol::KeyCode::Select => Button::Select,
+            binbook_diagnostic_protocol::KeyCode::Back => Button::Back,
+            binbook_diagnostic_protocol::KeyCode::Power => Button::Power,
         };
-        self.received_turns.push(turn);
+        self.received_buttons.push(button);
 
         let mut payload = [0u8; 2];
         let payload_len = binbook_diagnostic_protocol::encode_key_payload(
@@ -155,38 +157,25 @@ impl AsyncDiagHarness {
         self.pending.push(pending);
     }
 
-    fn pending_turns(&self) -> [PageTurn; 3] {
-        self.received_turns
+    fn pending_buttons(&self) -> [Button; 3] {
+        self.received_buttons
             .as_slice()
             .try_into()
-            .expect("test harness expected exactly three queued turns")
+            .expect("test harness expected exactly three queued buttons")
     }
 
-    fn rendered_pages_after_completion(&mut self) -> [u32; 3] {
-        let mut rendered_pages = [0u32; 3];
+    fn pending_actions(&mut self) -> [Button; 3] {
+        let mut buttons = [Button::Power; 3];
 
         for (index, pending) in self.pending.drain(..).enumerate() {
-            let target_page = match pending.action {
-                binbook_fw::diag::PendingAction::RenderPage { target_page } => target_page,
-                binbook_fw::diag::PendingAction::RenderTurn { turn } => {
-                    binbook_fw::input::apply_page_turn(self.current_page, self.page_count, turn)
-                }
-                other => panic!("expected render action, got {:?}", other),
+            let button = match pending.action {
+                binbook_fw::diag::PendingAction::KeyPress { button } => button,
+                other => panic!("expected key press action, got {:?}", other),
             };
-
-            binbook_fw::diag::complete_pending_command(
-                &mut self.serial,
-                pending,
-                binbook_diagnostic_protocol::Status::Ok,
-                target_page,
-                &[],
-            )
-            .unwrap();
-            rendered_pages[index] = target_page;
-            self.current_page = target_page;
+            buttons[index] = button;
         }
 
-        rendered_pages
+        buttons
     }
 
     fn response_sequences(&self) -> [u16; 3] {
@@ -198,17 +187,20 @@ impl AsyncDiagHarness {
 }
 
 #[test]
-fn batched_key_presses_are_resolved_when_dequeued() {
+fn batched_key_presses_preserve_button_intent_until_runtime_mapping() {
     let mut harness = AsyncDiagHarness::on_page(1, 4);
     harness.receive_key(10, binbook_diagnostic_protocol::KeyCode::Right);
     harness.receive_key(11, binbook_diagnostic_protocol::KeyCode::Right);
     harness.receive_key(12, binbook_diagnostic_protocol::KeyCode::Left);
 
     assert_eq!(
-        harness.pending_turns(),
-        [PageTurn::Next, PageTurn::Next, PageTurn::Previous]
+        harness.pending_buttons(),
+        [Button::Right, Button::Right, Button::Left]
     );
-    assert_eq!(harness.rendered_pages_after_completion(), [2, 3, 2]);
+    assert_eq!(
+        harness.pending_actions(),
+        [Button::Right, Button::Right, Button::Left]
+    );
     assert_eq!(harness.response_sequences(), [10, 11, 12]);
 }
 

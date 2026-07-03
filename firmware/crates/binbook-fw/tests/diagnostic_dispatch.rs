@@ -1,6 +1,6 @@
 #![cfg(feature = "diagnostic-console")]
 
-use binbook_fw::input::PageTurn;
+use binbook_fw::input::Button;
 
 #[cfg(feature = "diagnostic-console")]
 #[test]
@@ -49,10 +49,10 @@ fn diag_dispatch_key_right_press_matches_button_right() {
     let mut storage = UnavailableStorage;
     let result = dispatch_command(header, &[0x02, 0x01], &mut ctx, &mut resp_buf, &mut storage);
     match result {
-        DispatchResult::RenderTurn { turn } => {
-            assert_eq!(turn, PageTurn::Next);
+        DispatchResult::KeyPress { button } => {
+            assert_eq!(button, Button::Right);
         }
-        other => panic!("expected RenderTurn, got {:?}", other),
+        other => panic!("expected KeyPress, got {:?}", other),
     }
 }
 
@@ -73,10 +73,10 @@ fn diag_dispatch_key_left_press_matches_button_left() {
     let mut storage = UnavailableStorage;
     let result = dispatch_command(header, &[0x01, 0x01], &mut ctx, &mut resp_buf, &mut storage);
     match result {
-        DispatchResult::RenderTurn { turn } => {
-            assert_eq!(turn, PageTurn::Previous);
+        DispatchResult::KeyPress { button } => {
+            assert_eq!(button, Button::Left);
         }
-        other => panic!("expected RenderTurn, got {:?}", other),
+        other => panic!("expected KeyPress, got {:?}", other),
     }
 }
 

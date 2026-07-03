@@ -257,5 +257,5 @@ fn fill_absolute_row<R: ReadAt>(
 
 pub use crate::native::{
     recovery_seed, recovery_seed_observed, render_bw_differential, render_bw_differential_observed,
-    sync_bw_base,
+    sync_bw_base, sync_bw_base_timed,
 };

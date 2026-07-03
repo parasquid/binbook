@@ -4,9 +4,10 @@ use binbook_diagnostic_protocol::{
     decode_store_list_request, decode_store_read_request, decode_store_upload_begin_request,
     decode_store_upload_commit_request, decode_store_upload_write_request, encode_hello_response,
     encode_refresh_mode_payload, encode_status_payload, encode_store_upload_begin_response,
-    encode_store_upload_write_response, FrameHeader, FrameKind, HelloResponse, KeyAction, KeyCode,
-    Opcode, PageAction, PanelModeCode, ProbeCode, RefreshModeAction, RefreshModeCode,
-    RefreshModePayload, Status, StatusPayload, ALL_CAPABILITIES, MAX_FRAME_BYTES, PROTOCOL_VERSION,
+    encode_store_upload_commit_response, encode_store_upload_write_response, FrameHeader,
+    FrameKind, HelloResponse, KeyAction, KeyCode, Opcode, PageAction, PanelModeCode, ProbeCode,
+    RefreshModeAction, RefreshModeCode, RefreshModePayload, Status, StatusPayload,
+    StoreUploadCommitResult, ALL_CAPABILITIES, MAX_FRAME_BYTES, PROTOCOL_VERSION,
 };
 
 use crate::{
@@ -29,6 +30,7 @@ pub enum DisplayProbeKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DispatchResult {
+    KeyPress { button: Button },
     RenderTurn { turn: PageTurn },
     RenderPage { target_page: u32 },
     NoAction,
@@ -39,6 +41,14 @@ pub enum DispatchResult {
     DisplayProbe(DisplayProbeKind),
     SetRefreshMode { mode: RefreshModeCode },
     Response { status: Status, payload_len: usize },
+}
+
+fn storage_status(error: crate::diag_storage::StorageError) -> Status {
+    match error {
+        crate::diag_storage::StorageError::Unavailable => Status::NotFound,
+        crate::diag_storage::StorageError::BadRequest => Status::BadRequest,
+        crate::diag_storage::StorageError::Unsupported => Status::Unsupported,
+    }
 }
 
 pub struct CommandContext {
@@ -151,8 +161,7 @@ pub fn dispatch_command(
                     }
                 }
             };
-            let turn = crate::input::target_page_for_button(button);
-            DispatchResult::RenderTurn { turn }
+            DispatchResult::KeyPress { button }
         }
         Opcode::Page => {
             let page_payload = match decode_page_payload(payload) {
@@ -291,13 +300,13 @@ pub fn dispatch_command(
                     }
                 }
             };
-            match storage.store_list(req.backend, req.path, resp_buf) {
+            match storage.store_list(req.backend, resp_buf) {
                 Ok(len) => DispatchResult::Response {
                     status: Status::Ok,
                     payload_len: len,
                 },
-                Err(_) => DispatchResult::Response {
-                    status: Status::InternalError,
+                Err(error) => DispatchResult::Response {
+                    status: storage_status(error),
                     payload_len: 0,
                 },
             }
@@ -312,13 +321,13 @@ pub fn dispatch_command(
                     }
                 }
             };
-            match storage.store_read(req.backend, req.path, resp_buf) {
+            match storage.store_read(req.backend, req.name, req.offset, req.max_bytes, resp_buf) {
                 Ok(len) => DispatchResult::Response {
                     status: Status::Ok,
                     payload_len: len,
                 },
-                Err(_) => DispatchResult::Response {
-                    status: Status::InternalError,
+                Err(error) => DispatchResult::Response {
+                    status: storage_status(error),
                     payload_len: 0,
                 },
             }
@@ -333,13 +342,13 @@ pub fn dispatch_command(
                     }
                 }
             };
-            match storage.store_delete(req.backend, req.path) {
+            match storage.store_delete(req.backend, req.name) {
                 Ok(()) => DispatchResult::Response {
                     status: Status::Ok,
                     payload_len: 0,
                 },
-                Err(_) => DispatchResult::Response {
-                    status: Status::InternalError,
+                Err(error) => DispatchResult::Response {
+                    status: storage_status(error),
                     payload_len: 0,
                 },
             }
@@ -356,7 +365,7 @@ pub fn dispatch_command(
             };
             match storage.store_upload_begin(
                 req.backend,
-                req.path,
+                req.name,
                 req.file_size,
                 req.expected_crc32,
             ) {
@@ -370,8 +379,8 @@ pub fn dispatch_command(
                         payload_len: 0,
                     },
                 },
-                Err(_) => DispatchResult::Response {
-                    status: Status::InternalError,
+                Err(error) => DispatchResult::Response {
+                    status: storage_status(error),
                     payload_len: 0,
                 },
             }
@@ -399,8 +408,8 @@ pub fn dispatch_command(
                         },
                     }
                 }
-                Err(_) => DispatchResult::Response {
-                    status: Status::InternalError,
+                Err(error) => DispatchResult::Response {
+                    status: storage_status(error),
                     payload_len: 0,
                 },
             }
@@ -416,10 +425,23 @@ pub fn dispatch_command(
                 }
             };
             match storage.store_upload_commit(upload_id) {
-                Ok(()) => DispatchResult::Response {
-                    status: Status::Ok,
-                    payload_len: 0,
-                },
+                Ok((crc_matches, computed_crc32)) => {
+                    let result = if crc_matches {
+                        StoreUploadCommitResult::Ok
+                    } else {
+                        StoreUploadCommitResult::CrcMismatch
+                    };
+                    match encode_store_upload_commit_response(result, computed_crc32, resp_buf) {
+                        Ok(len) => DispatchResult::Response {
+                            status: Status::Ok,
+                            payload_len: len,
+                        },
+                        Err(_) => DispatchResult::Response {
+                            status: Status::InternalError,
+                            payload_len: 0,
+                        },
+                    }
+                }
                 Err(_) => DispatchResult::Response {
                     status: Status::InternalError,
                     payload_len: 0,

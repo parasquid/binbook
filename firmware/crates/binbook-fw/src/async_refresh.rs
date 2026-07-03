@@ -18,9 +18,15 @@ pub const STARTUP_PAGE_REFRESH_MODE: PageRefreshMode = PageRefreshMode::Balanced
 pub fn button_to_request(button: Button, mode: u8) -> Option<DisplayRequest> {
     match mode {
         MODE_MENU => match button {
-            Button::Up | Button::Left => Some(DisplayRequest::MenuPrev),
-            Button::Down | Button::Right => Some(DisplayRequest::MenuNext),
-            Button::Select => Some(DisplayRequest::MenuSelect),
+            Button::Up | Button::Left => Some(DisplayRequest::MenuPrev {
+                completion_sequence: None,
+            }),
+            Button::Down | Button::Right => Some(DisplayRequest::MenuNext {
+                completion_sequence: None,
+            }),
+            Button::Select => Some(DisplayRequest::MenuSelect {
+                completion_sequence: None,
+            }),
             Button::Back | Button::Power => None,
         },
         MODE_READING => match button {
@@ -33,7 +39,9 @@ pub fn button_to_request(button: Button, mode: u8) -> Option<DisplayRequest> {
                 completion_sequence: None,
             }),
             #[cfg(feature = "sd-storage")]
-            Button::Select | Button::Back => Some(DisplayRequest::MenuBack),
+            Button::Select | Button::Back => Some(DisplayRequest::MenuBack {
+                completion_sequence: None,
+            }),
             #[cfg(not(feature = "sd-storage"))]
             Button::Select | Button::Back => None,
             Button::Power => None,
@@ -83,10 +91,18 @@ pub enum DisplayRequest {
         kind: DisplayProbeKind,
         completion_sequence: u16,
     },
-    MenuNext,
-    MenuPrev,
-    MenuSelect,
-    MenuBack,
+    MenuNext {
+        completion_sequence: Option<u16>,
+    },
+    MenuPrev {
+        completion_sequence: Option<u16>,
+    },
+    MenuSelect {
+        completion_sequence: Option<u16>,
+    },
+    MenuBack {
+        completion_sequence: Option<u16>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -124,6 +124,37 @@ fn cli_logs_clear_sends_log_clear() {
 }
 
 #[test]
+fn cli_storage_read_range_encodes_offset_and_max_bytes() {
+    let frame = binbook::diag_protocol::store_read_request_range(77, "book.binbook", 4096, 512);
+    let mut payload_buf = [0u8; 128];
+    let (header, payload_len) = decode_frame(&frame, &mut payload_buf).unwrap();
+    assert_eq!(header.opcode, Opcode::StoreRead);
+    assert_eq!(header.sequence, 77);
+    let decoded =
+        binbook_diagnostic_protocol::decode_store_read_request(&payload_buf[..payload_len])
+            .unwrap();
+    assert_eq!(decoded.name, "book.binbook");
+    assert_eq!(decoded.offset, 4096);
+    assert_eq!(decoded.max_bytes, 512);
+}
+
+#[test]
+fn storage_upload_write_payload_capacity_accounts_for_header() {
+    let max_data = binbook_diagnostic_protocol::MAX_PAYLOAD_BYTES - 8;
+    let req = binbook_diagnostic_protocol::StoreUploadWriteRequest {
+        upload_id: 1,
+        offset: 0,
+        data: &vec![0x55; max_data],
+    };
+    let mut payload = [0u8; binbook_diagnostic_protocol::MAX_PAYLOAD_BYTES];
+
+    let encoded =
+        binbook_diagnostic_protocol::encode_store_upload_write_request(&req, &mut payload).unwrap();
+
+    assert_eq!(encoded, binbook_diagnostic_protocol::MAX_PAYLOAD_BYTES);
+}
+
+#[test]
 fn cli_crash_get_sends_crash_get() {
     let frame = binbook::diag_protocol::crash_get_request(52);
     let mut payload_buf = [0u8; 128];

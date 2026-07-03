@@ -17,10 +17,11 @@ use embedded_hal::{
 };
 use embedded_hal_async::delay::DelayNs;
 use gray2_render::canonical_row_to_staged;
+use ssd1677_driver::NoopBusyWaitObserver;
 
 use crate::{
     framebuffer::Gray2Framebuffer,
-    panel::X4Panel,
+    panel::{RefreshMode, X4Panel},
     profile::{CHUNK_COUNT, CHUNK_ROWS, PHYSICAL_WIDTH, ROW_BYTES},
     DisplayResult,
 };
@@ -44,6 +45,7 @@ where
     D: DelayNs,
 {
     let mut red_row = [0u8; ROW_BYTES];
+    let mut black_row = [0u8; ROW_BYTES];
 
     for strip in 0..CHUNK_COUNT {
         panel.controller().set_window(
@@ -57,14 +59,17 @@ where
         let mut error = None;
         panel
             .controller()
-            .write_red_frame_rows::<ROW_BYTES>(CHUNK_ROWS, |_, output| {
+            .write_red_frame_rows::<ROW_BYTES>(CHUNK_ROWS, |row, output| {
                 if error.is_some() {
                     output.fill(0xff);
                     return;
                 }
-                if let Err(e) = fill_absolute_from_fb(fb, strip, &mut red_row, output) {
+                let phys_y = usize::from(strip) * usize::from(CHUNK_ROWS) + usize::from(row);
+                if let Err(e) = fill_absolute_row_packed(fb, phys_y, &mut red_row, &mut black_row) {
                     error = Some(e);
                     output.fill(0xff);
+                } else {
+                    output.copy_from_slice(&red_row);
                 }
             })?;
         if let Some(error) = error {
@@ -85,14 +90,17 @@ where
         let mut error = None;
         panel
             .controller()
-            .write_frame_rows::<ROW_BYTES>(CHUNK_ROWS, |_, output| {
+            .write_frame_rows::<ROW_BYTES>(CHUNK_ROWS, |row, output| {
                 if error.is_some() {
                     output.fill(0xff);
                     return;
                 }
-                if let Err(e) = fill_absolute_from_fb(fb, strip, &mut red_row, output) {
+                let phys_y = usize::from(strip) * usize::from(CHUNK_ROWS) + usize::from(row);
+                if let Err(e) = fill_absolute_row_packed(fb, phys_y, &mut red_row, &mut black_row) {
                     error = Some(e);
                     output.fill(0xff);
+                } else {
+                    output.copy_from_slice(&black_row);
                 }
             })?;
         if let Some(error) = error {
@@ -103,6 +111,9 @@ where
         }
     }
 
+    panel
+        .refresh_observed(RefreshMode::Full, delay, &mut NoopBusyWaitObserver)
+        .await?;
     Ok(())
 }
 
@@ -209,24 +220,6 @@ enum Stage {
     Msb,
 }
 
-/// Convert framebuffer packed GRAY2 rows to absolute red/black RAM output for
-/// a given strip.
-fn fill_absolute_from_fb(
-    fb: &Gray2Framebuffer,
-    strip: u8,
-    red: &mut [u8],
-    black: &mut [u8],
-) -> DisplayResult<()> {
-    let row_dst = usize::from(strip) * usize::from(CHUNK_ROWS);
-    let row_end =
-        (row_dst + usize::from(CHUNK_ROWS)).min(usize::from(crate::profile::PHYSICAL_HEIGHT));
-
-    for phys_y in row_dst..row_end {
-        fill_absolute_row_packed(fb, phys_y, red, black)?;
-    }
-    Ok(())
-}
-
 /// Take a physical row Y, look up the corresponding logical data from the
 /// framebuffer, and produce the SSD1677 absolute row.
 fn fill_absolute_row_packed(
@@ -235,37 +228,21 @@ fn fill_absolute_row_packed(
     red: &mut [u8],
     black: &mut [u8],
 ) -> DisplayResult<()> {
-    use crate::profile::physical_to_logical;
+    use crate::profile::{physical_to_logical, PHYSICAL_WIDTH};
 
-    for phys_x in 0..crate::profile::PHYSICAL_WIDTH as usize {
+    red.fill(0xff);
+    black.fill(0xff);
+
+    for phys_x in 0..PHYSICAL_WIDTH as usize {
         let (logical_x, logical_y) = physical_to_logical(phys_x as u16, phys_y as u16);
-
         let gray = fb.get_pixel(logical_x, logical_y);
 
-        // Set the corresponding bit in the physical red/black output.
-        // SSD1677 rows are LSB-first per byte: bit 0 = leftmost pixel.
-        let ram_bit = crate::profile::PHYSICAL_WIDTH as usize - 1 - phys_x;
-        let byte_idx = ram_bit / 8;
-        let bit_idx = ram_bit % 8;
-
-        match gray.value() {
-            0 => {
-                // Black: active in both red and black planes
-                red[byte_idx] |= 0x80 >> bit_idx;
-                black[byte_idx] |= 0x80 >> bit_idx;
-            }
-            1 => {
-                // Dark gray: active in black only
-                black[byte_idx] |= 0x80 >> bit_idx;
-            }
-            2 => {
-                // Light gray: active in red only
-                red[byte_idx] |= 0x80 >> bit_idx;
-            }
-            3 => {
-                // White: no bits set (already cleared)
-            }
-            _ => {}
+        if gray.value() <= 1 {
+            let ram_bit = PHYSICAL_WIDTH as usize - 1 - phys_x;
+            let byte_idx = ram_bit / 8;
+            let bit_idx = ram_bit % 8;
+            red[byte_idx] &= !(0x80 >> bit_idx);
+            black[byte_idx] &= !(0x80 >> bit_idx);
         }
     }
 
@@ -288,7 +265,8 @@ fn fill_staged_from_fb(
     let row_dst = usize::from(strip) * usize::from(CHUNK_ROWS);
     let row_end = (row_dst + usize::from(CHUNK_ROWS)).min(usize::from(PHYSICAL_HEIGHT));
 
-    let mut canonical_row = [0u8; 120]; // 480 pixels packed = 120 bytes
+    const CANONICAL_ROW_BYTES: usize = PHYSICAL_WIDTH as usize / 4;
+    let mut canonical_row = [0u8; CANONICAL_ROW_BYTES];
     let row_len = ROW_BYTES.min(output.len() / usize::from(CHUNK_ROWS));
 
     for phys_y in row_dst..row_end {
@@ -376,8 +354,8 @@ mod tests {
 
         let result = fill_absolute_row_packed(&fb, 0, &mut red, &mut black);
         assert!(result.is_ok());
-        assert_eq!(red, [0u8; crate::profile::ROW_BYTES]);
-        assert_eq!(black, [0u8; crate::profile::ROW_BYTES]);
+        assert_eq!(red, [0xff; crate::profile::ROW_BYTES]);
+        assert_eq!(black, [0xff; crate::profile::ROW_BYTES]);
     }
 
     #[test]
@@ -393,5 +371,53 @@ mod tests {
         let any_bit_set = |row: &[u8]| -> bool { row.iter().any(|&b| b != 0) };
         assert!(any_bit_set(&red), "black pixel should set red bits");
         assert!(any_bit_set(&black), "black pixel should set black bits");
+    }
+
+    #[test]
+    fn absolute_rows_are_filled_independently_for_driver_callbacks() {
+        let mut fb = Gray2Framebuffer::new();
+        fb.clear(Gray2Color::WHITE);
+        let (logical_x, logical_y) = crate::profile::physical_to_logical(0, 0);
+        fb.set_pixel(logical_x, logical_y, Gray2Color::BLACK);
+
+        let mut red = [0xaa; crate::profile::ROW_BYTES];
+        let mut black = [0xaa; crate::profile::ROW_BYTES];
+        let result = fill_absolute_row_packed(&fb, 0, &mut red, &mut black);
+
+        assert!(result.is_ok());
+        assert!(
+            black.iter().any(|&byte| byte != 0xff),
+            "row 0 should contain the black pixel"
+        );
+
+        let result = fill_absolute_row_packed(&fb, 1, &mut red, &mut black);
+        assert!(result.is_ok());
+        assert!(
+            black.iter().all(|&byte| byte == 0xff),
+            "row 1 should remain white"
+        );
+    }
+
+    #[test]
+    fn staged_overlay_row_handles_full_physical_width() {
+        let mut fb = Gray2Framebuffer::new();
+        fb.set_pixel(0, 799, Gray2Color::DARK_GRAY);
+
+        let mut msb = [0u8; crate::profile::ROW_BYTES];
+        let mut lsb = [0u8; crate::profile::ROW_BYTES];
+        let mut base = [0u8; crate::profile::ROW_BYTES];
+        let mut output = [0u8; crate::profile::ROW_BYTES * crate::profile::CHUNK_ROWS as usize];
+
+        let result = fill_staged_from_fb(
+            &fb,
+            0,
+            Stage::Lsb,
+            &mut msb,
+            &mut lsb,
+            &mut base,
+            &mut output,
+        );
+
+        assert!(result.is_ok());
     }
 }

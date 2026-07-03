@@ -5,5 +5,8 @@
 
 #![no_std]
 
+mod block_stream;
+mod fat_directory;
 pub mod sd_filesystem;
+
 pub use sd_filesystem::SdStorage;
