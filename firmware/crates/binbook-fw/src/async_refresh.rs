@@ -44,7 +44,7 @@ pub fn button_to_request(button: Button, mode: u8) -> Option<DisplayRequest> {
 
 pub const PAGE_TURN_QUEUE_CAPACITY: usize = 16;
 pub const DISPLAY_COMPLETION_CAPACITY: usize = 16;
-pub const INPUT_POLL_INTERVAL_MS: u64 = 50;
+pub const INPUT_POLL_INTERVAL_MS: u64 = 20;
 pub const GRAY_SETTLE_DELAY_MS: u64 = 350;
 pub const DISPLAY_BUSY_TIMEOUT_MS: u64 = 60_000;
 pub const DISPLAY_STREAM_STRIP_ROWS: u16 = 16;

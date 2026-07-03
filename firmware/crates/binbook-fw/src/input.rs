@@ -74,22 +74,28 @@ pub struct InputPollOutcome {
 
 #[derive(Debug, Clone, Copy)]
 pub struct InputState {
-    last_button: Option<Button>,
-    last_press_time: u64,
-    cooldown_ms: u32,
+    raw_button: Option<Button>,
+    reported_button: Option<Button>,
+    last_decision_time: u64,
+    ch1: LadderState,
+    ch2: LadderState,
 }
 
 impl InputState {
+    pub const DEBOUNCE_MS: u32 = 30;
+
     pub const fn new() -> Self {
         Self {
-            last_button: None,
-            last_press_time: 0,
-            cooldown_ms: 100,
+            raw_button: None,
+            reported_button: None,
+            last_decision_time: 0,
+            ch1: LadderState::new(),
+            ch2: LadderState::new(),
         }
     }
 
     pub fn last_button(&self) -> Option<Button> {
-        self.last_button
+        self.reported_button
     }
 
     pub fn poll_raw(&mut self, ch1: u16, ch2: u16, now_ms: u64) -> Option<ButtonEvent> {
@@ -102,30 +108,63 @@ impl InputState {
     }
 
     pub fn poll_raw_detailed(&mut self, ch1: u16, ch2: u16, now_ms: u64) -> InputPollOutcome {
-        let previous = self.last_button;
-        let observed = decode_buttons(ch1, ch2);
-        let elapsed = now_ms.saturating_sub(self.last_press_time);
+        let previous = self.raw_button;
+        let raw_ch1 = decode_ch1_button(ch1);
+        let raw_ch2 = decode_ch2_button(ch2);
+        let raw_observed = raw_ch1.or(raw_ch2);
+        self.raw_button = raw_observed;
+
+        self.ch1.update(raw_ch1, now_ms);
+        self.ch2.update(raw_ch2, now_ms);
+
+        let debounced_observed = self.ch1.stable.or(self.ch2.stable);
+        let elapsed = now_ms.saturating_sub(self.last_decision_time);
         let elapsed_ms = elapsed.min(u32::MAX as u64) as u32;
-        let decision = if observed == previous {
+        let decision = if debounced_observed == self.reported_button {
             InputDecision::Unchanged
-        } else if elapsed > self.cooldown_ms as u64 {
-            self.last_press_time = now_ms;
-            match observed {
+        } else {
+            self.last_decision_time = now_ms;
+            self.reported_button = debounced_observed;
+            match debounced_observed {
                 Some(button) => InputDecision::Press(button),
                 None => InputDecision::Released,
             }
-        } else {
-            InputDecision::SuppressedByCooldown {
-                observed,
-                elapsed_ms,
-            }
         };
-        self.last_button = observed;
         InputPollOutcome {
             previous,
-            observed,
+            observed: raw_observed,
             elapsed_since_last_press_ms: elapsed_ms,
             decision,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LadderState {
+    candidate: Option<Button>,
+    candidate_since_ms: u64,
+    stable: Option<Button>,
+}
+
+impl LadderState {
+    const fn new() -> Self {
+        Self {
+            candidate: None,
+            candidate_since_ms: 0,
+            stable: None,
+        }
+    }
+
+    fn update(&mut self, observed: Option<Button>, now_ms: u64) {
+        if observed != self.candidate {
+            self.candidate = observed;
+            self.candidate_since_ms = now_ms;
+            return;
+        }
+
+        let elapsed = now_ms.saturating_sub(self.candidate_since_ms);
+        if elapsed >= InputState::DEBOUNCE_MS as u64 {
+            self.stable = observed;
         }
     }
 }
@@ -137,7 +176,11 @@ impl Default for InputState {
 }
 
 pub fn decode_buttons(ch1: u16, ch2: u16) -> Option<Button> {
-    let ch1_button = if ch1 <= 750 {
+    decode_ch1_button(ch1).or(decode_ch2_button(ch2))
+}
+
+fn decode_ch1_button(ch1: u16) -> Option<Button> {
+    if ch1 <= 750 {
         Some(Button::Right)
     } else if ch1 <= 1750 {
         Some(Button::Left)
@@ -147,15 +190,15 @@ pub fn decode_buttons(ch1: u16, ch2: u16) -> Option<Button> {
         Some(Button::Back)
     } else {
         None
-    };
+    }
+}
 
-    let ch2_button = if ch2 <= 750 {
+fn decode_ch2_button(ch2: u16) -> Option<Button> {
+    if ch2 <= 750 {
         Some(Button::Down)
     } else if ch2 <= 2400 {
         Some(Button::Up)
     } else {
         None
-    };
-
-    ch1_button.or(ch2_button)
+    }
 }

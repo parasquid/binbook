@@ -1,3 +1,4 @@
+use binbook_fw::async_refresh::INPUT_POLL_INTERVAL_MS;
 use binbook_fw::flash::{FlashStorage, FILE_ENTRY_SIZE};
 use binbook_fw::input::{
     apply_page_turn, decode_buttons, page_turn_for_button, Button, ButtonEvent, InputDecision,
@@ -8,14 +9,31 @@ use embedded_storage::nor_flash::NorFlash as _;
 #[test]
 fn decodes_adc_ladder_buttons() {
     assert_eq!(decode_buttons(500, 4095), Some(Button::Right));
-    assert_eq!(decode_buttons(1000, 4095), Some(Button::Left));
-    assert_eq!(decode_buttons(1800, 4095), Some(Button::Select));
+    assert_eq!(decode_buttons(750, 4095), Some(Button::Right));
+    assert_eq!(decode_buttons(751, 4095), Some(Button::Left));
+    assert_eq!(decode_buttons(1750, 4095), Some(Button::Left));
+    assert_eq!(decode_buttons(1751, 4095), Some(Button::Select));
+    assert_eq!(decode_buttons(2200, 4095), Some(Button::Select));
     assert_eq!(decode_buttons(2800, 4095), Some(Button::Select));
+    assert_eq!(decode_buttons(3000, 4095), Some(Button::Select));
+    assert_eq!(decode_buttons(3001, 4095), Some(Button::Back));
     assert_eq!(decode_buttons(3500, 4095), Some(Button::Back));
+    assert_eq!(decode_buttons(3800, 4095), Some(Button::Back));
+    assert_eq!(decode_buttons(3801, 4095), None);
     assert_eq!(decode_buttons(4095, 500), Some(Button::Down));
-    assert_eq!(decode_buttons(4095, 1500), Some(Button::Up));
+    assert_eq!(decode_buttons(4095, 750), Some(Button::Down));
+    assert_eq!(decode_buttons(4095, 751), Some(Button::Up));
+    assert_eq!(decode_buttons(4095, 2200), Some(Button::Up));
     assert_eq!(decode_buttons(4095, 2280), Some(Button::Up));
+    assert_eq!(decode_buttons(4095, 2400), Some(Button::Up));
+    assert_eq!(decode_buttons(4095, 2401), None);
     assert_eq!(decode_buttons(4095, 4095), None);
+}
+
+#[test]
+fn input_sampling_matches_x4_reference_cadence() {
+    assert_eq!(INPUT_POLL_INTERVAL_MS, 20);
+    assert_eq!(InputState::DEBOUNCE_MS, 30);
 }
 
 #[test]
@@ -153,40 +171,91 @@ fn raw_poll_emits_one_press_per_button_transition() {
     let mut input = InputState::new();
 
     assert_eq!(input.poll_raw(4095, 4095, 0), None);
+    assert_eq!(input.poll_raw(500, 4095, 20), None);
+    assert_eq!(input.poll_raw(500, 4095, 40), None);
     assert_eq!(
-        input.poll_raw(500, 4095, 150),
+        input.poll_raw(500, 4095, 60),
         Some(ButtonEvent::Press(Button::Right))
     );
-    assert_eq!(input.poll_raw(500, 4095, 300), None);
-    assert_eq!(input.poll_raw(4095, 4095, 450), None);
+    assert_eq!(input.poll_raw(500, 4095, 80), None);
+    assert_eq!(input.poll_raw(4095, 4095, 100), None);
+    assert_eq!(input.poll_raw(4095, 4095, 120), None);
+    assert_eq!(input.poll_raw(4095, 4095, 140), None);
+    assert_eq!(input.poll_raw(4095, 500, 160), None);
     assert_eq!(
-        input.poll_raw(4095, 500, 600),
+        input.poll_raw(4095, 500, 200),
         Some(ButtonEvent::Press(Button::Down))
     );
 }
 
 #[test]
-fn raw_poll_suppresses_transitions_inside_cooldown() {
+fn raw_poll_requires_stable_candidate_before_press() {
     let mut input = InputState::new();
 
-    assert_eq!(input.poll_raw(500, 4095, 50), None);
-    assert_eq!(input.poll_raw(500, 4095, 150), None);
+    assert_eq!(input.poll_raw(500, 4095, 20), None);
+    assert_eq!(input.poll_raw(4095, 4095, 40), None);
+    assert_eq!(input.poll_raw(500, 4095, 60), None);
+    assert_eq!(input.poll_raw(500, 4095, 80), None);
+    assert_eq!(
+        input.poll_raw(500, 4095, 100),
+        Some(ButtonEvent::Press(Button::Right))
+    );
 }
 
 #[test]
-fn detailed_poll_reports_the_initial_cooldown_suppression() {
+fn debounced_poll_waits_for_thirty_ms_stable_candidate() {
+    let mut input = InputState::new();
+
+    assert_eq!(input.poll_raw(4095, 4095, 0), None);
+    assert_eq!(input.poll_raw(500, 4095, 20), None);
+    assert_eq!(input.poll_raw(500, 4095, 40), None);
+    assert_eq!(
+        input.poll_raw(500, 4095, 60),
+        Some(ButtonEvent::Press(Button::Right))
+    );
+}
+
+#[test]
+fn debounced_poll_resets_candidate_when_ladder_bounces() {
+    let mut input = InputState::new();
+
+    assert_eq!(input.poll_raw(500, 4095, 20), None);
+    assert_eq!(input.poll_raw(1000, 4095, 40), None);
+    assert_eq!(input.poll_raw(1000, 4095, 60), None);
+    assert_eq!(
+        input.poll_raw(1000, 4095, 80),
+        Some(ButtonEvent::Press(Button::Left))
+    );
+}
+
+#[test]
+fn debounced_poll_tracks_each_adc_ladder_independently() {
+    let mut input = InputState::new();
+
+    assert_eq!(input.poll_raw(500, 4095, 20), None);
+    assert_eq!(input.poll_raw(500, 500, 40), None);
+    assert_eq!(
+        input.poll_raw(500, 500, 60),
+        Some(ButtonEvent::Press(Button::Right))
+    );
+    assert_eq!(input.poll_raw(4095, 500, 80), None);
+    assert_eq!(
+        input.poll_raw(4095, 500, 120),
+        Some(ButtonEvent::Press(Button::Down))
+    );
+}
+
+#[test]
+fn detailed_poll_reports_pending_candidate_as_unchanged() {
     let mut input = InputState::new();
 
     assert_eq!(
-        input.poll_raw_detailed(500, 4095, 50),
+        input.poll_raw_detailed(500, 4095, 20),
         InputPollOutcome {
             previous: None,
             observed: Some(Button::Right),
-            elapsed_since_last_press_ms: 50,
-            decision: InputDecision::SuppressedByCooldown {
-                observed: Some(Button::Right),
-                elapsed_ms: 50,
-            },
+            elapsed_since_last_press_ms: 20,
+            decision: InputDecision::Unchanged,
         }
     );
 }
@@ -196,53 +265,69 @@ fn detailed_poll_reports_one_accepted_press() {
     let mut input = InputState::new();
 
     assert_eq!(
-        input.poll_raw_detailed(500, 4095, 101).decision,
+        input.poll_raw_detailed(500, 4095, 20).decision,
+        InputDecision::Unchanged
+    );
+    assert_eq!(
+        input.poll_raw_detailed(500, 4095, 60).decision,
         InputDecision::Press(Button::Right)
     );
     assert_eq!(
-        input.poll_raw_detailed(500, 4095, 250).decision,
+        input.poll_raw_detailed(500, 4095, 80).decision,
         InputDecision::Unchanged
     );
 }
 
 #[test]
-fn detailed_poll_preserves_exact_cooldown_and_suppressed_state_change() {
+fn detailed_poll_debounces_state_change_between_buttons() {
     let mut input = InputState::new();
     assert_eq!(
-        input.poll_raw_detailed(500, 4095, 101).decision,
+        input.poll_raw_detailed(500, 4095, 20).decision,
+        InputDecision::Unchanged
+    );
+    assert_eq!(
+        input.poll_raw_detailed(500, 4095, 60).decision,
         InputDecision::Press(Button::Right)
     );
 
     assert_eq!(
-        input.poll_raw_detailed(1000, 4095, 201).decision,
-        InputDecision::SuppressedByCooldown {
-            observed: Some(Button::Left),
-            elapsed_ms: 100,
-        }
-    );
-    assert_eq!(input.last_button(), Some(Button::Left));
-    assert_eq!(
-        input.poll_raw_detailed(1000, 4095, 302).decision,
+        input.poll_raw_detailed(1000, 4095, 80).decision,
         InputDecision::Unchanged
     );
+    assert_eq!(input.last_button(), Some(Button::Right));
+    assert_eq!(
+        input.poll_raw_detailed(1000, 4095, 120).decision,
+        InputDecision::Press(Button::Left)
+    );
+    assert_eq!(input.last_button(), Some(Button::Left));
 }
 
 #[test]
 fn detailed_poll_reports_release_without_changing_legacy_events() {
     let mut detailed = InputState::new();
     assert_eq!(
-        detailed.poll_raw_detailed(500, 4095, 101).decision,
+        detailed.poll_raw_detailed(500, 4095, 20).decision,
+        InputDecision::Unchanged
+    );
+    assert_eq!(
+        detailed.poll_raw_detailed(500, 4095, 60).decision,
         InputDecision::Press(Button::Right)
     );
     assert_eq!(
-        detailed.poll_raw_detailed(4095, 4095, 202).decision,
+        detailed.poll_raw_detailed(4095, 4095, 80).decision,
+        InputDecision::Unchanged
+    );
+    assert_eq!(
+        detailed.poll_raw_detailed(4095, 4095, 120).decision,
         InputDecision::Released
     );
 
     let mut legacy = InputState::new();
+    assert_eq!(legacy.poll_raw(500, 4095, 20), None);
     assert_eq!(
-        legacy.poll_raw(500, 4095, 101),
+        legacy.poll_raw(500, 4095, 60),
         Some(ButtonEvent::Press(Button::Right))
     );
-    assert_eq!(legacy.poll_raw(4095, 4095, 202), None);
+    assert_eq!(legacy.poll_raw(4095, 4095, 80), None);
+    assert_eq!(legacy.poll_raw(4095, 4095, 120), None);
 }

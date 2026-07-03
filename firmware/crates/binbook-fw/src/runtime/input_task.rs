@@ -22,7 +22,7 @@ pub(super) async fn input_task(
         adc_config.enable_pin_with_cal::<_, AdcCalBasic<_>>(gpio1, Attenuation::_11dB);
     let mut ch2_pin =
         adc_config.enable_pin_with_cal::<_, AdcCalBasic<_>>(gpio2, Attenuation::_11dB);
-    let mut adc = Adc::new(adc1, adc_config);
+    let mut adc = Adc::new(adc1, adc_config).into_async();
     let mut input_state = InputState::new();
     let mut tick: u64 = 0;
 
@@ -30,20 +30,8 @@ pub(super) async fn input_task(
         embassy_time::Timer::after_millis(INPUT_POLL_INTERVAL_MS).await;
         tick = tick.saturating_add(INPUT_POLL_INTERVAL_MS);
 
-        let ch1 = loop {
-            match adc.read_oneshot(&mut ch1_pin) {
-                Ok(value) => break value,
-                Err(nb::Error::WouldBlock) => {}
-                Err(nb::Error::Other(())) => break 0,
-            }
-        };
-        let ch2 = loop {
-            match adc.read_oneshot(&mut ch2_pin) {
-                Ok(value) => break value,
-                Err(nb::Error::WouldBlock) => {}
-                Err(nb::Error::Other(())) => break 0,
-            }
-        };
+        let ch1 = adc.read_oneshot(&mut ch1_pin).await;
+        let ch2 = adc.read_oneshot(&mut ch2_pin).await;
 
         let outcome = input_state.poll_raw_detailed(ch1, ch2, tick);
         let timestamp_ms = embassy_time::Instant::now().as_millis();
