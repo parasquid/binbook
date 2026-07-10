@@ -115,6 +115,18 @@ fn fixture() -> (
     (book, X4Panel::new(Spi(trace.clone()), Pin, Pin, Pin), trace)
 }
 
+fn gray1_fixture() -> (
+    binbook_core::Book<SliceSource<'static>>,
+    X4Panel<Spi, Pin, Pin, Pin>,
+    Trace,
+) {
+    let bytes = include_bytes!("fixtures/gray1_probe.binbook");
+    let mut scratch = [0_u8; 1024];
+    let book = binbook_core::Book::open(SliceSource::new(bytes), &mut scratch).unwrap();
+    let trace = Trace::default();
+    (book, X4Panel::new(Spi(trace.clone()), Pin, Pin, Pin), trace)
+}
+
 fn buffers() -> ([u8; 96], [u8; 300], [u8; 100], [u8; 100]) {
     ([0; 96], [0; 300], [0; 100], [0; 100])
 }
@@ -177,6 +189,41 @@ fn absolute_gray_streams_each_controller_plane_with_one_full_window() {
         1
     );
     assert_eq!(delay.0.iter().filter(|ns| **ns == 0).count(), 1);
+}
+
+#[test]
+fn compiler_gray1_streams_fast_base_to_both_rams_and_refreshes() {
+    let (mut book, mut panel, trace) = gray1_fixture();
+    let (mut compressed, mut decoded, mut black, mut red) = buffers();
+    let mut buffers = RenderBuffers::new(&mut compressed, &mut decoded, &mut black, &mut red);
+    let mut delay = Delay::default();
+    block_on(render_absolute_gray(
+        &mut panel,
+        &mut book,
+        0,
+        &mut buffers,
+        &mut delay,
+    ))
+    .unwrap();
+
+    let writes = trace.0.borrow();
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|write| write.as_slice() == [ssd1677_driver::Command::WRITE_RAM_RED])
+            .count(),
+        1
+    );
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|write| write.as_slice() == [ssd1677_driver::Command::WRITE_RAM_BW])
+            .count(),
+        1
+    );
+    assert!(writes
+        .iter()
+        .any(|write| write.as_slice() == [ssd1677_driver::Command::MASTER_ACTIVATION]));
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use binbook_core::{Book, PlaneSlot, ReadAt};
+use binbook_core::{Book, PixelFormat, PlaneSlot, ReadAt};
 use embedded_hal::{
     digital::{InputPin, OutputPin},
     spi::SpiDevice,
@@ -61,6 +61,17 @@ where
     D: DelayNs,
 {
     let page = read_x4_page(book, page)?;
+    if page.pixel_format == PixelFormat::Gray1Packed {
+        return crate::native::recovery_seed_observed(
+            panel,
+            book,
+            page.page_number.get(),
+            buffers,
+            delay,
+            observer,
+        )
+        .await;
+    }
     let (input0, input1, input2) = split_three(buffers.compressed)?;
     let (row0, row1, row2) = row_triplet(buffers.decoded)?;
     require_row(buffers.red)?;
