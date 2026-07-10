@@ -952,6 +952,7 @@ name = "embedded-sd-storage"
 version = "0.1.0"
 dependencies = [
  "binbook-core",
+ "binbook-storage",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "embedded-sdmmc",

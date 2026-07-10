@@ -9,6 +9,9 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+/// Maximum portable BinBook filename length in bytes.
+pub const MAX_BINBOOK_NAME_BYTES: usize = 121;
+
 #[cfg(feature = "alloc")]
 pub mod enumerate;
 pub mod filesystem;

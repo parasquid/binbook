@@ -33,10 +33,13 @@ pub trait Filesystem {
     where
         Self: Sized,
     {
-        let mut entries = heapless::Vec::<(heapless::String<64>, u64), 64>::new();
+        let mut entries =
+            heapless::Vec::<(heapless::String<{ crate::MAX_BINBOOK_NAME_BYTES }>, u64), 64>::new();
         self.for_each_entry(&mut |name, size| {
             if name.ends_with(".binbook") {
-                if let Ok(name_buf) = heapless::String::<64>::try_from(name) {
+                if let Ok(name_buf) =
+                    heapless::String::<{ crate::MAX_BINBOOK_NAME_BYTES }>::try_from(name)
+                {
                     let _ = entries.push((name_buf, size));
                 }
             }

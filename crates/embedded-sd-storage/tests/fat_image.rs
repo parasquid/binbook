@@ -172,6 +172,40 @@ fn long_binbook_filename_roundtrips_as_real_directory_name() {
 }
 
 #[test]
+fn maximum_portable_binbook_filename_roundtrips_and_enumerates() {
+    let (mut storage, _blocks) = storage_from_fixture();
+    let name = format!("{}.binbook", "a".repeat(113));
+    assert_eq!(name.len(), binbook_storage::MAX_BINBOOK_NAME_BYTES);
+
+    storage.create_or_truncate(&name).unwrap();
+    storage.write_at(&name, 0, BOOK_A).unwrap();
+    storage.flush(&name).unwrap();
+
+    let mut names = Vec::new();
+    storage
+        .for_each_binbook_entry(&mut |name, _, _| names.push(name.to_string()))
+        .unwrap();
+    assert_eq!(names, vec![name]);
+}
+
+#[test]
+fn binbook_enumeration_excludes_names_beyond_portable_limit() {
+    let (mut storage, _blocks) = storage_from_fixture();
+    let name = format!("{}.binbook", "a".repeat(114));
+    assert_eq!(name.len(), binbook_storage::MAX_BINBOOK_NAME_BYTES + 1);
+
+    storage.create_or_truncate(&name).unwrap();
+    storage.write_at(&name, 0, BOOK_A).unwrap();
+    storage.flush(&name).unwrap();
+
+    let mut names = Vec::new();
+    storage
+        .for_each_binbook_entry(&mut |name, _, _| names.push(name.to_string()))
+        .unwrap();
+    assert!(names.is_empty());
+}
+
+#[test]
 fn binbook_metadata_enumeration_preserves_long_name_and_page_count() {
     let (mut storage, _blocks) = storage_from_fixture();
 
@@ -250,6 +284,21 @@ fn repeated_read_at_reuses_file_extent_mapping() {
         "warm repeated read should only touch data blocks, got {} block reads",
         blocks.read_count()
     );
+}
+
+#[test]
+fn file_size_after_read_cache_reports_logical_length() {
+    let (mut storage, _blocks) = storage_from_fixture();
+
+    storage.create_or_truncate("BOOK_A.BIN").unwrap();
+    storage.write_at("BOOK_A.BIN", 0, b"BOOKDATA").unwrap();
+    storage.flush("BOOK_A.BIN").unwrap();
+
+    let mut out = [0u8; 4];
+    storage.read_at("BOOK_A.BIN", 0, &mut out).unwrap();
+    assert_eq!(&out, b"BOOK");
+
+    assert_eq!(storage.file_size("BOOK_A.BIN").unwrap(), 8);
 }
 
 #[test]

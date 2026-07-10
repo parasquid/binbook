@@ -8,11 +8,11 @@ use embedded_hal::spi::SpiDevice;
 use embedded_sdmmc::filesystem::TimeSource;
 use embedded_sdmmc::{Block, BlockDevice, BlockIdx, SdCard};
 use heapless::String;
-use lamfat::{FileSystem, FsOptions, Seek, SeekFrom, Write};
+use lamfat::{FileSystem, FsOptions, Read, Seek, SeekFrom, Write};
 
 use crate::block_stream::{BlockDeviceStream, BorrowedBlockDevice};
 pub use crate::fat_directory::StorageError;
-use crate::fat_directory::{FatDirectory, BOOKS_DIR, NAME_BUF_LEN};
+use crate::fat_directory::{FatDirectory, BOOKS_DIR, NAME_BUF_LEN, TMP_DIR};
 
 const MAX_FILE_EXTENTS: usize = 128;
 const ZERO_CHUNK: [u8; 512] = [0; 512];
@@ -35,6 +35,7 @@ where
 }
 
 struct ActiveUpload {
+    dir: String<NAME_BUF_LEN>,
     name: String<NAME_BUF_LEN>,
     expected_size: u64,
     base_offset: u64,
@@ -42,6 +43,7 @@ struct ActiveUpload {
 }
 
 struct ActiveRead {
+    dir: String<NAME_BUF_LEN>,
     name: String<NAME_BUF_LEN>,
     file_size: u64,
     base_offset: u64,
@@ -110,7 +112,17 @@ where
         offset: u64,
         out: &mut [u8],
     ) -> Result<(), StorageError<D>> {
-        self.ensure_read_cache(name)?;
+        self.read_at_in_dir(BOOKS_DIR, name, offset, out)
+    }
+
+    pub fn read_at_in_dir(
+        &mut self,
+        dir_name: &str,
+        name: &str,
+        offset: u64,
+        out: &mut [u8],
+    ) -> Result<(), StorageError<D>> {
+        self.ensure_read_cache(dir_name, name)?;
         let read = self.active_read.as_ref().ok_or(StorageError::NotFound)?;
         let available = read.file_size.saturating_sub(offset);
         let read_len = min(out.len(), available as usize);
@@ -131,18 +143,38 @@ where
 
     /// Return the byte length of `name`, or `StorageError::NotFound`.
     pub fn file_size(&mut self, name: &str) -> Result<u64, StorageError<D>> {
+        self.file_size_in_dir(BOOKS_DIR, name)
+    }
+
+    pub fn file_size_in_dir(&mut self, dir_name: &str, name: &str) -> Result<u64, StorageError<D>> {
         if let Some(read) = self.active_read.as_ref() {
-            if read.name.as_str() == name {
+            if read.dir.as_str() == dir_name && read.name.as_str() == name {
                 return Ok(read.file_size);
             }
         }
-        FatDirectory::file_size(&mut self.block_device, name)
+        if dir_name == BOOKS_DIR {
+            FatDirectory::file_size(&mut self.block_device, name)
+        } else {
+            FatDirectory::file_size_in_dir(&mut self.block_device, dir_name, name)
+        }
     }
 
     /// Create `/BOOKS` if needed, then create or truncate `name`.
     pub fn create_or_truncate(&mut self, name: &str) -> Result<(), StorageError<D>> {
+        self.create_or_truncate_in_dir(BOOKS_DIR, name)
+    }
+
+    pub fn create_or_truncate_in_dir(
+        &mut self,
+        dir_name: &str,
+        name: &str,
+    ) -> Result<(), StorageError<D>> {
         self.active_read = None;
-        FatDirectory::create_or_truncate(&mut self.block_device, name)
+        if dir_name == BOOKS_DIR {
+            FatDirectory::create_or_truncate(&mut self.block_device, name)
+        } else {
+            FatDirectory::create_or_truncate_in_dir(&mut self.block_device, dir_name, name)
+        }
     }
 
     /// Write bytes at `offset` in `/BOOKS/name`.
@@ -152,24 +184,67 @@ where
         offset: u64,
         data: &[u8],
     ) -> Result<(), StorageError<D>> {
+        self.write_at_in_dir(BOOKS_DIR, name, offset, data)
+    }
+
+    pub fn write_at_in_dir(
+        &mut self,
+        dir_name: &str,
+        name: &str,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<(), StorageError<D>> {
         self.active_read = None;
-        FatDirectory::write_at(&mut self.block_device, name, offset, data)
+        if dir_name == BOOKS_DIR {
+            FatDirectory::write_at(&mut self.block_device, name, offset, data)
+        } else {
+            FatDirectory::write_at_in_dir(&mut self.block_device, dir_name, name, offset, data)
+        }
     }
 
     /// Flush `/BOOKS/name`.
     pub fn flush(&mut self, name: &str) -> Result<(), StorageError<D>> {
-        FatDirectory::flush(&mut self.block_device, name)
+        self.flush_in_dir(BOOKS_DIR, name)
+    }
+
+    pub fn flush_in_dir(&mut self, dir_name: &str, name: &str) -> Result<(), StorageError<D>> {
+        if dir_name == BOOKS_DIR {
+            FatDirectory::flush(&mut self.block_device, name)
+        } else {
+            FatDirectory::flush_in_dir(&mut self.block_device, dir_name, name)
+        }
     }
 
     /// Delete `/BOOKS/name`.
     pub fn delete_file(&mut self, name: &str) -> Result<(), StorageError<D>> {
+        self.delete_file_in_dir(BOOKS_DIR, name)
+    }
+
+    pub fn delete_file_in_dir(
+        &mut self,
+        dir_name: &str,
+        name: &str,
+    ) -> Result<(), StorageError<D>> {
         self.active_read = None;
-        FatDirectory::delete_file(&mut self.block_device, name)
+        if dir_name == BOOKS_DIR {
+            FatDirectory::delete_file(&mut self.block_device, name)
+        } else {
+            FatDirectory::delete_file_in_dir(&mut self.block_device, dir_name, name)
+        }
     }
 
     /// Begin a chunked upload and keep one FAT filesystem mounted for the
     /// duration of the upload.
     pub fn begin_upload(&mut self, name: &str, expected_size: u64) -> Result<(), StorageError<D>> {
+        self.begin_upload_in_dir(BOOKS_DIR, name, expected_size)
+    }
+
+    pub fn begin_upload_in_dir(
+        &mut self,
+        dir_name: &str,
+        name: &str,
+        expected_size: u64,
+    ) -> Result<(), StorageError<D>> {
         if self.active_upload.is_some() {
             return Err(StorageError::UploadInProgress);
         }
@@ -186,10 +261,10 @@ where
         let mut extents = heapless::Vec::new();
         {
             let root = fs.root_dir();
-            let dir = match root.open_dir(BOOKS_DIR) {
+            let dir = match root.open_dir(dir_name) {
                 Ok(dir) => dir,
                 Err(lamfat::Error::NotFound) => {
-                    root.create_dir(BOOKS_DIR).map_err(StorageError::Fat)?
+                    root.create_dir(dir_name).map_err(StorageError::Fat)?
                 }
                 Err(error) => return Err(StorageError::Fat(error)),
             };
@@ -212,6 +287,7 @@ where
         }
         fs.unmount().map_err(StorageError::Fat)?;
         self.active_upload = Some(ActiveUpload {
+            dir: String::try_from(dir_name).map_err(|_| StorageError::NameTooLong)?,
             name: String::try_from(name).map_err(|_| StorageError::NameTooLong)?,
             expected_size,
             base_offset,
@@ -227,11 +303,21 @@ where
         offset: u64,
         data: &[u8],
     ) -> Result<(), StorageError<D>> {
+        self.write_upload_chunk_in_dir(BOOKS_DIR, name, offset, data)
+    }
+
+    pub fn write_upload_chunk_in_dir(
+        &mut self,
+        dir_name: &str,
+        name: &str,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<(), StorageError<D>> {
         let upload = self
             .active_upload
             .as_mut()
             .ok_or(StorageError::NoUploadInProgress)?;
-        if upload.name.as_str() != name {
+        if upload.dir.as_str() != dir_name || upload.name.as_str() != name {
             return Err(StorageError::UploadNameMismatch);
         }
         let end = offset
@@ -251,15 +337,24 @@ where
 
     /// Commit the active upload.
     pub fn commit_upload(&mut self, name: &str) -> Result<(), StorageError<D>> {
+        self.commit_upload_in_dir(BOOKS_DIR, name)
+    }
+
+    pub fn commit_upload_in_dir(
+        &mut self,
+        dir_name: &str,
+        name: &str,
+    ) -> Result<(), StorageError<D>> {
         let upload = self
             .active_upload
             .take()
             .ok_or(StorageError::NoUploadInProgress)?;
-        if upload.name.as_str() != name {
+        if upload.dir.as_str() != dir_name || upload.name.as_str() != name {
             self.active_upload = Some(upload);
             return Err(StorageError::UploadNameMismatch);
         }
         self.active_read = Some(ActiveRead {
+            dir: upload.dir,
             name: upload.name,
             file_size: upload.expected_size,
             base_offset: upload.base_offset,
@@ -270,21 +365,135 @@ where
 
     /// Abort the active upload and remove the partially written file.
     pub fn abort_upload(&mut self, name: &str) -> Result<(), StorageError<D>> {
+        self.abort_upload_in_dir(BOOKS_DIR, name)
+    }
+
+    pub fn abort_upload_in_dir(
+        &mut self,
+        dir_name: &str,
+        name: &str,
+    ) -> Result<(), StorageError<D>> {
         let upload = self
             .active_upload
             .take()
             .ok_or(StorageError::NoUploadInProgress)?;
-        if upload.name.as_str() != name {
+        if upload.dir.as_str() != dir_name || upload.name.as_str() != name {
             self.active_upload = Some(upload);
             return Err(StorageError::UploadNameMismatch);
         }
         self.active_read = None;
-        FatDirectory::delete_file(&mut self.block_device, name)
+        FatDirectory::delete_file_in_dir(&mut self.block_device, dir_name, name)
     }
 
-    fn ensure_read_cache(&mut self, name: &str) -> Result<(), StorageError<D>> {
+    pub fn tmp_read_at(
+        &mut self,
+        name: &str,
+        offset: u64,
+        out: &mut [u8],
+    ) -> Result<(), StorageError<D>> {
+        self.read_at_in_dir(TMP_DIR, name, offset, out)
+    }
+
+    pub fn tmp_file_size(&mut self, name: &str) -> Result<u64, StorageError<D>> {
+        self.file_size_in_dir(TMP_DIR, name)
+    }
+
+    pub fn tmp_create_or_truncate(&mut self, name: &str) -> Result<(), StorageError<D>> {
+        self.create_or_truncate_in_dir(TMP_DIR, name)
+    }
+
+    pub fn tmp_write_at(
+        &mut self,
+        name: &str,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<(), StorageError<D>> {
+        self.write_at_in_dir(TMP_DIR, name, offset, data)
+    }
+
+    pub fn tmp_flush(&mut self, name: &str) -> Result<(), StorageError<D>> {
+        self.flush_in_dir(TMP_DIR, name)
+    }
+
+    pub fn tmp_begin_upload(
+        &mut self,
+        name: &str,
+        expected_size: u64,
+    ) -> Result<(), StorageError<D>> {
+        self.begin_upload_in_dir(TMP_DIR, name, expected_size)
+    }
+
+    pub fn tmp_write_upload_chunk(
+        &mut self,
+        name: &str,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<(), StorageError<D>> {
+        self.write_upload_chunk_in_dir(TMP_DIR, name, offset, data)
+    }
+
+    pub fn tmp_commit_upload(&mut self, name: &str) -> Result<(), StorageError<D>> {
+        self.commit_upload_in_dir(TMP_DIR, name)
+    }
+
+    pub fn tmp_delete_file(&mut self, name: &str) -> Result<(), StorageError<D>> {
+        self.delete_file_in_dir(TMP_DIR, name)
+    }
+
+    pub fn copy_tmp_to_books(
+        &mut self,
+        source_name: &str,
+        destination_name: &str,
+        scratch: &mut [u8],
+    ) -> Result<u64, StorageError<D>> {
+        if scratch.is_empty() {
+            return Err(StorageError::BadUploadOffset);
+        }
+        self.active_read = None;
+        self.active_upload = None;
+        let base_offset = crate::fat_directory::filesystem_base_offset(&mut self.block_device)?;
+        let stream = BlockDeviceStream::new(
+            BorrowedBlockDevice::new(&mut self.block_device),
+            base_offset,
+        );
+        let fs = FileSystem::new(stream, FsOptions::new()).map_err(StorageError::Fat)?;
+        let mut copied = 0u64;
+        {
+            let root = fs.root_dir();
+            let source_dir = root.open_dir(TMP_DIR).map_err(StorageError::Fat)?;
+            let destination_dir = match root.open_dir(BOOKS_DIR) {
+                Ok(dir) => dir,
+                Err(lamfat::Error::NotFound) => {
+                    root.create_dir(BOOKS_DIR).map_err(StorageError::Fat)?
+                }
+                Err(error) => return Err(StorageError::Fat(error)),
+            };
+            let mut source = source_dir
+                .open_file(source_name)
+                .map_err(StorageError::Fat)?;
+            let mut destination = destination_dir
+                .create_file(destination_name)
+                .map_err(StorageError::Fat)?;
+            destination.truncate().map_err(StorageError::Fat)?;
+            loop {
+                let read = source.read(scratch).map_err(StorageError::Fat)?;
+                if read == 0 {
+                    break;
+                }
+                destination
+                    .write_all(&scratch[..read])
+                    .map_err(StorageError::Fat)?;
+                copied += read as u64;
+            }
+            destination.flush().map_err(StorageError::Fat)?;
+        }
+        fs.unmount().map_err(StorageError::Fat)?;
+        Ok(copied)
+    }
+
+    fn ensure_read_cache(&mut self, dir_name: &str, name: &str) -> Result<(), StorageError<D>> {
         if let Some(read) = self.active_read.as_ref() {
-            if read.name.as_str() == name {
+            if read.dir.as_str() == dir_name && read.name.as_str() == name {
                 return Ok(());
             }
         }
@@ -299,7 +508,7 @@ where
         let mut file_size = 0u64;
         {
             let root = fs.root_dir();
-            let dir = root.open_dir(BOOKS_DIR).map_err(map_not_found::<D>)?;
+            let dir = root.open_dir(dir_name).map_err(map_not_found::<D>)?;
             let mut file = dir.open_file(name).map_err(map_not_found::<D>)?;
             for extent in file.extents() {
                 let extent = extent.map_err(StorageError::Fat)?;
@@ -311,6 +520,7 @@ where
         }
         fs.unmount().map_err(StorageError::Fat)?;
         self.active_read = Some(ActiveRead {
+            dir: String::try_from(dir_name).map_err(|_| StorageError::NameTooLong)?,
             name: String::try_from(name).map_err(|_| StorageError::NameTooLong)?,
             file_size,
             base_offset,

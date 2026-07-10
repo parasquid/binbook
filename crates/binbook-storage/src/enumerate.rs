@@ -8,22 +8,21 @@ use alloc::vec::Vec;
 
 use crate::filesystem::{Filesystem, StorageError};
 use crate::read_at::FsReadAt;
+use crate::MAX_BINBOOK_NAME_BYTES;
 use binbook_core::Book;
 
 /// A discovered BinBook file (header-only facts: name, size, page count).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinbookEntry {
-    pub name: heapless::String<64>,
+    pub name: heapless::String<MAX_BINBOOK_NAME_BYTES>,
     pub file_size: u64,
     pub page_count: u32,
 }
 
-/// Maximum length of a BinBook filename (including `.binbook` extension).
-const NAME_CAP: usize = 64;
-
 /// List `.binbook` files in the filesystem, validating each by opening it.
 ///
-/// Files whose name lacks the `.binbook` extension, exceeds `NAME_CAP`, or fails
+/// Files whose name lacks the `.binbook` extension, exceeds
+/// [`MAX_BINBOOK_NAME_BYTES`], or fails
 /// to open as a BinBook are silently skipped.
 pub fn enumerate_binbooks<F: Filesystem>(
     fs: &mut F,
@@ -40,13 +39,13 @@ pub fn enumerate_into<F: Filesystem>(
     out: &mut Vec<BinbookEntry>,
 ) -> Result<(), StorageError<F::Error>> {
     let mut scratch = [0u8; 1024];
-    let mut collected: Vec<(heapless::String<NAME_CAP>, u64)> = Vec::new();
+    let mut collected: Vec<(heapless::String<MAX_BINBOOK_NAME_BYTES>, u64)> = Vec::new();
 
     fs.for_each_entry(&mut |name, size| {
         if !name.ends_with(".binbook") {
             return;
         }
-        if let Ok(name_buf) = heapless::String::<NAME_CAP>::try_from(name) {
+        if let Ok(name_buf) = heapless::String::<MAX_BINBOOK_NAME_BYTES>::try_from(name) {
             collected.push((name_buf, size));
         }
     })

@@ -7,8 +7,8 @@ use lamfat::{
 use crate::block_stream::{BlockDeviceStream, BorrowedBlockDevice, StreamError};
 
 pub const BOOKS_DIR: &str = "BOOKS";
+pub const TMP_DIR: &str = "TMP";
 pub(crate) const NAME_BUF_LEN: usize = 256;
-const BINBOOK_ENTRY_NAME_BUF_LEN: usize = 64;
 
 /// Errors from SD FAT directory operations.
 #[derive(Debug)]
@@ -42,7 +42,8 @@ impl FatDirectory {
         let base_offset = filesystem_base_offset(device)?;
         let stream = BlockDeviceStream::new(BorrowedBlockDevice::new(device), base_offset);
         let fs = FileSystem::new(stream, FsOptions::new()).map_err(StorageError::Fat)?;
-        let mut names = heapless::Vec::<(String<BINBOOK_ENTRY_NAME_BUF_LEN>, u64), 64>::new();
+        let mut names =
+            heapless::Vec::<(String<{ binbook_storage::MAX_BINBOOK_NAME_BYTES }>, u64), 64>::new();
         let mut missing_books_dir = false;
         {
             let root = fs.root_dir();
@@ -63,7 +64,10 @@ impl FatDirectory {
                     if !name.ends_with(".binbook") {
                         continue;
                     }
-                    if let Ok(name) = String::<BINBOOK_ENTRY_NAME_BUF_LEN>::try_from(name.as_str())
+                    if let Ok(name) =
+                        String::<{ binbook_storage::MAX_BINBOOK_NAME_BYTES }>::try_from(
+                            name.as_str(),
+                        )
                     {
                         let _ = names.push((name, entry.len()));
                     }
@@ -164,13 +168,25 @@ impl FatDirectory {
         D: BlockDevice,
         D::Error: core::fmt::Debug,
     {
+        Self::file_size_in_dir(device, BOOKS_DIR, name)
+    }
+
+    pub fn file_size_in_dir<D>(
+        device: &mut D,
+        dir_name: &str,
+        name: &str,
+    ) -> Result<u64, StorageError<D>>
+    where
+        D: BlockDevice,
+        D::Error: core::fmt::Debug,
+    {
         let base_offset = filesystem_base_offset(device)?;
         let stream = BlockDeviceStream::new(BorrowedBlockDevice::new(device), base_offset);
         let fs = FileSystem::new(stream, FsOptions::new()).map_err(StorageError::Fat)?;
         let mut found = None;
         {
             let root = fs.root_dir();
-            let dir = root.open_dir(BOOKS_DIR).map_err(map_not_found::<D>)?;
+            let dir = root.open_dir(dir_name).map_err(map_not_found::<D>)?;
             for entry in dir.iter() {
                 let entry = entry.map_err(StorageError::Fat)?;
                 if entry.is_file() {
@@ -191,15 +207,27 @@ impl FatDirectory {
         D: BlockDevice,
         D::Error: core::fmt::Debug,
     {
+        Self::create_or_truncate_in_dir(device, BOOKS_DIR, name)
+    }
+
+    pub fn create_or_truncate_in_dir<D>(
+        device: &mut D,
+        dir_name: &str,
+        name: &str,
+    ) -> Result<(), StorageError<D>>
+    where
+        D: BlockDevice,
+        D::Error: core::fmt::Debug,
+    {
         let base_offset = filesystem_base_offset(device)?;
         let stream = BlockDeviceStream::new(BorrowedBlockDevice::new(device), base_offset);
         let fs = FileSystem::new(stream, FsOptions::new()).map_err(StorageError::Fat)?;
         {
             let root = fs.root_dir();
-            let dir = match root.open_dir(BOOKS_DIR) {
+            let dir = match root.open_dir(dir_name) {
                 Ok(dir) => dir,
                 Err(lamfat::Error::NotFound) => {
-                    root.create_dir(BOOKS_DIR).map_err(StorageError::Fat)?
+                    root.create_dir(dir_name).map_err(StorageError::Fat)?
                 }
                 Err(error) => return Err(StorageError::Fat(error)),
             };
@@ -221,12 +249,26 @@ impl FatDirectory {
         D: BlockDevice,
         D::Error: core::fmt::Debug,
     {
+        Self::write_at_in_dir(device, BOOKS_DIR, name, offset, data)
+    }
+
+    pub fn write_at_in_dir<D>(
+        device: &mut D,
+        dir_name: &str,
+        name: &str,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<(), StorageError<D>>
+    where
+        D: BlockDevice,
+        D::Error: core::fmt::Debug,
+    {
         let base_offset = filesystem_base_offset(device)?;
         let stream = BlockDeviceStream::new(BorrowedBlockDevice::new(device), base_offset);
         let fs = FileSystem::new(stream, FsOptions::new()).map_err(StorageError::Fat)?;
         {
             let root = fs.root_dir();
-            let dir = root.open_dir(BOOKS_DIR).map_err(map_not_found::<D>)?;
+            let dir = root.open_dir(dir_name).map_err(map_not_found::<D>)?;
             let mut file = dir.create_file(name).map_err(StorageError::Fat)?;
             file.seek(SeekFrom::Start(offset))
                 .map_err(StorageError::Fat)?;
@@ -241,12 +283,24 @@ impl FatDirectory {
         D: BlockDevice,
         D::Error: core::fmt::Debug,
     {
+        Self::flush_in_dir(device, BOOKS_DIR, name)
+    }
+
+    pub fn flush_in_dir<D>(
+        device: &mut D,
+        dir_name: &str,
+        name: &str,
+    ) -> Result<(), StorageError<D>>
+    where
+        D: BlockDevice,
+        D::Error: core::fmt::Debug,
+    {
         let base_offset = filesystem_base_offset(device)?;
         let stream = BlockDeviceStream::new(BorrowedBlockDevice::new(device), base_offset);
         let fs = FileSystem::new(stream, FsOptions::new()).map_err(StorageError::Fat)?;
         {
             let root = fs.root_dir();
-            let dir = root.open_dir(BOOKS_DIR).map_err(map_not_found::<D>)?;
+            let dir = root.open_dir(dir_name).map_err(map_not_found::<D>)?;
             let mut file = dir.open_file(name).map_err(map_not_found::<D>)?;
             file.flush().map_err(StorageError::Fat)?;
         }
@@ -258,12 +312,24 @@ impl FatDirectory {
         D: BlockDevice,
         D::Error: core::fmt::Debug,
     {
+        Self::delete_file_in_dir(device, BOOKS_DIR, name)
+    }
+
+    pub fn delete_file_in_dir<D>(
+        device: &mut D,
+        dir_name: &str,
+        name: &str,
+    ) -> Result<(), StorageError<D>>
+    where
+        D: BlockDevice,
+        D::Error: core::fmt::Debug,
+    {
         let base_offset = filesystem_base_offset(device)?;
         let stream = BlockDeviceStream::new(BorrowedBlockDevice::new(device), base_offset);
         let fs = FileSystem::new(stream, FsOptions::new()).map_err(StorageError::Fat)?;
         {
             let root = fs.root_dir();
-            let dir = root.open_dir(BOOKS_DIR).map_err(map_not_found::<D>)?;
+            let dir = root.open_dir(dir_name).map_err(map_not_found::<D>)?;
             dir.remove(name).map_err(map_not_found::<D>)?;
         }
         fs.unmount().map_err(StorageError::Fat)
