@@ -76,15 +76,23 @@ pub fn validate_profile(profile: &DisplayProfile) -> DisplayResult<()> {
 
 pub fn validate_page(page: &PageInfo) -> DisplayResult<()> {
     let planes = page.planes;
-    if page.pixel_format != PixelFormat::Gray2Packed
-        || page.stored_width != PHYSICAL_WIDTH
-        || page.stored_height != PHYSICAL_HEIGHT
-        || planes.bitmap() != 0b0000_0111
-        || planes.get(PlaneSlot::OverlayMsb).is_none()
-        || planes.get(PlaneSlot::OverlayLsb).is_none()
-        || planes.get(PlaneSlot::FastBase).is_none()
-    {
+    if page.stored_width != PHYSICAL_WIDTH || page.stored_height != PHYSICAL_HEIGHT {
         return Err(DisplayError::InvalidPage);
     }
-    Ok(())
+    match page.pixel_format {
+        PixelFormat::Gray1Packed
+            if planes.bitmap() == 0b0000_0100 && planes.get(PlaneSlot::FastBase).is_some() =>
+        {
+            Ok(())
+        }
+        PixelFormat::Gray2Packed
+            if planes.bitmap() == 0b0000_0111
+                && planes.get(PlaneSlot::OverlayMsb).is_some()
+                && planes.get(PlaneSlot::OverlayLsb).is_some()
+                && planes.get(PlaneSlot::FastBase).is_some() =>
+        {
+            Ok(())
+        }
+        _ => Err(DisplayError::InvalidPage),
+    }
 }

@@ -96,6 +96,13 @@ fn page() -> PageInfo {
     }
 }
 
+fn gray1_page() -> PageInfo {
+    let mut page = page();
+    page.pixel_format = PixelFormat::Gray1Packed;
+    page.planes = PlaneDirectory::new([None, None, Some(plane(PlaneSlot::FastBase)), None]);
+    page
+}
+
 #[test]
 fn x4_profile_and_rotation_are_exact() {
     assert_eq!(CHUNK_ROWS, 16);
@@ -105,12 +112,30 @@ fn x4_profile_and_rotation_are_exact() {
 }
 
 #[test]
-fn x4_page_requires_three_staged_planes_and_exact_geometry() {
+fn x4_gray2_page_requires_three_staged_planes_and_exact_geometry() {
     assert_eq!(validate_page(&page()), Ok(()));
     let mut invalid = page();
     invalid.stored_height -= 1;
     assert!(validate_page(&invalid).is_err());
     invalid = page();
     invalid.planes = PlaneDirectory::new([Some(plane(PlaneSlot::OverlayMsb)), None, None, None]);
+    assert!(validate_page(&invalid).is_err());
+}
+
+#[test]
+fn x4_gray1_page_requires_only_the_fast_base_plane() {
+    assert_eq!(validate_page(&gray1_page()), Ok(()));
+
+    let mut invalid = gray1_page();
+    invalid.planes = PlaneDirectory::new([None, None, None, None]);
+    assert!(validate_page(&invalid).is_err());
+
+    invalid = gray1_page();
+    invalid.planes = PlaneDirectory::new([
+        Some(plane(PlaneSlot::OverlayMsb)),
+        None,
+        Some(plane(PlaneSlot::FastBase)),
+        None,
+    ]);
     assert!(validate_page(&invalid).is_err());
 }
