@@ -10,8 +10,6 @@ use binbook_fw::{
     runtime_engine::{RuntimeEvent, RuntimeEventKind},
 };
 
-use crate::{BINBOOK_SCRATCH_BYTES, PROBE_BOOK};
-
 use super::{
     AggregatorQuery, AggregatorResponse, AGGREGATOR_COMPLETION_CHANNEL, AGGREGATOR_QUERY_CHANNEL,
     AGGREGATOR_RESPONSE_CHANNEL, REQUEST_CHANNEL, REQUEST_EPOCH, RUNTIME_EVENT_CHANNEL,
@@ -21,15 +19,12 @@ use super::{
 pub(super) async fn runtime_event_aggregator_task() {
     use embassy_futures::select::{select, Either};
 
-    let mut scratch = [0u8; BINBOOK_SCRATCH_BYTES];
-    let book = binbook_core::Book::open(binbook_core::SliceSource::new(PROBE_BOOK), &mut scratch)
-        .expect("failed to open embedded BinBook for diagnostics");
     let mut aggregator = RuntimeAggregator::<
         { PAGE_TURN_QUEUE_CAPACITY },
         { binbook_fw::diag_log::DEFAULT_LOG_CAPACITY },
     >::new(DiagnosticSnapshot {
         current_page: 0,
-        page_count: book.page_count(),
+        page_count: 0,
         panel_mode: binbook_diagnostic_protocol::PanelModeCode::Unknown,
         refresh_mode: refresh_mode_code(binbook_fw::async_refresh::STARTUP_PAGE_REFRESH_MODE),
         dropped_log_count: 0,
@@ -38,9 +33,7 @@ pub(super) async fn runtime_event_aggregator_task() {
     });
     aggregator.commit(RuntimeEvent {
         timestamp_ms: embassy_time::Instant::now().as_millis(),
-        kind: RuntimeEventKind::FirmwareStarted {
-            page_count: book.page_count(),
-        },
+        kind: RuntimeEventKind::FirmwareStarted { page_count: 0 },
     });
     let event_rx = RUNTIME_EVENT_CHANNEL.receiver();
     let query_rx = AGGREGATOR_QUERY_CHANNEL.receiver();

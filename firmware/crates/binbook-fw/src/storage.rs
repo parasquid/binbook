@@ -11,8 +11,9 @@ use embedded_hal::spi::SpiDevice;
 use embedded_sdmmc::filesystem::TimeSource;
 use embedded_sdmmc::SdCard;
 
+use binbook_core::ReadAt;
 use binbook_storage::filesystem::{Filesystem, WritableFilesystem};
-use embedded_sd_storage::SdStorage;
+use embedded_sd_storage::{MountedFileAccess, SdStorage};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -21,28 +22,44 @@ use embedded_sd_storage::SdStorage;
 /// Errors from SD filesystem operations.
 #[derive(Debug)]
 pub enum SdError {
+    /// No SD card responded during acquisition.
+    NoCard,
     /// The SD card or FAT filesystem returned an error.
     Sdmmc,
     /// The named file was not found.
     NotFound,
 }
 
-impl<D> From<embedded_sd_storage::sd_filesystem::StorageError<D>> for SdError
+pub const fn classify_device_error(error: embedded_sdmmc::sdcard::Error) -> SdError {
+    match error {
+        embedded_sdmmc::sdcard::Error::CardNotFound => SdError::NoCard,
+        _ => SdError::Sdmmc,
+    }
+}
+
+impl<SPI, DELAY>
+    From<embedded_sd_storage::sd_filesystem::StorageError<embedded_sdmmc::SdCard<SPI, DELAY>>>
+    for SdError
 where
-    D: embedded_sdmmc::BlockDevice,
-    D::Error: core::fmt::Debug,
+    SPI: SpiDevice<u8>,
+    DELAY: DelayNs,
 {
-    fn from(e: embedded_sd_storage::sd_filesystem::StorageError<D>) -> Self {
+    fn from(
+        e: embedded_sd_storage::sd_filesystem::StorageError<embedded_sdmmc::SdCard<SPI, DELAY>>,
+    ) -> Self {
         match e {
-            embedded_sd_storage::sd_filesystem::StorageError::Device(_)
-            | embedded_sd_storage::sd_filesystem::StorageError::Fat(_)
+            embedded_sd_storage::sd_filesystem::StorageError::Device(error) => {
+                classify_device_error(error)
+            }
+            embedded_sd_storage::sd_filesystem::StorageError::Fat(_)
             | embedded_sd_storage::sd_filesystem::StorageError::NameTooLong
             | embedded_sd_storage::sd_filesystem::StorageError::UploadInProgress
             | embedded_sd_storage::sd_filesystem::StorageError::NoUploadInProgress
             | embedded_sd_storage::sd_filesystem::StorageError::UploadNameMismatch
             | embedded_sd_storage::sd_filesystem::StorageError::UploadTooFragmented
             | embedded_sd_storage::sd_filesystem::StorageError::FileTooFragmented
-            | embedded_sd_storage::sd_filesystem::StorageError::BadUploadOffset => SdError::Sdmmc,
+            | embedded_sd_storage::sd_filesystem::StorageError::BadUploadOffset
+            | embedded_sd_storage::sd_filesystem::StorageError::UnexpectedEof => SdError::Sdmmc,
             embedded_sd_storage::sd_filesystem::StorageError::NotFound => SdError::NotFound,
         }
     }
@@ -94,6 +111,60 @@ where
         Self {
             inner: SdStorage::new(spi, delay, time),
         }
+    }
+
+    pub fn into_owned_mount(
+        self,
+    ) -> Result<embedded_sd_storage::MountedStorage<SdCard<SPI, DELAY>>, SdError> {
+        self.inner.into_owned_mount().map_err(SdError::from)
+    }
+}
+
+struct MappedMountedSource<'a, SPI, DELAY>
+where
+    SPI: SpiDevice<u8>,
+    DELAY: DelayNs,
+{
+    inner: &'a mut dyn ReadAt<
+        Error = embedded_sd_storage::sd_filesystem::StorageError<SdCard<SPI, DELAY>>,
+    >,
+}
+
+impl<SPI, DELAY> ReadAt for MappedMountedSource<'_, SPI, DELAY>
+where
+    SPI: SpiDevice<u8>,
+    DELAY: DelayNs,
+{
+    type Error = SdError;
+
+    fn len(&mut self) -> Result<u64, Self::Error> {
+        self.inner.len().map_err(SdError::from)
+    }
+
+    fn read_exact_at(&mut self, offset: u64, out: &mut [u8]) -> Result<(), Self::Error> {
+        self.inner.read_exact_at(offset, out).map_err(SdError::from)
+    }
+}
+
+impl<SPI, DELAY, TIME> MountedFileAccess for SdFilesystem<SPI, DELAY, TIME>
+where
+    SPI: SpiDevice<u8>,
+    DELAY: DelayNs,
+    TIME: TimeSource,
+{
+    type Error = SdError;
+
+    fn with_mounted_file<R>(
+        &mut self,
+        name: &str,
+        use_file: impl FnOnce(&mut dyn ReadAt<Error = Self::Error>) -> R,
+    ) -> Result<R, Self::Error> {
+        self.inner
+            .with_mounted_file(name, |source| {
+                let mut mapped = MappedMountedSource { inner: source };
+                use_file(&mut mapped)
+            })
+            .map_err(SdError::from)
     }
 }
 

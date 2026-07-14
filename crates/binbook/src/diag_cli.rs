@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use binbook_diagnostic_protocol::{KeyCode, Opcode};
+use binbook_diagnostic_protocol::{KeyCode, Opcode, MAX_PAYLOAD_BYTES};
 
 use crate::{
     diag_protocol, serial_transport::SerialSession, DiagCommand, ExerciseCommand, PageAction,
@@ -228,20 +228,34 @@ pub fn run_diag(cmd: DiagCommand) {
         }
         DiagCommand::Storage(storage_cmd) => match storage_cmd {
             StorageCommand::List { port, path } => {
-                let path_str = path.as_deref().unwrap_or("/");
-                let frame = diag_protocol::store_list_request(1, path_str);
-                (
-                    port.clone(),
-                    frame,
-                    Opcode::StoreList,
-                    STORAGE_REQUEST_TIMEOUT,
-                )
+                let _ = path;
+                return list_storage(port);
             }
-            StorageCommand::Read { port, path, output } => {
+            StorageCommand::Read {
+                port,
+                path,
+                output,
+                offset,
+                max_bytes,
+            } => {
                 if let Some(output) = output {
+                    if offset.is_some() || max_bytes.is_some() {
+                        return read_file_range(
+                            port,
+                            path,
+                            output,
+                            offset.unwrap_or(0),
+                            max_bytes.unwrap_or((MAX_PAYLOAD_BYTES - 5) as u32),
+                        );
+                    }
                     return read_file(port, path, output);
                 }
-                let frame = diag_protocol::store_read_request(1, path);
+                let frame = diag_protocol::store_read_request_range(
+                    1,
+                    path,
+                    offset.unwrap_or(0),
+                    max_bytes.unwrap_or((MAX_PAYLOAD_BYTES - 5) as u32),
+                );
                 (
                     port.clone(),
                     frame,
@@ -258,8 +272,31 @@ pub fn run_diag(cmd: DiagCommand) {
                     STORAGE_REQUEST_TIMEOUT,
                 )
             }
+            StorageCommand::Begin {
+                port,
+                path,
+                size,
+                crc32,
+            } => {
+                let frame = diag_protocol::store_upload_begin_request(1, path, *size, *crc32);
+                (
+                    port.clone(),
+                    frame,
+                    Opcode::StoreUploadBegin,
+                    STORAGE_REQUEST_TIMEOUT,
+                )
+            }
             StorageCommand::Upload { port, path, file } => {
                 return upload_file(port, path, file);
+            }
+            StorageCommand::Abort { port, upload_id } => {
+                let frame = diag_protocol::store_abort_request(1, *upload_id);
+                (
+                    port.clone(),
+                    frame,
+                    Opcode::StoreAbort,
+                    STORAGE_REQUEST_TIMEOUT,
+                )
             }
         },
         DiagCommand::Exercise { .. } => unreachable!("exercise handled above"),
@@ -286,6 +323,103 @@ pub fn run_diag(cmd: DiagCommand) {
             std::process::exit(1);
         }
     }
+}
+
+fn list_storage(port: &str) {
+    use binbook_diagnostic_protocol::{
+        decode_frame, decode_store_list_count, decode_store_list_entry, Opcode, MAX_PAYLOAD_BYTES,
+        STORE_LIST_ENTRY_HEADER_BYTES,
+    };
+
+    let mut session = SerialSession::open(port).unwrap_or_else(|error| {
+        eprintln!("Error: {error}");
+        std::process::exit(1);
+    });
+    let mut entries = Vec::new();
+    let mut start_index = 0u16;
+    let mut sequence = 1u16;
+    loop {
+        let request = diag_protocol::store_list_request_from(sequence, start_index);
+        let response = session
+            .send_and_receive(
+                &request,
+                Opcode::StoreList,
+                sequence,
+                STORAGE_REQUEST_TIMEOUT,
+            )
+            .unwrap_or_else(|error| {
+                eprintln!("List failed: {error}");
+                std::process::exit(1);
+            });
+        let mut payload = [0u8; MAX_PAYLOAD_BYTES];
+        let (_, payload_len) = decode_frame(&response, &mut payload).unwrap_or_else(|error| {
+            eprintln!("Invalid list response frame: {error:?}");
+            std::process::exit(1);
+        });
+        let count = decode_store_list_count(&payload[..payload_len]).unwrap_or_else(|error| {
+            eprintln!("Invalid list response count: {error:?}");
+            std::process::exit(1);
+        });
+        if count == 0 {
+            break;
+        }
+        let mut pos = 2usize;
+        for _ in 0..count {
+            let entry =
+                decode_store_list_entry(&payload[pos..payload_len]).unwrap_or_else(|error| {
+                    eprintln!("Invalid list entry: {error:?}");
+                    std::process::exit(1);
+                });
+            pos += STORE_LIST_ENTRY_HEADER_BYTES + entry.name.len();
+            entries.push((entry.name.to_owned(), entry.file_size, entry.page_count));
+        }
+        start_index = start_index.checked_add(count).unwrap_or_else(|| {
+            eprintln!("List cursor overflow");
+            std::process::exit(1);
+        });
+        sequence = sequence.wrapping_add(1).max(1);
+    }
+
+    println!("entry_count={}", entries.len());
+    for (name, size, page_count) in entries {
+        println!("  {name} size={size} pages={page_count}");
+    }
+}
+
+fn read_file_range(port: &str, path: &str, output: &std::path::Path, offset: u32, max: u32) {
+    use binbook_diagnostic_protocol::{
+        decode_frame, decode_store_read_response, Opcode, MAX_PAYLOAD_BYTES,
+    };
+
+    let mut session = SerialSession::open(port).unwrap_or_else(|error| {
+        eprintln!("Error: {error}");
+        std::process::exit(1);
+    });
+    let request = diag_protocol::store_read_request_range(1, path, offset, max);
+    let response = session
+        .send_and_receive(&request, Opcode::StoreRead, 1, STORAGE_REQUEST_TIMEOUT)
+        .unwrap_or_else(|error| {
+            eprintln!("Read failed: {error}");
+            std::process::exit(1);
+        });
+    let mut payload = [0u8; MAX_PAYLOAD_BYTES];
+    let (_, payload_len) = decode_frame(&response, &mut payload).unwrap();
+    let decoded = decode_store_read_response(&payload[..payload_len]).unwrap_or_else(|error| {
+        eprintln!("Invalid read response: {error:?}");
+        std::process::exit(1);
+    });
+    std::fs::write(output, decoded.data).unwrap_or_else(|error| {
+        eprintln!("Error writing {}: {error}", output.display());
+        std::process::exit(1);
+    });
+    println!(
+        "Read {} bytes from {} at offset {} into {} (eof={})",
+        decoded.data.len(),
+        path,
+        offset,
+        output.display(),
+        decoded.eof
+    );
 }
 
 fn read_file(port: &str, path: &str, output: &std::path::Path) {

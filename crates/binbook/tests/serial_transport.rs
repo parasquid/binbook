@@ -167,6 +167,28 @@ fn serial_transport_times_out_without_matching_response() {
 }
 
 #[test]
+fn serial_transport_discards_stale_same_sequence_wrong_opcode() {
+    let expected = response(Opcode::Status, 41, Status::Ok);
+    let mut io = FakeIo {
+        reads: vec![response(Opcode::Key, 41, Status::Ok), expected.clone()],
+        index: 0,
+        written: vec![],
+    };
+
+    assert_eq!(
+        send_and_receive_io(
+            &mut io,
+            b"request",
+            Opcode::Status,
+            41,
+            Duration::from_millis(20),
+        )
+        .unwrap(),
+        expected
+    );
+}
+
+#[test]
 fn batch_transport_collects_every_sequence_checked_response() {
     let requests = key_batch(&[
         (10, KeyCode::Right),

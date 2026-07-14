@@ -3,14 +3,30 @@ use crate::chunk;
 use crate::navigation;
 use crate::page;
 use crate::profile;
+use crate::rendition_identity;
 use crate::section;
 use crate::transition;
 use crate::{
     BookMetadata, ChapterEntry, ChapterNumber, ChunkRecordNumber, DisplayProfile, Error, NavEntry,
-    NavNumber, PageChunk, PageInfo, PageNumber, PageTransition, ReadAt, TransitionNumber,
+    NavNumber, PageChunk, PageInfo, PageNumber, PageTransition, ReadAt, RenditionIdentity,
+    TransitionNumber,
 };
 
 impl<R: ReadAt> Book<R> {
+    pub fn rendition_identity(
+        &mut self,
+        record: &mut [u8],
+    ) -> Result<RenditionIdentity, Error<R::Error>> {
+        let section = self.sections.get(section::RENDITION_IDENTITY);
+        if section.length != rendition_identity::RENDITION_IDENTITY_LENGTH {
+            return Err(crate::FormatError::InvalidSection.into());
+        }
+        self.read_prefix(section, rendition_identity::RENDITION_HASH_LENGTH, record)?;
+        Ok(rendition_identity::parse(
+            &record[..rendition_identity::RENDITION_HASH_LENGTH],
+        )?)
+    }
+
     pub fn display_profile(
         &mut self,
         record: &mut [u8],

@@ -4,7 +4,7 @@
 use std::vec::Vec;
 use std::{cell::RefCell, rc::Rc, string::String};
 
-use embedded_sd_storage::SdStorage;
+use embedded_sd_storage::{MountedDirectoryScan, MountedFileAccess, SdStorage};
 use embedded_sdmmc::TimeSource;
 use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx};
 
@@ -15,6 +15,7 @@ const BOOK_A: &[u8] = include_bytes!("../../binbook-storage/tests/fixtures/book_
 struct SharedBlockState {
     blocks: Vec<Block>,
     read_count: usize,
+    read_calls: usize,
     write_count: usize,
 }
 
@@ -34,6 +35,7 @@ impl SharedBlocks {
         Self(Rc::new(RefCell::new(SharedBlockState {
             blocks,
             read_count: 0,
+            read_calls: 0,
             write_count: 0,
         })))
     }
@@ -45,6 +47,14 @@ impl SharedBlocks {
     fn read_count(&self) -> usize {
         self.0.borrow().read_count
     }
+
+    fn reset_read_calls(&self) {
+        self.0.borrow_mut().read_calls = 0;
+    }
+
+    fn read_calls(&self) -> usize {
+        self.0.borrow().read_calls
+    }
 }
 
 impl BlockDevice for SharedBlocks {
@@ -52,6 +62,7 @@ impl BlockDevice for SharedBlocks {
 
     fn read(&self, blocks: &mut [Block], start: BlockIdx) -> Result<(), Self::Error> {
         let mut source = self.0.borrow_mut();
+        source.read_calls += 1;
         source.read_count += blocks.len();
         for (i, block) in blocks.iter_mut().enumerate() {
             let idx = (start.0 as usize) + i;
@@ -83,7 +94,62 @@ fn storage_from_fixture() -> (SdStorage<SharedBlocks, FixedTime>, SharedBlocks) 
     )
 }
 
+#[test]
+fn mounted_storage_opens_metadata_from_a_dedicated_directory() {
+    let (storage, _blocks) = storage_from_fixture();
+    let mounted = storage.into_owned_mount().unwrap();
+
+    mounted
+        .create_or_truncate_in_dir("BINBOOK", "LIBRARY.IDX")
+        .unwrap();
+    mounted
+        .write_at_in_dir("BINBOOK", "LIBRARY.IDX", 0, b"cached")
+        .unwrap();
+
+    let mut file = mounted.open_file_in_dir("BINBOOK", "LIBRARY.IDX").unwrap();
+    assert_eq!(file.size().unwrap(), 6);
+    let mut bytes = [0; 6];
+    file.read_at(0, &mut bytes).unwrap();
+    assert_eq!(&bytes, b"cached");
+}
+
+#[test]
+fn mounted_write_session_keeps_one_file_open_across_bounded_chunks() {
+    let (storage, _blocks) = storage_from_fixture();
+    let mounted = storage.into_owned_mount().unwrap();
+    let mut upload = mounted
+        .create_file_session_in_dir("BINBOOK", "LIBRARY.IDX")
+        .unwrap();
+    upload.write_at(0, b"header").unwrap();
+    upload.write_at(6, b"records").unwrap();
+    assert_eq!(upload.size().unwrap(), 13);
+    upload.flush().unwrap();
+    drop(upload);
+
+    let mut read = mounted.open_file_in_dir("BINBOOK", "LIBRARY.IDX").unwrap();
+    let mut bytes = [0; 13];
+    read.read_at(0, &mut bytes).unwrap();
+    assert_eq!(&bytes, b"headerrecords");
+}
+
 struct FixedTime;
+
+struct StorageSource<'a> {
+    storage: &'a mut SdStorage<SharedBlocks, FixedTime>,
+    name: &'a str,
+}
+
+impl binbook_core::ReadAt for StorageSource<'_> {
+    type Error = embedded_sd_storage::sd_filesystem::StorageError<SharedBlocks>;
+
+    fn len(&mut self) -> Result<u64, Self::Error> {
+        self.storage.file_size(self.name)
+    }
+
+    fn read_exact_at(&mut self, offset: u64, out: &mut [u8]) -> Result<(), Self::Error> {
+        self.storage.read_at(self.name, offset, out)
+    }
+}
 
 impl TimeSource for FixedTime {
     fn get_timestamp(&self) -> embedded_sdmmc::Timestamp {
@@ -113,6 +179,40 @@ fn enumerates_and_reads_file_from_fat_image() {
         .read_at("BOOK_A.BIN", 0, &mut buf)
         .expect("read BOOK_A.BIN");
     assert_eq!(&buf, b"BOOKDATA");
+}
+
+#[test]
+fn read_at_rejects_a_short_read_instead_of_zero_filling_it() {
+    let (mut storage, _blocks) = storage_from_fixture();
+    storage.create_or_truncate("SHORT.BIN").unwrap();
+    storage.write_at("SHORT.BIN", 0, b"short").unwrap();
+    storage.flush("SHORT.BIN").unwrap();
+
+    let mut out = [0xAA; 8];
+    assert!(storage.read_at("SHORT.BIN", 0, &mut out).is_err());
+}
+
+#[test]
+fn adjacent_long_binbook_names_both_open_through_the_cached_read_path() {
+    let (mut storage, _blocks) = storage_from_fixture();
+    for name in ["aaa-reader.binbook", "aab-reader.binbook"] {
+        storage.begin_upload(name, BOOK_A.len() as u64).unwrap();
+        storage.write_upload_chunk(name, 0, BOOK_A).unwrap();
+        storage.commit_upload(name).unwrap();
+    }
+
+    for name in ["aaa-reader.binbook", "aab-reader.binbook"] {
+        let mut scratch = [0u8; 8192];
+        let book = binbook_core::Book::open(
+            StorageSource {
+                storage: &mut storage,
+                name,
+            },
+            &mut scratch,
+        )
+        .unwrap_or_else(|error| panic!("{name} must open, got {error:?}"));
+        assert_eq!(book.page_count(), 1);
+    }
 }
 
 #[test]
@@ -257,6 +357,72 @@ fn streaming_upload_writes_long_filename_in_chunks() {
 }
 
 #[test]
+fn reader_state_slots_alternate_exact_bytes_and_are_not_binbooks() {
+    let (mut storage, _blocks) = storage_from_fixture();
+    let slot_a = b"BBST-state-generation-one";
+    let slot_b = b"BBST-state-generation-two-with-more-bytes";
+
+    storage
+        .begin_upload("BINBOOK.A.STATE", slot_a.len() as u64)
+        .unwrap();
+    storage
+        .write_upload_chunk("BINBOOK.A.STATE", 0, slot_a)
+        .unwrap();
+    storage.commit_upload("BINBOOK.A.STATE").unwrap();
+    storage
+        .begin_upload("BINBOOK.B.STATE", slot_b.len() as u64)
+        .unwrap();
+    storage
+        .write_upload_chunk("BINBOOK.B.STATE", 0, &slot_b[..13])
+        .unwrap();
+    storage
+        .write_upload_chunk("BINBOOK.B.STATE", 13, &slot_b[13..])
+        .unwrap();
+    storage.commit_upload("BINBOOK.B.STATE").unwrap();
+
+    let mut read_a = vec![0; slot_a.len()];
+    let mut read_b = vec![0; slot_b.len()];
+    storage.read_at("BINBOOK.A.STATE", 0, &mut read_a).unwrap();
+    storage.read_at("BINBOOK.B.STATE", 0, &mut read_b).unwrap();
+    assert_eq!(read_a, slot_a);
+    assert_eq!(read_b, slot_b);
+
+    let mut binbooks = Vec::new();
+    storage
+        .for_each_binbook_entry(&mut |name, _, _| binbooks.push(name.to_string()))
+        .unwrap();
+    assert!(!binbooks.iter().any(|name| name.ends_with(".STATE")));
+}
+
+#[test]
+fn reader_state_slot_can_grow_when_overwritten() {
+    let (mut storage, _blocks) = storage_from_fixture();
+    let small = [0x31; 204];
+    let large = [0x42; 248];
+
+    storage
+        .begin_upload("BINBOOK.B.STATE", small.len() as u64)
+        .unwrap();
+    storage
+        .write_upload_chunk("BINBOOK.B.STATE", 0, &small)
+        .unwrap();
+    storage.commit_upload("BINBOOK.B.STATE").unwrap();
+
+    storage
+        .begin_upload("BINBOOK.B.STATE", large.len() as u64)
+        .unwrap();
+    storage
+        .write_upload_chunk("BINBOOK.B.STATE", 0, &large)
+        .unwrap();
+    storage.commit_upload("BINBOOK.B.STATE").unwrap();
+
+    assert_eq!(storage.file_size("BINBOOK.B.STATE").unwrap(), 248);
+    let mut actual = [0; 248];
+    storage.read_at("BINBOOK.B.STATE", 0, &mut actual).unwrap();
+    assert_eq!(actual, large);
+}
+
+#[test]
 fn repeated_read_at_reuses_file_extent_mapping() {
     let (mut storage, blocks) = storage_from_fixture();
 
@@ -284,6 +450,180 @@ fn repeated_read_at_reuses_file_extent_mapping() {
         "warm repeated read should only touch data blocks, got {} block reads",
         blocks.read_count()
     );
+}
+
+#[test]
+fn aligned_warm_read_batches_blocks_per_extent() {
+    let (mut storage, blocks) = storage_from_fixture();
+    storage
+        .begin_upload("long-book-title.binbook", BOOK_A.len() as u64)
+        .unwrap();
+    storage
+        .write_upload_chunk("long-book-title.binbook", 0, BOOK_A)
+        .unwrap();
+    storage.commit_upload("long-book-title.binbook").unwrap();
+
+    let mut out = [0u8; 4096];
+    blocks.reset_read_calls();
+    storage
+        .read_at("long-book-title.binbook", 0, &mut out)
+        .unwrap();
+
+    assert_eq!(&out, &BOOK_A[..4096]);
+    assert!(
+        blocks.read_calls() <= 2,
+        "fixture spans at most two extents; got {} device calls",
+        blocks.read_calls()
+    );
+}
+
+#[test]
+fn scoped_mounted_source_supports_multiple_random_reads_without_extent_materialization() {
+    let (mut storage, _blocks) = storage_from_fixture();
+    storage
+        .begin_upload("mounted.binbook", BOOK_A.len() as u64)
+        .unwrap();
+    storage
+        .write_upload_chunk("mounted.binbook", 0, BOOK_A)
+        .unwrap();
+    storage.commit_upload("mounted.binbook").unwrap();
+    let mut first = [0u8; 64];
+    let mut later = [0u8; 1024];
+
+    let result = storage
+        .with_mounted_file("mounted.binbook", |source| {
+            source.read_exact_at(0, &mut first).unwrap();
+            source.read_exact_at(4096, &mut later).unwrap();
+            source.len().unwrap()
+        })
+        .unwrap();
+
+    assert_eq!(result, BOOK_A.len() as u64);
+    assert_eq!(&first, &BOOK_A[..64]);
+    assert_eq!(&later, &BOOK_A[4096..5120]);
+    assert_eq!(storage.file_size("mounted.binbook").unwrap(), result);
+}
+
+#[test]
+fn consuming_mount_keeps_one_directory_iterator_position_across_batches() {
+    let (mut storage, _blocks) = storage_from_fixture();
+    storage.create_or_truncate("A.binbook").unwrap();
+    storage.create_or_truncate("B.binbook").unwrap();
+    let fs = storage.into_mounted_filesystem().unwrap();
+    let root = fs.root_dir();
+    let dir = root.open_dir("BOOKS").unwrap();
+    let mut entries = dir.iter();
+
+    let mut first_file = None;
+    for entry in entries.by_ref() {
+        let entry = entry.unwrap();
+        if entry.is_file() {
+            first_file = Some(entry.short_file_name_as_bytes().to_vec());
+            break;
+        }
+    }
+    let mut second_file = None;
+    for entry in entries.by_ref() {
+        let entry = entry.unwrap();
+        if entry.is_file() {
+            second_file = Some(entry.short_file_name_as_bytes().to_vec());
+            break;
+        }
+    }
+
+    assert!(first_file.is_some());
+    assert!(second_file.is_some());
+    assert_ne!(first_file, second_file);
+    assert!(entries.all(|entry| !entry.unwrap().is_file()));
+}
+
+#[test]
+fn mounted_scan_batches_eight_entries_and_allows_foreground_read_between_steps() {
+    use lamfat::{Read, Seek, SeekFrom};
+
+    let (mut storage, _blocks) = storage_from_fixture();
+    for index in 0..18 {
+        let name = format!("scan-{index:02}.binbook");
+        storage.create_or_truncate(&name).unwrap();
+        storage.write_at(&name, 0, &[index as u8]).unwrap();
+    }
+    let fs = storage.into_mounted_filesystem().unwrap();
+    let mut scan = MountedDirectoryScan::start(&fs).unwrap();
+
+    let first = scan.step(8).unwrap();
+    assert_eq!(first.inspected, 8);
+    assert!(!first.complete);
+    assert!(first.entries.len() <= 8);
+
+    let root = fs.root_dir();
+    let books = root.open_dir("BOOKS").unwrap();
+    let mut foreground = books.open_file("scan-17.binbook").unwrap();
+    foreground.seek(SeekFrom::Start(0)).unwrap();
+    let mut byte = [0u8; 1];
+    foreground.read_exact(&mut byte).unwrap();
+    assert_eq!(byte, [17]);
+
+    let mut inspected = usize::from(first.inspected);
+    let mut names: Vec<String> = first
+        .entries
+        .iter()
+        .map(|entry| entry.name.as_str().to_owned())
+        .collect();
+    loop {
+        let batch = scan.step(8).unwrap();
+        assert!(batch.inspected <= 8);
+        inspected += usize::from(batch.inspected);
+        names.extend(
+            batch
+                .entries
+                .iter()
+                .map(|entry| entry.name.as_str().to_owned()),
+        );
+        if batch.complete {
+            break;
+        }
+    }
+
+    assert!(inspected >= 18);
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| name.starts_with("scan-"))
+            .count(),
+        18
+    );
+
+    drop(scan);
+    let restarted = MountedDirectoryScan::start(&fs).unwrap().step(1).unwrap();
+    assert_eq!(
+        restarted.inspected, 1,
+        "dropping a session cancels it cleanly"
+    );
+}
+
+#[test]
+fn owned_mounted_storage_serves_foreground_io_and_borrowed_scan_from_one_mount() {
+    let (mut storage, _blocks) = storage_from_fixture();
+    storage.create_or_truncate("before.binbook").unwrap();
+    storage.write_at("before.binbook", 0, b"before").unwrap();
+    let mounted = storage.into_owned_mount().unwrap();
+
+    assert_eq!(mounted.file_size("before.binbook").unwrap(), 6);
+    let mut before = [0u8; 6];
+    mounted.read_at("before.binbook", 0, &mut before).unwrap();
+    assert_eq!(&before, b"before");
+
+    mounted.create_or_truncate("after.binbook").unwrap();
+    mounted.write_at("after.binbook", 0, b"after").unwrap();
+    let mut scan = mounted.start_scan().unwrap();
+    let first = scan.step(8).unwrap();
+    assert!(first
+        .entries
+        .iter()
+        .any(|entry| entry.name == "after.binbook"));
+
+    mounted.delete_file("after.binbook").unwrap();
+    assert!(mounted.file_size("after.binbook").is_err());
 }
 
 #[test]

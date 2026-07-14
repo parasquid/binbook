@@ -3,6 +3,7 @@
 
 use core::{cmp::min, marker::PhantomData};
 
+use binbook_core::ReadAt;
 use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::SpiDevice;
 use embedded_sdmmc::filesystem::TimeSource;
@@ -12,10 +13,566 @@ use lamfat::{FileSystem, FsOptions, Read, Seek, SeekFrom, Write};
 
 use crate::block_stream::{BlockDeviceStream, BorrowedBlockDevice};
 pub use crate::fat_directory::StorageError;
-use crate::fat_directory::{FatDirectory, BOOKS_DIR, NAME_BUF_LEN, TMP_DIR};
+use crate::fat_directory::{entry_name, FatDirectory, BOOKS_DIR, NAME_BUF_LEN, TMP_DIR};
 
 const MAX_FILE_EXTENTS: usize = 128;
+const READ_BATCH_BLOCKS: usize = 8;
 const ZERO_CHUNK: [u8; 512] = [0; 512];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MountedScanEntry {
+    pub name: String<{ binbook_storage::MAX_BINBOOK_NAME_BYTES }>,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MountedScanBatch {
+    pub entries: heapless::Vec<MountedScanEntry, 8>,
+    pub inspected: u8,
+    pub complete: bool,
+}
+
+pub struct MountedScanFile<'a, D>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    pub name: String<{ binbook_storage::MAX_BINBOOK_NAME_BYTES }>,
+    pub size: u64,
+    pub file: MountedFileSession<'a, D>,
+}
+
+pub struct MountedFileScanBatch<'a, D>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    pub entries: heapless::Vec<MountedScanFile<'a, D>, 8>,
+    pub inspected: u8,
+    pub complete: bool,
+}
+
+/// A persistent `/BOOKS` directory iterator over one consuming FAT mount.
+///
+/// The session advances at most the caller's requested number of raw directory
+/// entries per `step`; dropping it is cancellation. The filesystem remains
+/// independently borrowable between calls, allowing foreground operations to
+/// run before the next background batch.
+pub struct MountedDirectoryScan<'a, D>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    entries: Option<
+        lamfat::DirIter<
+            'a,
+            BlockDeviceStream<D>,
+            lamfat::DefaultTimeProvider,
+            lamfat::LossyOemCpConverter,
+        >,
+    >,
+    complete: bool,
+}
+
+/// One long-lived FAT mount that owns its block device.
+pub struct MountedStorage<D>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    fs: FileSystem<BlockDeviceStream<D>>,
+}
+
+pub struct MountedDirectorySession<'a, D>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    dir: lamfat::Dir<
+        'a,
+        BlockDeviceStream<D>,
+        lamfat::DefaultTimeProvider,
+        lamfat::LossyOemCpConverter,
+    >,
+}
+
+pub struct MountedNamedFile<'a, D>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    pub name: String<{ binbook_storage::MAX_BINBOOK_NAME_BYTES }>,
+    pub file: MountedFileSession<'a, D>,
+}
+
+impl<'a, D> MountedDirectorySession<'a, D>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    pub fn open_file(&self, name: &str) -> Result<MountedFileSession<'a, D>, StorageError<D>> {
+        let file = self
+            .dir
+            .open_file(name)
+            .map_err(map_mounted_not_found::<D>)?;
+        Ok(MountedFileSession { file })
+    }
+
+    pub fn create_file_session(
+        &self,
+        name: &str,
+    ) -> Result<MountedWriteSession<'a, D>, StorageError<D>> {
+        let mut file = self.dir.create_file(name).map_err(StorageError::Fat)?;
+        file.seek(SeekFrom::Start(0)).map_err(StorageError::Fat)?;
+        file.truncate().map_err(StorageError::Fat)?;
+        Ok(MountedWriteSession { file })
+    }
+
+    pub fn open_matching_files<const N: usize>(
+        &self,
+        names: &[&str],
+    ) -> Result<heapless::Vec<MountedNamedFile<'a, D>, N>, StorageError<D>> {
+        let mut files = heapless::Vec::new();
+        for entry in self.dir.iter() {
+            let entry = entry.map_err(StorageError::Fat)?;
+            if !entry.is_file() {
+                continue;
+            }
+            let name = entry_name::<D, _, _, _>(&entry)?;
+            if !names.iter().any(|candidate| *candidate == name.as_str()) {
+                continue;
+            }
+            let Ok(name) = String::try_from(name.as_str()) else {
+                continue;
+            };
+            files
+                .push(MountedNamedFile {
+                    name,
+                    file: MountedFileSession {
+                        file: entry.to_file(),
+                    },
+                })
+                .map_err(|_| StorageError::BadUploadOffset)?;
+        }
+        Ok(files)
+    }
+}
+
+pub struct MountedFileSession<'a, D>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    file: lamfat::File<
+        'a,
+        BlockDeviceStream<D>,
+        lamfat::DefaultTimeProvider,
+        lamfat::LossyOemCpConverter,
+    >,
+}
+
+pub struct MountedWriteSession<'a, D>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    file: lamfat::File<
+        'a,
+        BlockDeviceStream<D>,
+        lamfat::DefaultTimeProvider,
+        lamfat::LossyOemCpConverter,
+    >,
+}
+
+impl<'a, D> MountedWriteSession<'a, D>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    pub fn size(&mut self) -> Result<u64, StorageError<D>> {
+        self.file.seek(SeekFrom::End(0)).map_err(StorageError::Fat)
+    }
+
+    pub fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<(), StorageError<D>> {
+        self.file
+            .seek(SeekFrom::Start(offset))
+            .map_err(StorageError::Fat)?;
+        self.file.write_all(data).map_err(StorageError::Fat)
+    }
+
+    pub fn flush(&mut self) -> Result<(), StorageError<D>> {
+        self.file.flush().map_err(StorageError::Fat)
+    }
+
+    /// Reuse a flushed write session for immediate verified readback without
+    /// reopening its directory entry.
+    pub fn into_read_session(self) -> MountedFileSession<'a, D> {
+        MountedFileSession { file: self.file }
+    }
+}
+
+impl<D> MountedFileSession<'_, D>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    pub fn size(&mut self) -> Result<u64, StorageError<D>> {
+        self.file.seek(SeekFrom::End(0)).map_err(StorageError::Fat)
+    }
+
+    pub fn read_at(&mut self, offset: u64, out: &mut [u8]) -> Result<(), StorageError<D>> {
+        self.file
+            .seek(SeekFrom::Start(offset))
+            .map_err(StorageError::Fat)?;
+        self.file.read_exact(out).map_err(StorageError::Fat)
+    }
+}
+
+impl<D> MountedStorage<D>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    pub fn start_scan(&self) -> Result<MountedDirectoryScan<'_, D>, StorageError<D>> {
+        MountedDirectoryScan::start(&self.fs)
+    }
+
+    pub fn open_directory(
+        &self,
+        dir_name: &str,
+    ) -> Result<MountedDirectorySession<'_, D>, StorageError<D>> {
+        let dir = self
+            .fs
+            .root_dir()
+            .open_dir(dir_name)
+            .map_err(map_mounted_not_found::<D>)?;
+        Ok(MountedDirectorySession { dir })
+    }
+
+    pub fn open_or_create_directory(
+        &self,
+        dir_name: &str,
+    ) -> Result<MountedDirectorySession<'_, D>, StorageError<D>> {
+        let root = self.fs.root_dir();
+        let dir = match root.open_dir(dir_name) {
+            Ok(dir) => dir,
+            Err(lamfat::Error::NotFound) => root.create_dir(dir_name).map_err(StorageError::Fat)?,
+            Err(error) => return Err(StorageError::Fat(error)),
+        };
+        Ok(MountedDirectorySession { dir })
+    }
+
+    pub fn open_file(&self, name: &str) -> Result<MountedFileSession<'_, D>, StorageError<D>> {
+        self.open_file_in_dir(BOOKS_DIR, name)
+    }
+
+    pub fn open_file_in_dir(
+        &self,
+        dir_name: &str,
+        name: &str,
+    ) -> Result<MountedFileSession<'_, D>, StorageError<D>> {
+        let root = self.fs.root_dir();
+        let dir = root
+            .open_dir(dir_name)
+            .map_err(map_mounted_not_found::<D>)?;
+        let file = dir.open_file(name).map_err(map_mounted_not_found::<D>)?;
+        Ok(MountedFileSession { file })
+    }
+
+    pub fn create_file_session_in_dir(
+        &self,
+        dir_name: &str,
+        name: &str,
+    ) -> Result<MountedWriteSession<'_, D>, StorageError<D>> {
+        let root = self.fs.root_dir();
+        let dir = match root.open_dir(dir_name) {
+            Ok(dir) => dir,
+            Err(lamfat::Error::NotFound) => root.create_dir(dir_name).map_err(StorageError::Fat)?,
+            Err(error) => return Err(StorageError::Fat(error)),
+        };
+        let mut file = dir.create_file(name).map_err(StorageError::Fat)?;
+        file.seek(SeekFrom::Start(0)).map_err(StorageError::Fat)?;
+        file.truncate().map_err(StorageError::Fat)?;
+        Ok(MountedWriteSession { file })
+    }
+
+    pub fn create_file_session(
+        &self,
+        name: &str,
+    ) -> Result<MountedWriteSession<'_, D>, StorageError<D>> {
+        self.create_file_session_in_dir(BOOKS_DIR, name)
+    }
+
+    pub fn file_size(&self, name: &str) -> Result<u64, StorageError<D>> {
+        self.file_size_in_dir(BOOKS_DIR, name)
+    }
+
+    pub fn file_size_in_dir(&self, dir_name: &str, name: &str) -> Result<u64, StorageError<D>> {
+        let root = self.fs.root_dir();
+        let dir = root
+            .open_dir(dir_name)
+            .map_err(map_mounted_not_found::<D>)?;
+        let mut file = dir.open_file(name).map_err(map_mounted_not_found::<D>)?;
+        file.seek(SeekFrom::End(0)).map_err(StorageError::Fat)
+    }
+
+    pub fn read_at(&self, name: &str, offset: u64, out: &mut [u8]) -> Result<(), StorageError<D>> {
+        let root = self.fs.root_dir();
+        let dir = root
+            .open_dir(BOOKS_DIR)
+            .map_err(map_mounted_not_found::<D>)?;
+        let mut file = dir.open_file(name).map_err(map_mounted_not_found::<D>)?;
+        file.seek(SeekFrom::Start(offset))
+            .map_err(StorageError::Fat)?;
+        file.read_exact(out).map_err(StorageError::Fat)
+    }
+
+    pub fn create_or_truncate(&self, name: &str) -> Result<(), StorageError<D>> {
+        self.create_or_truncate_in_dir(BOOKS_DIR, name)
+    }
+
+    pub fn create_or_truncate_in_dir(
+        &self,
+        dir_name: &str,
+        name: &str,
+    ) -> Result<(), StorageError<D>> {
+        let root = self.fs.root_dir();
+        let dir = match root.open_dir(dir_name) {
+            Ok(dir) => dir,
+            Err(lamfat::Error::NotFound) => root.create_dir(dir_name).map_err(StorageError::Fat)?,
+            Err(error) => return Err(StorageError::Fat(error)),
+        };
+        let mut file = dir.create_file(name).map_err(StorageError::Fat)?;
+        file.seek(SeekFrom::Start(0)).map_err(StorageError::Fat)?;
+        file.truncate().map_err(StorageError::Fat)?;
+        file.flush().map_err(StorageError::Fat)
+    }
+
+    pub fn write_at(&self, name: &str, offset: u64, data: &[u8]) -> Result<(), StorageError<D>> {
+        self.write_at_in_dir(BOOKS_DIR, name, offset, data)
+    }
+
+    pub fn write_at_in_dir(
+        &self,
+        dir_name: &str,
+        name: &str,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<(), StorageError<D>> {
+        let root = self.fs.root_dir();
+        let dir = root
+            .open_dir(dir_name)
+            .map_err(map_mounted_not_found::<D>)?;
+        let mut file = dir.create_file(name).map_err(StorageError::Fat)?;
+        file.seek(SeekFrom::Start(offset))
+            .map_err(StorageError::Fat)?;
+        file.write_all(data).map_err(StorageError::Fat)?;
+        file.flush().map_err(StorageError::Fat)
+    }
+
+    pub fn flush(&self, name: &str) -> Result<(), StorageError<D>> {
+        self.flush_in_dir(BOOKS_DIR, name)
+    }
+
+    pub fn flush_in_dir(&self, dir_name: &str, name: &str) -> Result<(), StorageError<D>> {
+        let root = self.fs.root_dir();
+        let dir = root
+            .open_dir(dir_name)
+            .map_err(map_mounted_not_found::<D>)?;
+        let mut file = dir.open_file(name).map_err(map_mounted_not_found::<D>)?;
+        file.flush().map_err(StorageError::Fat)
+    }
+
+    pub fn delete_file(&self, name: &str) -> Result<(), StorageError<D>> {
+        self.delete_file_in_dir(BOOKS_DIR, name)
+    }
+
+    pub fn delete_file_in_dir(&self, dir_name: &str, name: &str) -> Result<(), StorageError<D>> {
+        let root = self.fs.root_dir();
+        let dir = root
+            .open_dir(dir_name)
+            .map_err(map_mounted_not_found::<D>)?;
+        dir.remove(name).map_err(map_mounted_not_found::<D>)
+    }
+}
+
+fn map_mounted_not_found<D>(
+    error: lamfat::Error<crate::block_stream::StreamError<D::Error>>,
+) -> StorageError<D>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    if matches!(error, lamfat::Error::NotFound) {
+        StorageError::NotFound
+    } else {
+        StorageError::Fat(error)
+    }
+}
+
+impl<'a, D> MountedDirectoryScan<'a, D>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    pub fn start(fs: &'a FileSystem<BlockDeviceStream<D>>) -> Result<Self, StorageError<D>> {
+        let root = fs.root_dir();
+        let entries = match root.open_dir(BOOKS_DIR) {
+            Ok(dir) => Some(dir.iter()),
+            Err(lamfat::Error::NotFound) => None,
+            Err(error) => return Err(StorageError::Fat(error)),
+        };
+        Ok(Self {
+            complete: entries.is_none(),
+            entries,
+        })
+    }
+
+    pub fn step(&mut self, budget: u8) -> Result<MountedScanBatch, StorageError<D>> {
+        if budget == 0 || budget > 8 {
+            return Err(StorageError::BadUploadOffset);
+        }
+        let mut batch = MountedScanBatch {
+            entries: heapless::Vec::new(),
+            inspected: 0,
+            complete: self.complete,
+        };
+        let Some(entries) = self.entries.as_mut() else {
+            return Ok(batch);
+        };
+        while batch.inspected < budget {
+            let Some(entry) = entries.next() else {
+                self.complete = true;
+                batch.complete = true;
+                break;
+            };
+            batch.inspected += 1;
+            let entry = entry.map_err(StorageError::Fat)?;
+            if !entry.is_file() {
+                continue;
+            }
+            let name = entry_name::<D, _, _, _>(&entry)?;
+            if !name.ends_with(".binbook") {
+                continue;
+            }
+            let Ok(name) = String::try_from(name.as_str()) else {
+                continue;
+            };
+            batch
+                .entries
+                .push(MountedScanEntry {
+                    name,
+                    size: entry.len(),
+                })
+                .map_err(|_| StorageError::BadUploadOffset)?;
+        }
+        Ok(batch)
+    }
+
+    pub fn step_with_files(
+        &mut self,
+        budget: u8,
+    ) -> Result<MountedFileScanBatch<'a, D>, StorageError<D>> {
+        if budget == 0 || budget > 8 {
+            return Err(StorageError::BadUploadOffset);
+        }
+        let mut batch = MountedFileScanBatch {
+            entries: heapless::Vec::new(),
+            inspected: 0,
+            complete: self.complete,
+        };
+        let Some(entries) = self.entries.as_mut() else {
+            return Ok(batch);
+        };
+        while batch.inspected < budget {
+            let Some(entry) = entries.next() else {
+                self.complete = true;
+                batch.complete = true;
+                break;
+            };
+            batch.inspected += 1;
+            let entry = entry.map_err(StorageError::Fat)?;
+            if !entry.is_file() {
+                continue;
+            }
+            let name = entry_name::<D, _, _, _>(&entry)?;
+            if !name.ends_with(".binbook") {
+                continue;
+            }
+            let Ok(name) = String::try_from(name.as_str()) else {
+                continue;
+            };
+            let size = entry.len();
+            batch
+                .entries
+                .push(MountedScanFile {
+                    name,
+                    size,
+                    file: MountedFileSession {
+                        file: entry.to_file(),
+                    },
+                })
+                .map_err(|_| StorageError::BadUploadOffset)?;
+        }
+        Ok(batch)
+    }
+}
+
+pub trait MountedFileAccess {
+    type Error;
+
+    fn with_mounted_file<R>(
+        &mut self,
+        name: &str,
+        use_file: impl FnOnce(&mut dyn ReadAt<Error = Self::Error>) -> R,
+    ) -> Result<R, Self::Error>;
+}
+
+struct MountedFileSource<'fs, IO, D>
+where
+    IO: lamfat::ReadWriteSeek,
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    fs: &'fs FileSystem<IO>,
+    name: &'fs str,
+    size: u64,
+    _device: PhantomData<D>,
+}
+
+impl<IO, D> ReadAt for MountedFileSource<'_, IO, D>
+where
+    IO: lamfat::ReadWriteSeek<Error = crate::block_stream::StreamError<D::Error>>,
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    type Error = StorageError<D>;
+
+    fn len(&mut self) -> Result<u64, Self::Error> {
+        Ok(self.size)
+    }
+
+    fn read_exact_at(&mut self, offset: u64, out: &mut [u8]) -> Result<(), Self::Error> {
+        let root = self.fs.root_dir();
+        let dir = root.open_dir(BOOKS_DIR).map_err(map_not_found::<D>)?;
+        let mut file = dir.open_file(self.name).map_err(map_not_found::<D>)?;
+        file.seek(SeekFrom::Start(offset))
+            .map_err(StorageError::Fat)?;
+        let mut filled = 0;
+        while filled < out.len() {
+            let read = file.read(&mut out[filled..]).map_err(StorageError::Fat)?;
+            if read == 0 {
+                break;
+            }
+            filled += read;
+        }
+        if filled == out.len() {
+            Ok(())
+        } else {
+            Err(StorageError::UnexpectedEof)
+        }
+    }
+}
 
 /// Generic SD + FAT handle.
 ///
@@ -31,6 +588,7 @@ where
     block_device: D,
     active_upload: Option<ActiveUpload>,
     active_read: Option<ActiveRead>,
+    read_blocks: [Block; READ_BATCH_BLOCKS],
     _time: PhantomData<TIME>,
 }
 
@@ -66,6 +624,7 @@ where
             block_device,
             active_upload: None,
             active_read: None,
+            read_blocks: core::array::from_fn(|_| Block::new()),
             _time: PhantomData,
         }
     }
@@ -79,12 +638,35 @@ where
     D::Error: core::fmt::Debug,
     TIME: TimeSource,
 {
+    /// Consume this handle and mount FAT over an owned block device.
+    ///
+    /// This is intended for a single long-lived storage-owner task. The
+    /// returned filesystem owns the device, so directory iterators may remain
+    /// live between bounded task steps without a self-borrow or global mutex.
+    pub fn into_mounted_filesystem(
+        self,
+    ) -> Result<FileSystem<BlockDeviceStream<D>>, StorageError<D>> {
+        if self.active_upload.is_some() {
+            return Err(StorageError::UploadInProgress);
+        }
+        let mut device = self.block_device;
+        let base_offset = crate::fat_directory::filesystem_base_offset(&mut device)?;
+        let stream = BlockDeviceStream::new(device, base_offset);
+        FileSystem::new(stream, FsOptions::new()).map_err(StorageError::Fat)
+    }
+
+    pub fn into_owned_mount(self) -> Result<MountedStorage<D>, StorageError<D>> {
+        self.into_mounted_filesystem()
+            .map(|fs| MountedStorage { fs })
+    }
+
     /// Construct from a raw `BlockDevice` (host-test path, no real SPI/delay).
     pub fn from_block_device(block_device: D, _time: TIME) -> Self {
         Self {
             block_device,
             active_upload: None,
             active_read: None,
+            read_blocks: core::array::from_fn(|_| Block::new()),
             _time: PhantomData,
         }
     }
@@ -125,18 +707,19 @@ where
         self.ensure_read_cache(dir_name, name)?;
         let read = self.active_read.as_ref().ok_or(StorageError::NotFound)?;
         let available = read.file_size.saturating_sub(offset);
-        let read_len = min(out.len(), available as usize);
+        if u64::try_from(out.len()).unwrap_or(u64::MAX) > available {
+            return Err(StorageError::UnexpectedEof);
+        }
+        let read_len = out.len();
         if read_len > 0 {
             read_extents(
                 &mut self.block_device,
+                &mut self.read_blocks,
                 read.base_offset,
                 &read.extents,
                 offset,
                 &mut out[..read_len],
             )?;
-        }
-        for byte in out.iter_mut().skip(read_len) {
-            *byte = 0;
         }
         Ok(())
     }
@@ -530,6 +1113,46 @@ where
     }
 }
 
+impl<D, TIME> MountedFileAccess for SdStorage<D, TIME>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+    TIME: TimeSource,
+{
+    type Error = StorageError<D>;
+
+    fn with_mounted_file<R>(
+        &mut self,
+        name: &str,
+        use_file: impl FnOnce(&mut dyn ReadAt<Error = Self::Error>) -> R,
+    ) -> Result<R, Self::Error> {
+        self.active_read = None;
+        let base_offset = crate::fat_directory::filesystem_base_offset(&mut self.block_device)?;
+        let stream = BlockDeviceStream::new(
+            BorrowedBlockDevice::new(&mut self.block_device),
+            base_offset,
+        );
+        let fs = FileSystem::new(stream, FsOptions::new()).map_err(StorageError::Fat)?;
+        let size = {
+            let root = fs.root_dir();
+            let dir = root.open_dir(BOOKS_DIR).map_err(map_not_found::<D>)?;
+            let mut file = dir.open_file(name).map_err(map_not_found::<D>)?;
+            file.seek(SeekFrom::End(0)).map_err(StorageError::Fat)?
+        };
+        let result = {
+            let mut source = MountedFileSource::<_, D> {
+                fs: &fs,
+                name,
+                size,
+                _device: PhantomData,
+            };
+            use_file(&mut source)
+        };
+        fs.unmount().map_err(StorageError::Fat)?;
+        Ok(result)
+    }
+}
+
 fn map_not_found<D>(
     error: lamfat::Error<crate::block_stream::StreamError<D::Error>>,
 ) -> StorageError<D>
@@ -608,6 +1231,7 @@ where
 
 fn read_extents<D>(
     device: &mut D,
+    scratch: &mut [Block; READ_BATCH_BLOCKS],
     base_offset: u64,
     extents: &[lamfat::Extent],
     mut offset: u64,
@@ -629,6 +1253,7 @@ where
         let readable = min(out.len(), (extent_len - local) as usize);
         read_absolute(
             device,
+            scratch,
             base_offset + extent.offset + local,
             &mut out[..readable],
         )?;
@@ -644,6 +1269,7 @@ where
 
 fn read_absolute<D>(
     device: &mut D,
+    scratch: &mut [Block; READ_BATCH_BLOCKS],
     mut absolute: u64,
     mut out: &mut [u8],
 ) -> Result<(), StorageError<D>>
@@ -651,15 +1277,34 @@ where
     D: BlockDevice,
     D::Error: core::fmt::Debug,
 {
-    let mut scratch = Block::new();
     while !out.is_empty() {
         let block_idx = BlockIdx((absolute / 512) as u32);
         let block_off = (absolute % 512) as usize;
-        device
-            .read(core::slice::from_mut(&mut scratch), block_idx)
-            .map_err(StorageError::Device)?;
-        let len = min(out.len(), 512 - block_off);
-        out[..len].copy_from_slice(&scratch.contents[block_off..block_off + len]);
+        let full_blocks = if block_off == 0 {
+            min(out.len() / 512, scratch.len())
+        } else {
+            0
+        };
+        let len = if full_blocks > 0 {
+            device
+                .read(&mut scratch[..full_blocks], block_idx)
+                .map_err(StorageError::Device)?;
+            let len = full_blocks * 512;
+            for (source, destination) in scratch[..full_blocks]
+                .iter()
+                .zip(out[..len].chunks_exact_mut(512))
+            {
+                destination.copy_from_slice(&source.contents);
+            }
+            len
+        } else {
+            device
+                .read(core::slice::from_mut(&mut scratch[0]), block_idx)
+                .map_err(StorageError::Device)?;
+            let len = min(out.len(), 512 - block_off);
+            out[..len].copy_from_slice(&scratch[0].contents[block_off..block_off + len]);
+            len
+        };
         absolute += len as u64;
         out = &mut out[len..];
     }

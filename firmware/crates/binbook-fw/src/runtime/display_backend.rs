@@ -1,11 +1,14 @@
 use portable_atomic::Ordering;
 use ssd1677_driver::{BusyWaitObserver, BusyWaitOutcome};
 
+#[cfg(feature = "diagnostic-console")]
+use xteink_x4_display::probes::{
+    PartialWindowBusyCase, PartialWindowBusyObserver, PartialWindowPolarity,
+};
 use xteink_x4_display::{
     engine::DisplayBackend,
     events::OperationOutcome,
     panel::X4Panel,
-    probes::{PartialWindowBusyCase, PartialWindowBusyObserver, PartialWindowPolarity},
     render::{self, OverlayControl, RenderObservers},
 };
 
@@ -14,17 +17,82 @@ use binbook_fw::runtime_engine::{BusyWaitSite, BusyWaitStatus, RuntimeEvent, Run
 
 use super::{render_timing::RuntimeRenderTimingObserver, REQUEST_EPOCH, RUNTIME_EVENT_CHANNEL};
 
-pub(super) struct HardwareDisplayBackend<'a, SPI: embedded_hal::spi::SpiDevice<u8>, DC, RST, BUSY> {
+pub(super) struct HardwareDisplayBackend<
+    'a,
+    F: binbook_storage::Filesystem,
+    SPI: embedded_hal::spi::SpiDevice<u8>,
+    DC,
+    RST,
+    BUSY,
+> {
     pub(super) display: X4Panel<SPI, DC, RST, BUSY>,
-    pub(super) book: binbook_core::Book<binbook_core::SliceSource<'a>>,
+    pub(super) book:
+        Option<binbook_core::Book<binbook_fw::storage_access::RuntimeBookSource<'a, F>>>,
     pub(super) delay: DisplayDelay,
-    pub(super) compressed: [u8; 768],
+    pub(super) compressed: [u8; 4096],
     pub(super) decoded: [u8; 300],
     pub(super) black: [u8; 100],
     pub(super) red: [u8; 100],
 }
 
-struct RuntimeBusyWaitObserver {
+impl<'a, F, SPI, DC, RST, BUSY> HardwareDisplayBackend<'a, F, SPI, DC, RST, BUSY>
+where
+    F: binbook_storage::Filesystem,
+    SPI: embedded_hal::spi::SpiDevice<u8>,
+    DC: embedded_hal::digital::OutputPin,
+    RST: embedded_hal::digital::OutputPin,
+    BUSY: embedded_hal::digital::InputPin,
+{
+    pub(super) async fn render_ui_to_book(
+        &mut self,
+        fb: &xteink_x4_display::framebuffer::Gray2Framebuffer,
+        page: u32,
+    ) -> xteink_x4_display::DisplayResult<()> {
+        let mut buffers = xteink_x4_display::buffers::RenderBuffers::new(
+            &mut self.compressed,
+            &mut self.decoded,
+            &mut self.black,
+            &mut self.red,
+        );
+        xteink_x4_display::ui_render::render_ui_to_book_differential(
+            &mut self.display,
+            fb,
+            self.book
+                .as_mut()
+                .ok_or(xteink_x4_display::DisplayError::InvalidState)?,
+            page,
+            &mut buffers,
+            &mut self.delay,
+        )
+        .await
+    }
+
+    pub(super) async fn render_book_to_ui(
+        &mut self,
+        page: u32,
+        fb: &xteink_x4_display::framebuffer::Gray2Framebuffer,
+    ) -> xteink_x4_display::DisplayResult<()> {
+        let mut buffers = xteink_x4_display::buffers::RenderBuffers::new(
+            &mut self.compressed,
+            &mut self.decoded,
+            &mut self.black,
+            &mut self.red,
+        );
+        xteink_x4_display::ui_render::render_book_to_ui_differential(
+            &mut self.display,
+            self.book
+                .as_mut()
+                .ok_or(xteink_x4_display::DisplayError::InvalidState)?,
+            page,
+            fb,
+            &mut buffers,
+            &mut self.delay,
+        )
+        .await
+    }
+}
+
+pub(super) struct RuntimeBusyWaitObserver {
     site: BusyWaitSite,
     bw_context: Option<BwRefreshContext>,
 }
@@ -37,7 +105,7 @@ struct BwRefreshContext {
 }
 
 impl RuntimeBusyWaitObserver {
-    const fn new(site: BusyWaitSite) -> Self {
+    pub(super) const fn new(site: BusyWaitSite) -> Self {
         Self {
             site,
             bw_context: None,
@@ -113,8 +181,10 @@ impl BusyWaitObserver for RuntimeBusyWaitObserver {
     }
 }
 
-struct RuntimePartialWindowBusyObserver;
+#[cfg(feature = "diagnostic-console")]
+pub(super) struct RuntimePartialWindowBusyObserver;
 
+#[cfg(feature = "diagnostic-console")]
 impl PartialWindowBusyObserver for RuntimePartialWindowBusyObserver {
     fn now_ms(&self) -> u64 {
         embassy_time::Instant::now().as_millis()
@@ -171,6 +241,7 @@ impl PartialWindowBusyObserver for RuntimePartialWindowBusyObserver {
     }
 }
 
+#[cfg(feature = "diagnostic-console")]
 fn send_runtime_event(kind: RuntimeEventKind) {
     let _ = RUNTIME_EVENT_CHANNEL.sender().try_send(RuntimeEvent {
         timestamp_ms: embassy_time::Instant::now().as_millis(),
@@ -178,6 +249,7 @@ fn send_runtime_event(kind: RuntimeEventKind) {
     });
 }
 
+#[cfg(feature = "diagnostic-console")]
 const fn busy_status(outcome: BusyWaitOutcome) -> BusyWaitStatus {
     match outcome {
         BusyWaitOutcome::Ready => BusyWaitStatus::Ready,
@@ -186,8 +258,9 @@ const fn busy_status(outcome: BusyWaitOutcome) -> BusyWaitStatus {
     }
 }
 
-impl<'a, SPI, DC, RST, BUSY> DisplayBackend for HardwareDisplayBackend<'a, SPI, DC, RST, BUSY>
+impl<'a, F, SPI, DC, RST, BUSY> DisplayBackend for HardwareDisplayBackend<'a, F, SPI, DC, RST, BUSY>
 where
+    F: binbook_storage::Filesystem,
     SPI: embedded_hal::spi::SpiDevice<u8>,
     DC: embedded_hal::digital::OutputPin,
     RST: embedded_hal::digital::OutputPin,
@@ -219,7 +292,9 @@ where
         let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::GrayRefresh);
         render::render_staged_overlay_observed(
             &mut self.display,
-            &mut self.book,
+            self.book
+                .as_mut()
+                .ok_or(xteink_x4_display::DisplayError::InvalidState)?,
             page,
             &mut buffers,
             OverlayControl {
@@ -267,7 +342,9 @@ where
         let mut timing = RuntimeRenderTimingObserver::new(sequence, from, target);
         render::render_bw_differential_timed(
             &mut self.display,
-            &mut self.book,
+            self.book
+                .as_mut()
+                .ok_or(xteink_x4_display::DisplayError::InvalidState)?,
             from,
             target,
             &mut buffers,
@@ -296,7 +373,9 @@ where
         let mut timing = RuntimeRenderTimingObserver::new(sequence, from, target);
         render::render_fast_preview_timed(
             &mut self.display,
-            &mut self.book,
+            self.book
+                .as_mut()
+                .ok_or(xteink_x4_display::DisplayError::InvalidState)?,
             from,
             target,
             &mut buffers,
@@ -334,7 +413,9 @@ where
         let mut timing = RuntimeRenderTimingObserver::new(None, page, page);
         render::sync_bw_base_timed(
             &mut self.display,
-            &mut self.book,
+            self.book
+                .as_mut()
+                .ok_or(xteink_x4_display::DisplayError::InvalidState)?,
             page,
             &mut buffers,
             expected_epoch,
@@ -355,7 +436,9 @@ where
         let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::BwRefresh);
         render::recovery_seed_observed(
             &mut self.display,
-            &mut self.book,
+            self.book
+                .as_mut()
+                .ok_or(xteink_x4_display::DisplayError::InvalidState)?,
             page,
             &mut buffers,
             &mut self.delay,
@@ -369,26 +452,29 @@ where
         kind: xteink_x4_display::probes::ProbeKind,
         page: u32,
     ) -> xteink_x4_display::DisplayResult<()> {
+        if kind == xteink_x4_display::probes::ProbeKind::FullRefreshCurrent {
+            let mut buffers = xteink_x4_display::buffers::RenderBuffers::new(
+                &mut self.compressed,
+                &mut self.decoded,
+                &mut self.black,
+                &mut self.red,
+            );
+            let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::Probe);
+            return render::render_absolute_gray_observed(
+                &mut self.display,
+                self.book
+                    .as_mut()
+                    .ok_or(xteink_x4_display::DisplayError::InvalidState)?,
+                page,
+                &mut buffers,
+                &mut self.delay,
+                &mut observer,
+            )
+            .await;
+        }
         #[cfg(feature = "diagnostic-console")]
         match kind {
-            xteink_x4_display::probes::ProbeKind::FullRefreshCurrent => {
-                let mut buffers = xteink_x4_display::buffers::RenderBuffers::new(
-                    &mut self.compressed,
-                    &mut self.decoded,
-                    &mut self.black,
-                    &mut self.red,
-                );
-                let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::Probe);
-                render::render_absolute_gray_observed(
-                    &mut self.display,
-                    &mut self.book,
-                    page,
-                    &mut buffers,
-                    &mut self.delay,
-                    &mut observer,
-                )
-                .await
-            }
+            xteink_x4_display::probes::ProbeKind::FullRefreshCurrent => unreachable!(),
             xteink_x4_display::probes::ProbeKind::ClearWhite => {
                 let mut observer = RuntimeBusyWaitObserver::new(BusyWaitSite::Probe);
                 xteink_x4_display::probes::clear_white_observed(

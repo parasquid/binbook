@@ -119,5 +119,6 @@ const fn refresh_mode_code(mode: RefreshMode) -> i32 {
         RefreshMode::Partial => 1,
         RefreshMode::Grayscale => 2,
         RefreshMode::StagedGrayscale => 3,
+        RefreshMode::Clean => 4,
     }
 }

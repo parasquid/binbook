@@ -6,7 +6,7 @@ use embedded_hal::{
 use embedded_hal_async::delay::DelayNs as AsyncDelayNs;
 use ssd1677_driver::{BusyWaitObserver, PanelConfig, Ssd1677, Waveform};
 
-use crate::DisplayResult;
+use crate::{profile, DisplayError, DisplayResult};
 
 pub use ssd1677_driver::{ControllerState, RefreshMode};
 
@@ -86,6 +86,12 @@ pub enum CustomLutCandidate {
 
 pub struct X4Panel<SPI, DC, RST, BUSY>(Ssd1677<SPI, DC, RST, BUSY>);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelRamTarget {
+    Black,
+    Red,
+}
+
 impl<SPI, DC, RST, BUSY> X4Panel<SPI, DC, RST, BUSY>
 where
     SPI: SpiDevice<u8>,
@@ -125,6 +131,11 @@ where
 
     pub fn load_staged_gray(&mut self) -> DisplayResult<()> {
         self.0.load_waveform(&waveform(&STAGED_GRAY_LUT))?;
+        Ok(())
+    }
+
+    pub fn deep_sleep(&mut self) -> DisplayResult<()> {
+        self.0.deep_sleep()?;
         Ok(())
     }
 
@@ -177,6 +188,36 @@ where
 
     pub fn controller(&mut self) -> &mut Ssd1677<SPI, DC, RST, BUSY> {
         &mut self.0
+    }
+
+    pub fn write_prepared_rows(
+        &mut self,
+        first_row: u16,
+        rows: &[u8],
+        target: PanelRamTarget,
+    ) -> DisplayResult<()> {
+        if rows.is_empty() || rows.len() % profile::ROW_BYTES != 0 {
+            return Err(DisplayError::InvalidPage);
+        }
+        let row_count = u16::try_from(rows.len() / profile::ROW_BYTES)
+            .map_err(|_| DisplayError::InvalidPage)?;
+        if first_row
+            .checked_add(row_count)
+            .is_none_or(|end| end > profile::PHYSICAL_HEIGHT)
+        {
+            return Err(DisplayError::InvalidPage);
+        }
+        self.0
+            .set_window(0, first_row, profile::PHYSICAL_WIDTH, row_count)?;
+        let mut fill = |row: u16, output: &mut [u8; profile::ROW_BYTES]| {
+            let start = usize::from(row) * profile::ROW_BYTES;
+            output.copy_from_slice(&rows[start..start + profile::ROW_BYTES]);
+        };
+        match target {
+            PanelRamTarget::Black => self.0.write_frame_rows(row_count, &mut fill)?,
+            PanelRamTarget::Red => self.0.write_red_frame_rows(row_count, &mut fill)?,
+        }
+        Ok(())
     }
 }
 

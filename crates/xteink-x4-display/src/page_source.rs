@@ -71,6 +71,146 @@ pub struct PlaneDecoder {
     decoder: PackBitsDecoder,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlaneInputRead {
+    pub offset: u32,
+    pub len: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaneDecodeStep {
+    NeedInput,
+    RowComplete,
+}
+
+pub struct StreamingPlaneDecoder {
+    plane: PlaneDescriptor,
+    source_position: u32,
+    input_position: usize,
+    input_length: usize,
+    pending_length: usize,
+    row_written: usize,
+    decoder: PackBitsDecoder,
+}
+
+impl StreamingPlaneDecoder {
+    #[must_use]
+    pub const fn new(plane: PlaneDescriptor) -> Self {
+        Self {
+            plane,
+            source_position: 0,
+            input_position: 0,
+            input_length: 0,
+            pending_length: 0,
+            row_written: 0,
+            decoder: PackBitsDecoder::new(),
+        }
+    }
+
+    pub fn next_read(&mut self, capacity: usize) -> DisplayResult<PlaneInputRead> {
+        if capacity == 0 {
+            return Err(DisplayError::BufferTooSmall {
+                required: 1,
+                provided: 0,
+            });
+        }
+        if self.pending_length != 0 || self.input_position != self.input_length {
+            return Err(DisplayError::InvalidState);
+        }
+        let remaining = self
+            .plane
+            .length
+            .get()
+            .checked_sub(self.source_position)
+            .ok_or(DisplayError::Decode)?;
+        if remaining == 0 {
+            return Err(DisplayError::Decode);
+        }
+        let len = capacity.min(usize::try_from(remaining).unwrap_or(usize::MAX));
+        self.pending_length = len;
+        Ok(PlaneInputRead {
+            offset: self.source_position,
+            len,
+        })
+    }
+
+    pub fn accept_read(&mut self, len: usize) -> DisplayResult<()> {
+        if len == 0 || len != self.pending_length {
+            return Err(DisplayError::InvalidState);
+        }
+        self.source_position = self
+            .source_position
+            .checked_add(u32::try_from(len).map_err(|_| DisplayError::Format)?)
+            .ok_or(DisplayError::Format)?;
+        self.input_position = 0;
+        self.input_length = len;
+        self.pending_length = 0;
+        Ok(())
+    }
+
+    pub fn decode_row(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+    ) -> DisplayResult<PlaneDecodeStep> {
+        if input.len() < self.input_length || output.is_empty() {
+            return Err(DisplayError::BufferTooSmall {
+                required: self.input_length.max(1),
+                provided: input.len(),
+            });
+        }
+        while self.row_written < output.len() {
+            match self.plane.compression {
+                binbook_core::CompressionMethod::None => {
+                    let available = self.input_length.saturating_sub(self.input_position);
+                    if available == 0 {
+                        return Ok(PlaneDecodeStep::NeedInput);
+                    }
+                    let count = available.min(output.len() - self.row_written);
+                    output[self.row_written..self.row_written + count]
+                        .copy_from_slice(&input[self.input_position..self.input_position + count]);
+                    self.input_position += count;
+                    self.row_written += count;
+                }
+                binbook_core::CompressionMethod::RlePackBits => {
+                    let progress = self.decoder.decode(
+                        &input[self.input_position..self.input_length],
+                        &mut output[self.row_written..],
+                    )?;
+                    self.input_position += progress.consumed;
+                    self.row_written += progress.produced;
+                    if progress.consumed == 0 && progress.produced == 0 {
+                        if self.input_position != self.input_length {
+                            return Err(DisplayError::Decode);
+                        }
+                        return Ok(PlaneDecodeStep::NeedInput);
+                    }
+                }
+                binbook_core::CompressionMethod::Lz4 => return Err(DisplayError::Decode),
+            }
+        }
+        self.row_written = 0;
+        Ok(PlaneDecodeStep::RowComplete)
+    }
+
+    pub fn finish(self) -> DisplayResult<()> {
+        if self.pending_length != 0
+            || self.row_written != 0
+            || self.source_position != self.plane.length.get()
+            || self.input_position != self.input_length
+        {
+            return Err(DisplayError::Decode);
+        }
+        if self.plane.compression == binbook_core::CompressionMethod::RlePackBits {
+            if !self.decoder.is_idle() {
+                return Err(DisplayError::Decode);
+            }
+            self.decoder.finish()?;
+        }
+        Ok(())
+    }
+}
+
 impl PlaneDecoder {
     #[must_use]
     pub const fn new(plane: PlaneDescriptor) -> Self {

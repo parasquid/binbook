@@ -73,7 +73,12 @@ pub fn send_and_receive_io<T: Read + Write>(
                 return Err("matching frame is not a response".into());
             }
             if header.opcode != expected_opcode {
-                return Err(format!("unexpected opcode {:?}", header.opcode));
+                // One-shot CLI invocations currently restart their sequence at
+                // one. A delayed response from the preceding invocation can
+                // therefore share the expected sequence while carrying a
+                // different opcode. It is stale, not the response to this
+                // request; keep waiting for the exact pair.
+                continue;
             }
             if header.status != Status::Ok {
                 return Err(format!("device returned {:?}", header.status));

@@ -155,6 +155,20 @@ fn storage_upload_write_payload_capacity_accounts_for_header() {
 }
 
 #[test]
+fn cli_storage_abort_encodes_the_upload_id() {
+    let frame = binbook::diag_protocol::store_abort_request(78, 0x1234_5678);
+    let mut payload = [0u8; 8];
+    let (header, payload_len) = decode_frame(&frame, &mut payload).unwrap();
+
+    assert_eq!(header.opcode, Opcode::StoreAbort);
+    assert_eq!(header.sequence, 78);
+    assert_eq!(
+        binbook_diagnostic_protocol::decode_store_abort_request(&payload[..payload_len]).unwrap(),
+        0x1234_5678
+    );
+}
+
+#[test]
 fn cli_crash_get_sends_crash_get() {
     let frame = binbook::diag_protocol::crash_get_request(52);
     let mut payload_buf = [0u8; 128];

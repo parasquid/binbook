@@ -13,7 +13,7 @@ use super::{
     SerialState, TransportError,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeCommand {
     Hardware(PendingCommand),
     LogGet {
@@ -27,15 +27,22 @@ pub enum RuntimeCommand {
     Immediate {
         header: FrameHeader,
     },
+    #[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+    OwnerStorage {
+        header: FrameHeader,
+        command: crate::diag_owner_storage::OwnerStorageCommand,
+    },
 }
 
 impl RuntimeCommand {
     pub fn header(&self) -> FrameHeader {
-        match *self {
+        match self {
             RuntimeCommand::Hardware(pending) => pending.header,
             RuntimeCommand::LogGet { header, .. }
             | RuntimeCommand::LogClear { header }
-            | RuntimeCommand::Immediate { header } => header,
+            | RuntimeCommand::Immediate { header } => *header,
+            #[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+            RuntimeCommand::OwnerStorage { header, .. } => *header,
         }
     }
 }
@@ -46,6 +53,29 @@ pub fn poll_runtime_command(
     serial: &mut SerialState,
     snapshot: DiagnosticSnapshot,
     storage: &mut dyn StorageHandle,
+) -> Option<RuntimeCommand> {
+    poll_runtime_command_inner(serial, snapshot, storage, None)
+}
+
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+pub fn poll_runtime_command_owner_storage(
+    serial: &mut SerialState,
+    snapshot: DiagnosticSnapshot,
+    storage: &mut dyn StorageHandle,
+    transfer: &mut [u8],
+) -> Option<RuntimeCommand> {
+    poll_runtime_command_inner(serial, snapshot, storage, Some(transfer))
+}
+
+fn poll_runtime_command_inner(
+    serial: &mut SerialState,
+    snapshot: DiagnosticSnapshot,
+    storage: &mut dyn StorageHandle,
+    #[cfg_attr(
+        not(all(feature = "diagnostic-console", feature = "sd-storage")),
+        allow(unused_variables)
+    )]
+    owner_transfer: Option<&mut [u8]>,
 ) -> Option<RuntimeCommand> {
     let mut frame_buf = [0u8; MAX_FRAME_BYTES];
     let frame_len = serial.next_frame(&mut frame_buf)?;
@@ -72,6 +102,43 @@ pub fn poll_runtime_command(
     context.refresh_mode = snapshot.refresh_mode;
     context.protocol_errors = serial.protocol_error_count();
     context.dropped_records = snapshot.dropped_log_count;
+
+    #[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+    if let Some(transfer) = owner_transfer {
+        if matches!(
+            header.opcode,
+            Opcode::StoreList
+                | Opcode::StoreRead
+                | Opcode::StoreDelete
+                | Opcode::StoreUploadBegin
+                | Opcode::StoreUploadWrite
+                | Opcode::StoreUploadCommit
+                | Opcode::StoreAbort
+        ) {
+            return match crate::diag_owner_storage::decode_owner_storage_command(
+                header.opcode,
+                &request_payload[..payload_len],
+                transfer,
+            ) {
+                Ok(command) => Some(RuntimeCommand::OwnerStorage { header, command }),
+                Err(error) => {
+                    let status = match error {
+                        crate::diag_owner_storage::OwnerStorageDecodeError::UnsupportedBackend => {
+                            Status::Unsupported
+                        }
+                        crate::diag_owner_storage::OwnerStorageDecodeError::BadPayload
+                        | crate::diag_owner_storage::OwnerStorageDecodeError::Name
+                        | crate::diag_owner_storage::OwnerStorageDecodeError::TooLarge
+                        | crate::diag_owner_storage::OwnerStorageDecodeError::UnsupportedOpcode => {
+                            Status::BadRequest
+                        }
+                    };
+                    queue_runtime_response(serial, header, status, &[]);
+                    Some(RuntimeCommand::Immediate { header })
+                }
+            };
+        }
+    }
     let mut response_payload = [0u8; MAX_PAYLOAD_BYTES];
     let result = dispatch_command(
         header,

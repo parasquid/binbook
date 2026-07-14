@@ -1,5 +1,19 @@
 use super::*;
 
+#[cfg(feature = "sd-storage")]
+#[test]
+fn open_error_mode_routes_only_select_retry_and_back() {
+    assert!(matches!(
+        button_to_request(Button::Select, MODE_OPEN_ERROR),
+        Some(DisplayRequest::MenuSelect { .. })
+    ));
+    assert!(matches!(
+        button_to_request(Button::Back, MODE_OPEN_ERROR),
+        Some(DisplayRequest::MenuBack { .. })
+    ));
+    assert_eq!(button_to_request(Button::Right, MODE_OPEN_ERROR), None);
+}
+
 #[test]
 fn startup_page_refresh_mode_defaults_to_balanced() {
     assert_eq!(STARTUP_PAGE_REFRESH_MODE, PageRefreshMode::Balanced);
@@ -146,6 +160,30 @@ fn reading_select_and_back_are_noop_without_library_menu() {
 #[test]
 fn reading_power_is_noop() {
     assert_eq!(button_to_request(Button::Power, MODE_READING), None);
+}
+
+#[cfg(feature = "sd-storage")]
+#[test]
+fn input_routing_switches_to_the_target_screen_while_activation_is_busy() {
+    assert_eq!(
+        activation_input_mode(&DisplayRequest::MenuSelect {
+            completion_sequence: None,
+        }),
+        Some(MODE_READING)
+    );
+    assert_eq!(
+        activation_input_mode(&DisplayRequest::MenuBack {
+            completion_sequence: None,
+        }),
+        Some(MODE_MENU)
+    );
+    assert_eq!(
+        activation_input_mode(&DisplayRequest::Turn {
+            turn: PageTurn::Next,
+            completion_sequence: None,
+        }),
+        None
+    );
 }
 
 #[test]

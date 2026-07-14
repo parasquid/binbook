@@ -14,7 +14,9 @@ embedded-hal.workspace = true
 embedded-hal-async.workspace = true
 embedded-storage.workspace = true
 binbook-diagnostic-protocol = { workspace = true, optional = true }
-binbook-storage = { workspace = true, optional = true, default-features = false }
+binbook-storage = { workspace = true, default-features = false }
+embedded-sd-storage = { workspace = true, optional = true }
+embedded-sdmmc = { workspace = true, optional = true }
 embassy-sync.workspace = true
 embedded-graphics.workspace = true
 heapless.workspace = true
@@ -22,13 +24,14 @@ profont.workspace = true
 nb.workspace = true
 portable-atomic.workspace = true
 
+[dev-dependencies]
+binbook-decompress.workspace = true
+
 [target.'cfg(target_arch = "riscv32")'.dependencies]
 embassy-executor = { workspace = true, optional = true }
 embassy-futures = { workspace = true, optional = true }
 embassy-time = { workspace = true, optional = true }
 embedded-hal-bus = { workspace = true, optional = true }
-embedded-sdmmc = { workspace = true, optional = true }
-embedded-sd-storage = { workspace = true, optional = true }
 esp-backtrace = { workspace = true, features = ["esp32c3", "panic-handler", "println"], optional = true }
 esp-bootloader-esp-idf = { workspace = true, features = ["esp32c3"], optional = true }
 esp-hal = { workspace = true, features = ["esp32c3", "unstable"], optional = true }
@@ -49,8 +52,17 @@ firmware-bin = [
     "dep:esp-println",
     "dep:static_cell",
 ]
-sd-storage = ["dep:embedded-hal-bus", "dep:embedded-sdmmc", "dep:embedded-sd-storage", "dep:binbook-storage"]
+sd-storage = [
+    "dep:embedded-hal-bus",
+    "dep:embedded-sdmmc",
+    "dep:embedded-sd-storage",
+    "mounted-storage-owner",
+]
 debug-log = []
+storage-owner-probe = []
+# Compatibility alias for scripts created while the mounted owner was gated.
+# `sd-storage` now selects this path unconditionally.
+mounted-storage-owner = []
 chunk-dirty-probe = []
 fast-refresh-mode = []
 preview-lut-turns = ["fast-refresh-mode"]

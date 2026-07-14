@@ -9,4 +9,10 @@ mod block_stream;
 mod fat_directory;
 pub mod sd_filesystem;
 
-pub use sd_filesystem::SdStorage;
+pub use block_stream::{BlockDeviceStream, StreamError};
+pub use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx, TimeSource, Timestamp};
+pub use sd_filesystem::{
+    MountedDirectoryScan, MountedDirectorySession, MountedFileAccess, MountedFileScanBatch,
+    MountedFileSession, MountedNamedFile, MountedScanBatch, MountedScanEntry, MountedScanFile,
+    MountedStorage, MountedWriteSession, SdStorage,
+};

@@ -19,6 +19,16 @@ fn fifo_relative_turns_resolve_from_committed_page() {
 }
 
 #[test]
+fn externally_rendered_differential_page_commits_without_recovery_seed() {
+    let mut engine = DisplayEngine::new(6);
+    engine.commit_differential_page(4, 1_000).unwrap();
+
+    assert_eq!(engine.current_page(), 4);
+    assert_eq!(engine.phase(), DisplayPhase::GrayDelay);
+    assert_eq!(engine.controller_state(), ControllerRamState::BwBaseReady);
+}
+
+#[test]
 fn page_is_committed_only_after_bw_operation_succeeds() {
     let mut engine = DisplayEngine::new(3);
     engine.commit_page(0).unwrap();
@@ -279,6 +289,35 @@ fn initialization_reports_recovery_before_gray_delay() {
         })
         .unwrap();
     assert!(recovered < delayed);
+}
+
+#[test]
+fn initialization_at_resume_page_seeds_and_commits_that_page() {
+    let mut engine = DisplayEngine::new(4);
+    let mut backend = Backend::default();
+    let mut events = Events::default();
+
+    let completion = block_on(engine.initialize_at(2, &mut backend, &mut events, 0));
+
+    assert!(completion.is_none());
+    assert_eq!(engine.current_page(), 2);
+    assert_eq!(backend.operations, ["init-bw", "recover"]);
+    assert!(events
+        .0
+        .iter()
+        .any(|event| matches!(event.kind, DisplayEventKind::RecoveryCompleted { page: 2 })));
+}
+
+#[test]
+fn initialization_rejects_page_outside_book_without_panel_io() {
+    let mut engine = DisplayEngine::new(2);
+    let mut backend = Backend::default();
+    let mut events = Events::default();
+
+    let completion = block_on(engine.initialize_at(2, &mut backend, &mut events, 0)).unwrap();
+
+    assert_eq!(completion.status, CompletionStatus::Error);
+    assert!(backend.operations.is_empty());
 }
 
 #[test]

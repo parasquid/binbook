@@ -1,6 +1,6 @@
 use crate::{ProtocolError, StorageBackend};
 
-pub const STORE_NAME_MAX: usize = 64;
+pub const STORE_NAME_MAX: usize = 121;
 
 fn validate_name(name: &str) -> Result<&[u8], ProtocolError> {
     let bytes = name.as_bytes();
@@ -38,25 +38,35 @@ fn read_name<'a>(payload: &'a [u8], pos: &mut usize) -> Result<&'a str, Protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StoreListRequest {
     pub backend: StorageBackend,
+    pub start_index: u16,
 }
 
 pub fn encode_store_list_request(
     value: &StoreListRequest,
     out: &mut [u8],
 ) -> Result<usize, ProtocolError> {
-    if out.is_empty() {
+    if out.len() < 3 {
         return Err(ProtocolError::OutputTooSmall);
     }
     out[0] = value.backend as u8;
-    Ok(1)
+    out[1..3].copy_from_slice(&value.start_index.to_le_bytes());
+    Ok(3)
 }
 
 pub fn decode_store_list_request(payload: &[u8]) -> Result<StoreListRequest, ProtocolError> {
-    if payload.len() != 1 {
+    if !matches!(payload.len(), 1 | 3) {
         return Err(ProtocolError::BadPayloadLength);
     }
     let backend = StorageBackend::from_u8(payload[0]).ok_or(ProtocolError::InvalidValue)?;
-    Ok(StoreListRequest { backend })
+    let start_index = if payload.len() == 3 {
+        u16::from_le_bytes([payload[1], payload[2]])
+    } else {
+        0
+    };
+    Ok(StoreListRequest {
+        backend,
+        start_index,
+    })
 }
 
 pub const STORE_LIST_ENTRY_NAME_LEN_BYTES: usize = 1;

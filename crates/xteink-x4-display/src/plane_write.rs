@@ -16,6 +16,49 @@ use crate::{
     DisplayResult,
 };
 
+pub(crate) fn write_plane_full_window_sync<R, SPI, DC, RST, BUSY>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    plane: binbook_core::PlaneDescriptor,
+    input: &mut [u8],
+    row: &mut [u8],
+    target: RamTarget,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    let mut decoder = PlaneDecoder::new(plane);
+    panel
+        .controller()
+        .set_window(0, 0, PHYSICAL_WIDTH, PHYSICAL_HEIGHT)?;
+    let mut error = None;
+    let mut fill = |_: u16, output: &mut [u8; ROW_BYTES]| {
+        if let Err(value) = decoder.fill(book, input, row) {
+            error = Some(value);
+            output.fill(0xff);
+        } else {
+            output.copy_from_slice(row);
+        }
+    };
+    if target == RamTarget::Red {
+        panel
+            .controller()
+            .write_red_frame_rows(PHYSICAL_HEIGHT, &mut fill)?;
+    } else {
+        panel
+            .controller()
+            .write_frame_rows(PHYSICAL_HEIGHT, &mut fill)?;
+    }
+    if let Some(error) = error {
+        return Err(error);
+    }
+    decoder.finish()
+}
+
 pub(crate) async fn write_plane<R, SPI, DC, RST, BUSY, D, E>(
     panel: &mut X4Panel<SPI, DC, RST, BUSY>,
     book: &mut Book<R>,

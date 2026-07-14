@@ -7,6 +7,8 @@ use crate::xteink_x4_display::events::PageRefreshMode;
 pub const MODE_MENU: u8 = 0;
 pub const MODE_READING: u8 = 1;
 #[cfg(feature = "sd-storage")]
+pub const MODE_OPEN_ERROR: u8 = 2;
+#[cfg(feature = "sd-storage")]
 pub const STARTUP_DISPLAY_MODE: u8 = MODE_MENU;
 #[cfg(not(feature = "sd-storage"))]
 pub const STARTUP_DISPLAY_MODE: u8 = MODE_READING;
@@ -45,6 +47,16 @@ pub fn button_to_request(button: Button, mode: u8) -> Option<DisplayRequest> {
             #[cfg(not(feature = "sd-storage"))]
             Button::Select | Button::Back => None,
             Button::Power => None,
+        },
+        #[cfg(feature = "sd-storage")]
+        MODE_OPEN_ERROR => match button {
+            Button::Select => Some(DisplayRequest::MenuSelect {
+                completion_sequence: None,
+            }),
+            Button::Back => Some(DisplayRequest::MenuBack {
+                completion_sequence: None,
+            }),
+            Button::Up | Button::Down | Button::Left | Button::Right | Button::Power => None,
         },
         _ => None,
     }
@@ -103,6 +115,22 @@ pub enum DisplayRequest {
     MenuBack {
         completion_sequence: Option<u16>,
     },
+}
+
+/// Return the input mode for the screen being activated by a menu transition.
+///
+/// The display task switches to this mode after the target frame has been
+/// staged but before awaiting panel activation. That makes buttons pressed as
+/// soon as the new screen is visible route to that screen, while the serialized
+/// display queue still prevents them from running before activation completes.
+#[cfg(feature = "sd-storage")]
+#[must_use]
+pub const fn activation_input_mode(request: &DisplayRequest) -> Option<u8> {
+    match request {
+        DisplayRequest::MenuSelect { .. } => Some(MODE_READING),
+        DisplayRequest::MenuBack { .. } => Some(MODE_MENU),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

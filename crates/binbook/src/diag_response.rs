@@ -170,6 +170,14 @@ pub fn format_response(
                     .map_err(|error| format!("invalid StoreRead response: {error:?}"))?;
                 Ok(format!("data_len={} eof={}", decoded.data.len(), decoded.eof))
             }
+            Opcode::StoreUploadBegin => {
+                let upload_id =
+                    binbook_diagnostic_protocol::decode_store_upload_begin_response(payload)
+                        .map_err(|error| {
+                            format!("invalid StoreUploadBegin response: {error:?}")
+                        })?;
+                Ok(format!("upload_id={upload_id}"))
+            }
             Opcode::StoreDelete | Opcode::StoreUploadCommit | Opcode::StoreAbort => {
                 if !payload.is_empty() { return Err("unexpected response payload".into()); }
                 Ok("ok".into())
@@ -182,6 +190,17 @@ fn event_name(event: u16) -> &'static str {
     use binbook_diagnostic_protocol::*;
     match event {
         EVT_FIRMWARE_STARTED => "FIRMWARE_STARTED",
+        binbook_diagnostic_protocol::EVT_MENU_SELECTION => "MENU_SELECTION",
+        binbook_diagnostic_protocol::EVT_BOOK_OPENED => "BOOK_OPENED",
+        binbook_diagnostic_protocol::EVT_BOOK_OPEN_FAILED => "BOOK_OPEN_FAILED",
+        binbook_diagnostic_protocol::EVT_LIBRARY_SCAN => "LIBRARY_SCAN",
+        binbook_diagnostic_protocol::EVT_READER_STATE_SAVED => "READER_STATE_SAVED",
+        binbook_diagnostic_protocol::EVT_READER_STATE_PRUNED => "READER_STATE_PRUNED",
+        binbook_diagnostic_protocol::EVT_SLEEP_PREPARED => "SLEEP_PREPARED",
+        binbook_diagnostic_protocol::EVT_READER_STATE_SAVE_FAILED => "READER_STATE_SAVE_FAILED",
+        binbook_diagnostic_protocol::EVT_READER_RETURN_STAGE => "READER_RETURN_STAGE",
+        binbook_diagnostic_protocol::EVT_STORAGE_OWNER_PROBE => "STORAGE_OWNER_PROBE",
+        binbook_diagnostic_protocol::EVT_WAKE_CAUSE => "WAKE_CAUSE",
         EVT_CMD_RECEIPT => "CMD_RECEIPT",
         EVT_CMD_ERROR => "CMD_ERROR",
         EVT_KEY_PRESS => "KEY_PRESS",

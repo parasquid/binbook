@@ -305,6 +305,10 @@ pub enum StorageCommand {
         path: String,
         #[arg(short, long)]
         output: Option<std::path::PathBuf>,
+        #[arg(long)]
+        offset: Option<u32>,
+        #[arg(long)]
+        max_bytes: Option<u32>,
     },
     /// Delete a file from a storage backend
     Delete {
@@ -312,6 +316,17 @@ pub enum StorageCommand {
         port: String,
         #[arg(long)]
         path: String,
+    },
+    /// Begin an upload without sending data (diagnostic use)
+    Begin {
+        #[arg(short, long)]
+        port: String,
+        #[arg(long)]
+        path: String,
+        #[arg(long)]
+        size: u32,
+        #[arg(long)]
+        crc32: u32,
     },
     /// Upload a file to a storage backend
     Upload {
@@ -321,5 +336,12 @@ pub enum StorageCommand {
         path: String,
         #[arg(short, long)]
         file: std::path::PathBuf,
+    },
+    /// Abort an in-progress upload by its device-assigned ID
+    Abort {
+        #[arg(short, long)]
+        port: String,
+        #[arg(long)]
+        upload_id: u32,
     },
 }

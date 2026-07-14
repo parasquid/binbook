@@ -26,6 +26,21 @@ pub(super) async fn diagnostic_task(
     let mut serial = SerialState::new();
     let mut crash_store = CrashStore::new(esp_storage::FlashStorage::new(flash));
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
+    #[cfg(feature = "sd-storage")]
+    static OWNER_TRANSFER: static_cell::StaticCell<
+        [u8; binbook_fw::storage_owner::MAX_BOUNDED_IO_BYTES as usize],
+    > = static_cell::StaticCell::new();
+    #[cfg(feature = "sd-storage")]
+    static OWNER_RESPONSE: static_cell::StaticCell<
+        [u8; binbook_diagnostic_protocol::MAX_PAYLOAD_BYTES],
+    > = static_cell::StaticCell::new();
+    #[cfg(feature = "sd-storage")]
+    let mut owner_transfer =
+        OWNER_TRANSFER.init([0; binbook_fw::storage_owner::MAX_BOUNDED_IO_BYTES as usize]);
+    #[cfg(feature = "sd-storage")]
+    let owner_response = OWNER_RESPONSE.init([0; binbook_diagnostic_protocol::MAX_PAYLOAD_BYTES]);
+    #[cfg(feature = "sd-storage")]
+    let mut owner_runtime = super::diagnostic_owner_storage::DiagnosticOwnerRuntime::new();
 
     loop {
         let mut usb_read_buf = [0u8; 64];
@@ -56,7 +71,16 @@ pub(super) async fn diagnostic_task(
                 continue;
             }
         };
-        if let Some(command) = poll_runtime_command(&mut serial, snapshot, &mut storage) {
+        #[cfg(feature = "sd-storage")]
+        let command = binbook_fw::diag::poll_runtime_command_owner_storage(
+            &mut serial,
+            snapshot,
+            &mut storage,
+            owner_transfer,
+        );
+        #[cfg(not(feature = "sd-storage"))]
+        let command = poll_runtime_command(&mut serial, snapshot, &mut storage);
+        if let Some(command) = command {
             let header = command.header();
             RUNTIME_EVENT_CHANNEL
                 .sender()
@@ -68,6 +92,24 @@ pub(super) async fn diagnostic_task(
                     },
                 })
                 .await;
+            #[cfg(feature = "sd-storage")]
+            match command {
+                RuntimeCommand::OwnerStorage { header, command } => {
+                    owner_transfer = super::diagnostic_owner_storage::handle_owner_storage_command(
+                        &mut serial,
+                        &mut owner_runtime,
+                        header,
+                        command,
+                        owner_transfer,
+                        owner_response,
+                    )
+                    .await;
+                }
+                command => {
+                    handle_command(&mut serial, &mut crash_store, snapshot, command).await;
+                }
+            }
+            #[cfg(not(feature = "sd-storage"))]
             handle_command(&mut serial, &mut crash_store, snapshot, command).await;
         }
 
@@ -91,10 +133,13 @@ pub(super) async fn diagnostic_task(
 pub(super) async fn diagnostic_task_with_sd(
     usb_device: esp_hal::peripherals::USB_DEVICE<'static>,
     flash: esp_hal::peripherals::FLASH<'static>,
-    sd_fs: &'static mut binbook_fw::storage::SdFilesystem<
-        binbook_fw::board::FreqManagedSpiDevice<'static, esp_hal::gpio::Output<'static>>,
-        binbook_fw::board::DisplayDelay,
-        binbook_fw::storage::FixedTime,
+    sd_fs: binbook_fw::storage_access::SdHandle<
+        'static,
+        binbook_fw::storage::SdFilesystem<
+            binbook_fw::board::FreqManagedSpiDevice<'static, esp_hal::gpio::Output<'static>>,
+            binbook_fw::board::DisplayDelay,
+            binbook_fw::storage::FixedTime,
+        >,
     >,
 ) {
     use esp_hal::usb_serial_jtag::UsbSerialJtag;
@@ -202,6 +247,8 @@ async fn handle_command<F>(
                 handle_display_command(serial, snapshot.current_page, pending).await;
             }
         }
+        #[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+        RuntimeCommand::OwnerStorage { .. } => {}
     }
 }
 

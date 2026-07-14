@@ -7,8 +7,9 @@
 //! Menu rendering is re-exported from `menu_render` for existing callers.
 
 pub use crate::menu_render::{
-    render_menu, HIGHLIGHT_STROKE, MENU_ROW_START_Y, MENU_ROW_STRIDE, MENU_TEXT_LEFT,
-    MENU_TEXT_RIGHT,
+    render_book_open_error, render_library_status, render_menu, render_progress_not_saved,
+    render_sleep_cancelled, MenuEntries, HIGHLIGHT_INSET, MENU_ROW_START_Y, MENU_ROW_STRIDE,
+    MENU_TEXT_LEFT, MENU_TEXT_RIGHT,
 };
 
 /// Whether the device is showing the library menu or reading a book.
@@ -101,6 +102,18 @@ impl MenuState {
         self.count = count;
     }
 
+    pub fn restore_selected(&mut self, index: usize) {
+        if self.count == 0 {
+            self.top = 0;
+            self.selected = 0;
+            return;
+        }
+        self.selected = index.min(self.count - 1);
+        self.top = self
+            .selected
+            .saturating_sub(VIEWPORT_ROWS.saturating_sub(1));
+    }
+
     /// Apply a menu action and return the new action.
     ///
     /// Returns `NoOp` when the transition would not change the state (empty list).
@@ -156,7 +169,7 @@ impl MenuState {
 /// Maximum number of book entries the menu cache can hold.
 pub const MAX_MENU_ENTRIES: usize = 200;
 /// Maximum length (in bytes) of a single entry name.
-pub const MAX_NAME_LEN: usize = 48;
+pub const MAX_NAME_LEN: usize = binbook_storage::MAX_BINBOOK_NAME_BYTES;
 
 /// A single menu entry name.
 pub type MenuName = heapless::String<MAX_NAME_LEN>;
@@ -166,7 +179,10 @@ pub type MenuNames = heapless::Vec<MenuName, MAX_MENU_ENTRIES>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xteink_x4_display::{framebuffer::Gray2Framebuffer, profile::LOGICAL_WIDTH};
+    use xteink_x4_display::{
+        framebuffer::{Gray2Color, Gray2Framebuffer},
+        profile::LOGICAL_WIDTH,
+    };
 
     #[test]
     fn initial_state_is_first_entry() {
@@ -254,6 +270,17 @@ mod tests {
     }
 
     #[test]
+    fn restore_selected_keeps_selection_visible() {
+        let mut state = MenuState::new(10);
+        state.restore_selected(8);
+        assert_eq!(state.selected(), 8);
+        assert_eq!(state.top(), 4);
+        assert!(state.is_visible(8));
+        state.restore_selected(99);
+        assert_eq!(state.selected(), 9);
+    }
+
+    #[test]
     fn viewport_scrolls_up_after_wrapping() {
         let mut state = MenuState::new(10);
         // Go to last item
@@ -326,8 +353,6 @@ mod tests {
         render_menu(&mut fb, &state, &names);
 
         let highlight_y = MENU_ROW_START_Y + MENU_ROW_STRIDE;
-        let highlight_bottom = highlight_y + MENU_ROW_STRIDE - 2 * HIGHLIGHT_STROKE as i32 - 1;
-
         let highlight_pixels_nonwhite = |y: i32, x_start: i32| -> bool {
             for x in x_start..LOGICAL_WIDTH as i32 {
                 let pixel = fb.get_pixel(x as u16, y as u16);
@@ -350,13 +375,20 @@ mod tests {
             false
         };
 
-        assert!(
-            highlight_pixels_nonwhite(highlight_y, HIGHLIGHT_STROKE as i32),
-            "highlight top border should have black pixels"
+        assert_eq!(
+            fb.get_pixel(HIGHLIGHT_INSET + 1, highlight_y as u16),
+            Gray2Color::WHITE,
+            "selected row must not draw a continuous black outline"
         );
-        assert!(
-            highlight_pixels_nonwhite(highlight_bottom, HIGHLIGHT_STROKE as i32),
-            "highlight bottom border should have black pixels"
+        assert_eq!(
+            fb.get_pixel(400, (highlight_y + 40) as u16),
+            Gray2Color::BLACK,
+            "selected row should contain ordered black dither pixels"
+        );
+        assert_eq!(
+            fb.get_pixel(401, (highlight_y + 40) as u16),
+            Gray2Color::WHITE,
+            "selected row should retain white pixels instead of driving a solid black band"
         );
         assert!(
             text_area_has_pixels(0),
@@ -397,6 +429,21 @@ mod tests {
             row_text_has_pixels(MENU_ROW_START_Y),
             "row 0 should have placeholder text pixels"
         );
+    }
+
+    #[test]
+    fn status_frames_render_visible_explanations() {
+        for status in [
+            crate::library::LibraryStatus::NoCard,
+            crate::library::LibraryStatus::CardError,
+            crate::library::LibraryStatus::NoBooks,
+            crate::library::LibraryStatus::TooManyBooks,
+            crate::library::LibraryStatus::UnsupportedName,
+        ] {
+            let mut fb = Gray2Framebuffer::new();
+            render_library_status(&mut fb, status);
+            assert!(fb.as_bytes().iter().any(|byte| *byte != 0xff));
+        }
     }
 
     #[test]

@@ -80,6 +80,18 @@ impl Gray2Framebuffer {
         }
     }
 
+    /// Borrow the backing allocation as temporary caller-owned storage.
+    /// Contents cease to represent a framebuffer until the caller redraws it.
+    pub fn scratch_bytes_mut(&mut self) -> &mut [u8; FRAMEBUFFER_BYTES] {
+        &mut self.data
+    }
+
+    /// Borrow the backing allocation after a temporary decode operation.
+    #[must_use]
+    pub fn scratch_bytes(&self) -> &[u8; FRAMEBUFFER_BYTES] {
+        &self.data
+    }
+
     /// Clear the entire framebuffer to a single color.
     pub fn clear(&mut self, color: Gray2Color) {
         let byte = match color.0 {

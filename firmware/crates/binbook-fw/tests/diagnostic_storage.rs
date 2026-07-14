@@ -191,6 +191,26 @@ fn filesystem_storage_upload_list_read_delete_roundtrip() {
 }
 
 #[test]
+fn filesystem_storage_list_returns_the_entries_that_fit_in_one_frame() {
+    let mut fs = MemoryFs::default();
+    fs.files.insert("a.binbook".into(), BOOK_A.to_vec());
+    fs.files.insert("b.binbook".into(), BOOK_A.to_vec());
+    let mut storage = FilesystemStorage::new(fs);
+    let mut list = [0u8; 28];
+
+    let list_len = storage
+        .store_list(binbook_diagnostic_protocol::StorageBackend::Sd, &mut list)
+        .expect("a full response frame must remain a valid partial listing");
+
+    assert_eq!(
+        binbook_diagnostic_protocol::decode_store_list_count(&list[..list_len]).unwrap(),
+        1
+    );
+    let entry = binbook_diagnostic_protocol::decode_store_list_entry(&list[2..list_len]).unwrap();
+    assert_eq!(entry.name, "a.binbook");
+}
+
+#[test]
 fn filesystem_storage_reports_crc_mismatch_without_listing_corrupt_upload() {
     let mut storage = FilesystemStorage::new(MemoryFs::default());
     let upload_id = storage

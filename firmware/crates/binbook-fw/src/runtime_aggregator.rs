@@ -731,7 +731,9 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
                 );
             }
             RuntimeEventKind::Completion(value) => {
-                self.snapshot.current_page = value.page;
+                if self.snapshot.page_count != 0 {
+                    self.snapshot.current_page = value.page;
+                }
                 if let Some(error) = value.error {
                     self.snapshot.last_error = hal_error_code(error);
                 }
@@ -763,9 +765,143 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
                     }
                 }
             }
-            RuntimeEventKind::MenuTransition => {}
-            RuntimeEventKind::ModeChange { .. } => {}
-            RuntimeEventKind::BookOpen { .. } => {}
+            RuntimeEventKind::MenuTransition { selected } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    crate::diag_log::EVT_MENU_SELECTION,
+                    selected.min(i32::MAX as usize) as i32,
+                    0,
+                    0,
+                );
+            }
+            RuntimeEventKind::ModeChange { mode } => {
+                if mode == crate::menu::Mode::Menu {
+                    self.snapshot.current_page = 0;
+                    self.snapshot.page_count = 0;
+                }
+            }
+            RuntimeEventKind::BookOpen {
+                filename_hash,
+                rendition_hash_prefix,
+                page_count,
+                page,
+            } => {
+                self.snapshot.page_count = page_count;
+                self.snapshot.current_page = page.min(page_count.saturating_sub(1));
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    crate::diag_log::EVT_BOOK_OPENED,
+                    filename_hash as u32 as i32,
+                    rendition_hash_prefix as i32,
+                    page_count as i32,
+                );
+            }
+            RuntimeEventKind::BookOpenFailed { name_index, stage } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_ERROR,
+                    crate::diag_log::EVT_BOOK_OPEN_FAILED,
+                    name_index.min(i32::MAX as usize) as i32,
+                    i32::from(stage),
+                    0,
+                );
+            }
+            RuntimeEventKind::LibraryScan { status, book_count } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    binbook_diagnostic_protocol::EVT_LIBRARY_SCAN,
+                    i32::from(status),
+                    i32::from(book_count),
+                    0,
+                );
+            }
+            RuntimeEventKind::ReaderStateSaved {
+                generation,
+                record_count,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    binbook_diagnostic_protocol::EVT_READER_STATE_SAVED,
+                    generation as i32,
+                    i32::from(record_count),
+                    0,
+                );
+            }
+            RuntimeEventKind::ReaderStateSaveFailed { stage } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_ERROR,
+                    binbook_diagnostic_protocol::EVT_READER_STATE_SAVE_FAILED,
+                    i32::from(stage),
+                    0,
+                    0,
+                );
+            }
+            RuntimeEventKind::ReaderReturnStage {
+                stage,
+                phase,
+                elapsed_ms,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    binbook_diagnostic_protocol::EVT_READER_RETURN_STAGE,
+                    i32::from(stage),
+                    i32::from(phase),
+                    elapsed_ms.min(i32::MAX as u32) as i32,
+                );
+            }
+            RuntimeEventKind::StorageOwnerProbe {
+                phase,
+                status,
+                elapsed_ms,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    binbook_diagnostic_protocol::EVT_STORAGE_OWNER_PROBE,
+                    i32::from(phase),
+                    i32::from(status),
+                    elapsed_ms.min(i32::MAX as u32) as i32,
+                );
+            }
+            RuntimeEventKind::ReaderStatePruned {
+                removed_count,
+                remaining_count,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    binbook_diagnostic_protocol::EVT_READER_STATE_PRUNED,
+                    i32::from(removed_count),
+                    i32::from(remaining_count),
+                    0,
+                );
+            }
+            RuntimeEventKind::SleepPrepared { status } => {
+                self.push(
+                    tick_ms,
+                    if status == 0 { LEVEL_INFO } else { LEVEL_ERROR },
+                    binbook_diagnostic_protocol::EVT_SLEEP_PREPARED,
+                    i32::from(status),
+                    0,
+                    0,
+                );
+            }
+            RuntimeEventKind::WakeCause { cause } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    binbook_diagnostic_protocol::EVT_WAKE_CAUSE,
+                    i32::from(cause),
+                    0,
+                    0,
+                );
+            }
         }
         self.snapshot.dropped_log_count = self.log.dropped_records();
         completion

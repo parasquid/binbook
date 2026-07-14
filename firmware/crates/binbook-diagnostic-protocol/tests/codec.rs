@@ -669,10 +669,15 @@ fn store_list_request_roundtrips() {
     let mut buf = [0u8; MAX_PAYLOAD_BYTES];
     let req = binbook_diagnostic_protocol::StoreListRequest {
         backend: StorageBackend::Sd,
+        start_index: 0x1234,
     };
     let len = binbook_diagnostic_protocol::encode_store_list_request(&req, &mut buf).unwrap();
     let decoded = decode_store_list_request(&buf[..len]).unwrap();
     assert_eq!(decoded.backend, StorageBackend::Sd);
+    assert_eq!(decoded.start_index, 0x1234);
+
+    let legacy = decode_store_list_request(&[StorageBackend::Sd as u8]).unwrap();
+    assert_eq!(legacy.start_index, 0);
 }
 
 #[test]
@@ -728,6 +733,16 @@ fn store_list_entry_rejects_oversized_name() {
         binbook_diagnostic_protocol::encode_store_entry(&large_name, 0, 0, &mut buf),
         Err(binbook_diagnostic_protocol::ProtocolError::InvalidValue)
     );
+}
+
+#[test]
+fn store_list_entry_accepts_reader_maximum_121_byte_name() {
+    let mut name = [b'a'; 121];
+    name[113..].copy_from_slice(b".binbook");
+    let mut buf = [0u8; MAX_PAYLOAD_BYTES];
+    let len = binbook_diagnostic_protocol::encode_store_entry(&name, 7, 0, &mut buf).unwrap();
+    let entry = binbook_diagnostic_protocol::decode_store_list_entry(&buf[..len]).unwrap();
+    assert_eq!(entry.name.len(), 121);
 }
 
 #[test]

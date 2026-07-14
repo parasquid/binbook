@@ -179,14 +179,20 @@ pub fn decode_buttons(ch1: u16, ch2: u16) -> Option<Button> {
     decode_ch1_button(ch1).or(decode_ch2_button(ch2))
 }
 
+const X4_LADDER_LOW_MAX: u16 = 750;
+const X4_CH1_LEFT_MAX: u16 = 1750;
+const X4_CH1_SELECT_MAX: u16 = 3000;
+const X4_CH1_BACK_MAX: u16 = 3800;
+const X4_CH2_UP_MAX: u16 = 2400;
+
 fn decode_ch1_button(ch1: u16) -> Option<Button> {
-    if ch1 <= 750 {
+    if ch1 <= X4_LADDER_LOW_MAX {
         Some(Button::Right)
-    } else if ch1 <= 1750 {
+    } else if ch1 <= X4_CH1_LEFT_MAX {
         Some(Button::Left)
-    } else if ch1 <= 3000 {
+    } else if ch1 <= X4_CH1_SELECT_MAX {
         Some(Button::Select)
-    } else if ch1 <= 3800 {
+    } else if ch1 <= X4_CH1_BACK_MAX {
         Some(Button::Back)
     } else {
         None
@@ -194,9 +200,9 @@ fn decode_ch1_button(ch1: u16) -> Option<Button> {
 }
 
 fn decode_ch2_button(ch2: u16) -> Option<Button> {
-    if ch2 <= 750 {
+    if ch2 <= X4_LADDER_LOW_MAX {
         Some(Button::Down)
-    } else if ch2 <= 2400 {
+    } else if ch2 <= X4_CH2_UP_MAX {
         Some(Button::Up)
     } else {
         None

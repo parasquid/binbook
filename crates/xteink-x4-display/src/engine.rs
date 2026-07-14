@@ -131,6 +131,23 @@ impl DisplayEngine {
         Ok(())
     }
 
+    /// Commit a page already activated by a caller-supplied differential
+    /// transition. This deliberately skips `init_bw`/`recover_bw`, preserves
+    /// the known controller bases, and schedules the normal gray overlay.
+    pub fn commit_differential_page(&mut self, page: u32, completed_ms: u64) -> DisplayResult<()> {
+        if page >= self.page_count {
+            return Err(DisplayError::InvalidPage);
+        }
+        self.current_page = page;
+        self.panel_mode = PanelMode::Bw;
+        self.phase = DisplayPhase::GrayDelay;
+        self.controller_state = ControllerRamState::BwBaseReady;
+        self.gray_deadline = Some(completed_ms + GRAY_SETTLE_DELAY_MS);
+        self.preview_cleanup = None;
+        self.recovery_attempted = false;
+        Ok(())
+    }
+
     pub fn begin_overlay(&mut self) {
         self.preview_cleanup = None;
         self.phase = DisplayPhase::GrayRefreshing;
@@ -166,29 +183,48 @@ impl DisplayEngine {
         events: &mut S,
         now: u64,
     ) -> Option<DisplayCompletion> {
+        self.initialize_at(0, backend, events, now).await
+    }
+
+    pub async fn initialize_at<B: DisplayBackend, S: EventSink>(
+        &mut self,
+        page: u32,
+        backend: &mut B,
+        events: &mut S,
+        now: u64,
+    ) -> Option<DisplayCompletion> {
+        if page >= self.page_count {
+            return Some(self.complete(
+                None,
+                CompletionStatus::Error,
+                Some(DisplayError::InvalidPage),
+                events,
+                now,
+            ));
+        }
         self.set_phase(DisplayPhase::Recovering, events, now);
-        emit(events, now, DisplayEventKind::RecoveryStarted { page: 0 });
+        emit(events, now, DisplayEventKind::RecoveryStarted { page });
         let result = async {
             backend.init_bw().await?;
-            backend.recover_bw(0).await
+            backend.recover_bw(page).await
         }
         .await;
         let completed = backend.timestamp_ms().unwrap_or(now);
         match result {
             Ok(()) => {
-                self.current_page = 0;
+                self.current_page = page;
                 self.set_mode(PanelMode::Bw, events, completed);
                 self.set_controller(ControllerRamState::BwBaseReady, events, completed);
                 self.gray_deadline = Some(completed + GRAY_SETTLE_DELAY_MS);
                 emit(
                     events,
                     completed,
-                    DisplayEventKind::RecoveryCompleted { page: 0 },
+                    DisplayEventKind::RecoveryCompleted { page },
                 );
                 self.set_phase(DisplayPhase::GrayDelay, events, completed);
                 None
             }
-            Err(error) => Some(self.fail(None, error, 0, events, completed)),
+            Err(error) => Some(self.fail(None, error, page, events, completed)),
         }
     }
 

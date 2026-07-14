@@ -1,6 +1,7 @@
 #![no_std]
 
 mod book;
+mod book_index;
 mod book_io;
 mod book_records;
 mod chunk;
@@ -14,6 +15,7 @@ mod navigation;
 mod page;
 mod profile;
 mod record_validation;
+mod rendition_identity;
 mod section;
 mod source;
 mod strings;
@@ -23,6 +25,7 @@ mod validate;
 mod validation_crc;
 
 pub use book::Book;
+pub use book_index::{BookIndex, BookIndexHeader, ReadRange};
 pub use chunk::PageChunk;
 pub use encode::{
     EncodeError, FileHeader, SectionTableEntry, WireEncode, HEADER_SIZE, SECTION_RECORD_SIZE,
@@ -43,6 +46,7 @@ pub use profile::{BookMetadata, DisplayProfile};
 pub use profile::{
     WAVEFORM_SSD1677_ABSOLUTE_GRAY2, WAVEFORM_SSD1677_STAGED_GRAY2, WAVEFORM_UNKNOWN,
 };
+pub use rendition_identity::RenditionIdentity;
 pub use source::{ReadAt, SliceReadError, SliceSource};
 pub use strings::StringRef;
 pub use transition::PageTransition;

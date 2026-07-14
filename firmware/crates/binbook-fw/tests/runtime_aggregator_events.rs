@@ -516,6 +516,53 @@ fn physical_menu_requests_do_not_synthesize_protocol_completions() {
 }
 
 #[test]
+fn successful_physical_turn_publishes_the_committed_page_without_a_protocol_sequence() {
+    let request = DisplayRequest::Turn {
+        turn: PageTurn::Previous,
+        completion_sequence: None,
+    };
+
+    assert_eq!(
+        binbook_fw::runtime_engine::committed_page_event(&request, true, 6, 5),
+        Some(RuntimeEventKind::PageDisplayed { from: 6, page: 5 })
+    );
+    assert_eq!(
+        binbook_fw::runtime_engine::committed_page_event(&request, false, 6, 5),
+        None
+    );
+}
+
+#[test]
+fn successful_boot_restore_publishes_book_state_without_a_protocol_completion() {
+    let event = binbook_fw::runtime_engine::committed_book_open_event(
+        true,
+        0x1122_3344_5566_7788,
+        0x99aa_bbcc,
+        16,
+        6,
+    );
+    assert_eq!(
+        event,
+        Some(RuntimeEventKind::BookOpen {
+            filename_hash: 0x1122_3344_5566_7788,
+            rendition_hash_prefix: 0x99aa_bbcc,
+            page_count: 16,
+            page: 6,
+        })
+    );
+    assert_eq!(
+        binbook_fw::runtime_engine::committed_book_open_event(
+            false,
+            0x1122_3344_5566_7788,
+            0x99aa_bbcc,
+            16,
+            6,
+        ),
+        None
+    );
+}
+
+#[test]
 fn request_enqueue_status_for_full_channel_is_dropped() {
     assert_eq!(RequestEnqueueStatus::Full.log_code(), 1);
     assert_ne!(
@@ -551,4 +598,192 @@ fn log_clear_is_nonempty_and_status_and_logs_are_owned_by_aggregator() {
     assert_eq!(aggregator.log().record_count(), 0);
     assert_eq!(next, 1);
     assert_eq!(aggregator.status_payload().page_count, 4);
+}
+
+#[test]
+fn opening_a_book_replaces_probe_status_with_the_real_book_state() {
+    let mut aggregator = aggregator::<2>();
+    aggregator.commit(event(
+        10,
+        RuntimeEventKind::BookOpen {
+            filename_hash: 0x1122_3344_5566_7788,
+            rendition_hash_prefix: 0x99aa_bbcc,
+            page_count: 27,
+            page: 9,
+        },
+    ));
+
+    let status = aggregator.status_payload();
+    assert_eq!(status.page_count, 27);
+    assert_eq!(status.current_page, 9);
+}
+
+#[test]
+fn returning_to_menu_clears_active_book_status() {
+    use binbook_fw::menu::Mode;
+
+    let mut aggregator = aggregator::<2>();
+    aggregator.commit(event(
+        10,
+        RuntimeEventKind::BookOpen {
+            filename_hash: 1,
+            rendition_hash_prefix: 2,
+            page_count: 27,
+            page: 9,
+        },
+    ));
+    aggregator.commit(event(20, RuntimeEventKind::ModeChange { mode: Mode::Menu }));
+    aggregator.commit(event(
+        21,
+        RuntimeEventKind::Completion(binbook_fw::runtime_engine::RuntimeCompletion {
+            sequence: Some(4),
+            status: RuntimeCompletionStatus::Ok,
+            page: 9,
+            error: None,
+        }),
+    ));
+
+    let status = aggregator.status_payload();
+    assert_eq!(status.page_count, 0);
+    assert_eq!(status.current_page, 0);
+}
+
+#[test]
+fn reader_lifecycle_events_preserve_the_locked_argument_layouts() {
+    use binbook_diagnostic_protocol::{
+        EVT_LIBRARY_SCAN, EVT_READER_STATE_PRUNED, EVT_READER_STATE_SAVED, EVT_SLEEP_PREPARED,
+        EVT_WAKE_CAUSE,
+    };
+
+    let mut aggregator = aggregator::<8>();
+    for (tick, kind) in [
+        (
+            1,
+            RuntimeEventKind::LibraryScan {
+                status: 0,
+                book_count: 17,
+            },
+        ),
+        (
+            2,
+            RuntimeEventKind::ReaderStateSaved {
+                generation: 23,
+                record_count: 4,
+            },
+        ),
+        (
+            3,
+            RuntimeEventKind::ReaderStatePruned {
+                removed_count: 2,
+                remaining_count: 4,
+            },
+        ),
+        (4, RuntimeEventKind::SleepPrepared { status: 0 }),
+        (5, RuntimeEventKind::WakeCause { cause: 1 }),
+    ] {
+        aggregator.commit(event(tick, kind));
+    }
+
+    let mut records = [DiagLogRecord::default(); 5];
+    assert_eq!(
+        aggregator
+            .log()
+            .read_from_sequence(0, &mut records)
+            .record_count,
+        5
+    );
+    assert_eq!(
+        (records[0].event, records[0].arg0, records[0].arg1),
+        (EVT_LIBRARY_SCAN, 0, 17)
+    );
+    assert_eq!(
+        (records[1].event, records[1].arg0, records[1].arg1),
+        (EVT_READER_STATE_SAVED, 23, 4)
+    );
+    assert_eq!(
+        (records[2].event, records[2].arg0, records[2].arg1),
+        (EVT_READER_STATE_PRUNED, 2, 4)
+    );
+    assert_eq!((records[3].event, records[3].arg0), (EVT_SLEEP_PREPARED, 0));
+    assert_eq!((records[4].event, records[4].arg0), (EVT_WAKE_CAUSE, 1));
+}
+
+#[test]
+fn reader_return_stage_events_preserve_stage_phase_and_elapsed_time() {
+    use binbook_diagnostic_protocol::EVT_READER_RETURN_STAGE;
+
+    let mut aggregator = aggregator::<4>();
+    aggregator.commit(event(
+        100,
+        RuntimeEventKind::ReaderReturnStage {
+            stage: 2,
+            phase: 0,
+            elapsed_ms: 0,
+        },
+    ));
+    aggregator.commit(event(
+        137,
+        RuntimeEventKind::ReaderReturnStage {
+            stage: 2,
+            phase: 1,
+            elapsed_ms: 37,
+        },
+    ));
+
+    let mut records = [DiagLogRecord::default(); 2];
+    assert_eq!(
+        aggregator
+            .log()
+            .read_from_sequence(0, &mut records)
+            .record_count,
+        2
+    );
+    assert_eq!(records[0].tick_ms, 100);
+    assert_eq!(records[1].tick_ms, 137);
+    assert_eq!(
+        (
+            records[0].event,
+            records[0].arg0,
+            records[0].arg1,
+            records[0].arg2
+        ),
+        (EVT_READER_RETURN_STAGE, 2, 0, 0)
+    );
+    assert_eq!(
+        (
+            records[1].event,
+            records[1].arg0,
+            records[1].arg1,
+            records[1].arg2
+        ),
+        (EVT_READER_RETURN_STAGE, 2, 1, 37)
+    );
+}
+#[test]
+fn storage_owner_probe_preserves_phase_status_and_elapsed() {
+    let mut aggregator = aggregator::<2>();
+    aggregator.commit(event(
+        77,
+        RuntimeEventKind::StorageOwnerProbe {
+            phase: 3,
+            status: 0,
+            elapsed_ms: 4_321,
+        },
+    ));
+    let mut records = [DiagLogRecord::default(); 1];
+    assert_eq!(
+        aggregator
+            .log()
+            .read_from_sequence(0, &mut records)
+            .record_count,
+        1
+    );
+    assert_eq!(
+        records[0].event,
+        binbook_diagnostic_protocol::EVT_STORAGE_OWNER_PROBE
+    );
+    assert_eq!(
+        (records[0].arg0, records[0].arg1, records[0].arg2),
+        (3, 0, 4_321)
+    );
 }

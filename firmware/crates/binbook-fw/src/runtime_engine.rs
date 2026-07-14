@@ -116,6 +116,50 @@ pub const fn menu_completion(
     }
 }
 
+/// Publish a committed reading-page transition independently of whether the
+/// originating request carried a diagnostic protocol sequence.
+#[must_use]
+pub const fn committed_page_event(
+    request: &DisplayRequest,
+    success: bool,
+    from: u32,
+    page: u32,
+) -> Option<RuntimeEventKind> {
+    if success
+        && from != page
+        && matches!(
+            request,
+            DisplayRequest::Turn { .. } | DisplayRequest::Goto { .. }
+        )
+    {
+        Some(RuntimeEventKind::PageDisplayed { from, page })
+    } else {
+        None
+    }
+}
+
+/// Publish a committed book open independently of whether it originated from
+/// an interactive request or boot-time state restoration.
+#[must_use]
+pub const fn committed_book_open_event(
+    success: bool,
+    filename_hash: u64,
+    rendition_hash_prefix: u32,
+    page_count: u32,
+    page: u32,
+) -> Option<RuntimeEventKind> {
+    if success && page_count != 0 {
+        Some(RuntimeEventKind::BookOpen {
+            filename_hash,
+            rendition_hash_prefix,
+            page_count,
+            page,
+        })
+    } else {
+        None
+    }
+}
+
 #[must_use]
 pub const fn queue_age_ms(received_ms: u64, enqueued_ms: Option<u64>) -> Option<u32> {
     match enqueued_ms {
@@ -396,12 +440,52 @@ pub enum RuntimeEventKind {
         page: u32,
     },
     Completion(RuntimeCompletion),
-    MenuTransition,
+    MenuTransition {
+        selected: usize,
+    },
     ModeChange {
         mode: Mode,
     },
     BookOpen {
+        filename_hash: u64,
+        rendition_hash_prefix: u32,
+        page_count: u32,
+        page: u32,
+    },
+    BookOpenFailed {
         name_index: usize,
+        stage: u8,
+    },
+    LibraryScan {
+        status: u8,
+        book_count: u16,
+    },
+    ReaderStateSaved {
+        generation: u32,
+        record_count: u16,
+    },
+    ReaderStateSaveFailed {
+        stage: u8,
+    },
+    ReaderReturnStage {
+        stage: u8,
+        phase: u8,
+        elapsed_ms: u32,
+    },
+    StorageOwnerProbe {
+        phase: u8,
+        status: u8,
+        elapsed_ms: u32,
+    },
+    ReaderStatePruned {
+        removed_count: u16,
+        remaining_count: u16,
+    },
+    SleepPrepared {
+        status: u8,
+    },
+    WakeCause {
+        cause: u8,
     },
 }
 

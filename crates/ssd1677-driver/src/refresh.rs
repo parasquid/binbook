@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshMode {
     Full,
+    Clean,
     Partial,
     Grayscale,
     StagedGrayscale,
@@ -11,6 +12,7 @@ pub enum ControllerState {
     Unknown,
     Powered,
     PoweredDown,
+    DeepSleep,
 }
 
 impl<SPI, DC, RST, BUSY> Ssd1677<SPI, DC, RST, BUSY>
@@ -21,6 +23,12 @@ where
     BUSY: InputPin,
 {
     pub fn trigger_refresh(&mut self, mode: RefreshMode) -> Result<(), Error> {
+        if mode == RefreshMode::Clean {
+            self.command_data(
+                Command::TEMP_SENSOR_WRITE,
+                &[Command::CLEAN_REFRESH_TEMPERATURE],
+            )?;
+        }
         if matches!(mode, RefreshMode::Partial | RefreshMode::Grayscale) {
             self.command_data(Command::DISPLAY_UPDATE_CTRL1, &[0, 0])?;
         } else if mode == RefreshMode::StagedGrayscale {
@@ -28,6 +36,7 @@ where
         }
         let control = match mode {
             RefreshMode::Full => Command::UPDATE_CTRL_NORMAL,
+            RefreshMode::Clean => Command::UPDATE_CTRL_CLEAN,
             RefreshMode::Partial => Command::UPDATE_CTRL_FAST,
             RefreshMode::Grayscale => Command::UPDATE_CTRL_GRAYSCALE,
             RefreshMode::StagedGrayscale => {
@@ -37,7 +46,7 @@ where
         };
         self.command_data(Command::DISPLAY_UPDATE_CTRL2, &[control])?;
         self.command(Command::MASTER_ACTIVATION)?;
-        self.state = if mode == RefreshMode::Full {
+        self.state = if matches!(mode, RefreshMode::Full | RefreshMode::Clean) {
             ControllerState::PoweredDown
         } else {
             ControllerState::Powered

@@ -1,10 +1,11 @@
 use binbook_diagnostic_protocol::{
     encode_frame, encode_log_get_payload, encode_page_payload, encode_probe_payload,
-    encode_refresh_mode_payload, encode_store_delete_request, encode_store_list_request,
-    encode_store_read_request, FrameHeader, FrameKind, KeyAction, KeyCode, LogGetPayload, Opcode,
-    PageAction, ProbeCode, RefreshModeAction, RefreshModeCode, RefreshModePayload, Status,
-    StorageBackend, StoreDeleteRequest, StoreListRequest, StoreReadRequest, MAX_FRAME_BYTES,
-    MAX_PAYLOAD_BYTES,
+    encode_refresh_mode_payload, encode_store_abort_request, encode_store_delete_request,
+    encode_store_list_request, encode_store_read_request, encode_store_upload_begin_request,
+    FrameHeader, FrameKind, KeyAction, KeyCode, LogGetPayload, Opcode, PageAction, ProbeCode,
+    RefreshModeAction, RefreshModeCode, RefreshModePayload, Status, StorageBackend,
+    StoreDeleteRequest, StoreListRequest, StoreReadRequest, StoreUploadBeginRequest,
+    MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES,
 };
 
 pub use crate::diag_response::{
@@ -150,8 +151,13 @@ impl ProbeChoice {
 
 pub fn store_list_request(sequence: u16, path: &str) -> Vec<u8> {
     let _ = path;
+    store_list_request_from(sequence, 0)
+}
+
+pub fn store_list_request_from(sequence: u16, start_index: u16) -> Vec<u8> {
     let payload = StoreListRequest {
         backend: StorageBackend::Sd,
+        start_index,
     };
     let mut payload_buf = [0u8; 512];
     let plen = encode_store_list_request(&payload, &mut payload_buf).unwrap();
@@ -190,6 +196,37 @@ pub fn store_delete_request(sequence: u16, path: &str) -> Vec<u8> {
     let mut payload_buf = [0u8; 512];
     let plen = encode_store_delete_request(&payload, &mut payload_buf).unwrap();
     let mut header = request_header(sequence, Opcode::StoreDelete);
+    header.payload_len = plen as u16;
+    let mut buf = [0u8; MAX_FRAME_BYTES];
+    let len = encode_frame(&header, &payload_buf[..plen], &mut buf).unwrap();
+    buf[..len].to_vec()
+}
+
+pub fn store_abort_request(sequence: u16, upload_id: u32) -> Vec<u8> {
+    let mut payload_buf = [0u8; 4];
+    let plen = encode_store_abort_request(upload_id, &mut payload_buf).unwrap();
+    let mut header = request_header(sequence, Opcode::StoreAbort);
+    header.payload_len = plen as u16;
+    let mut buf = [0u8; MAX_FRAME_BYTES];
+    let len = encode_frame(&header, &payload_buf[..plen], &mut buf).unwrap();
+    buf[..len].to_vec()
+}
+
+pub fn store_upload_begin_request(
+    sequence: u16,
+    path: &str,
+    file_size: u32,
+    expected_crc32: u32,
+) -> Vec<u8> {
+    let request = StoreUploadBeginRequest {
+        backend: StorageBackend::Sd,
+        name: path,
+        file_size,
+        expected_crc32,
+    };
+    let mut payload_buf = [0u8; 512];
+    let plen = encode_store_upload_begin_request(&request, &mut payload_buf).unwrap();
+    let mut header = request_header(sequence, Opcode::StoreUploadBegin);
     header.payload_len = plen as u16;
     let mut buf = [0u8; MAX_FRAME_BYTES];
     let len = encode_frame(&header, &payload_buf[..plen], &mut buf).unwrap();

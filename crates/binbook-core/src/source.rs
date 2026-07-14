@@ -10,6 +10,18 @@ pub trait ReadAt {
     fn read_exact_at(&mut self, offset: u64, out: &mut [u8]) -> Result<(), Self::Error>;
 }
 
+impl<T: ReadAt + ?Sized> ReadAt for &mut T {
+    type Error = T::Error;
+
+    fn len(&mut self) -> Result<u64, Self::Error> {
+        (**self).len()
+    }
+
+    fn read_exact_at(&mut self, offset: u64, out: &mut [u8]) -> Result<(), Self::Error> {
+        (**self).read_exact_at(offset, out)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SliceReadError {
     LengthOverflow,

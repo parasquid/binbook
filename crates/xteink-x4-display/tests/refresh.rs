@@ -1,6 +1,4 @@
-use xteink_x4_display::refresh::{
-    RefreshDecision, RefreshPolicy, RefreshState, DEFAULT_FULL_REFRESH_CADENCE,
-};
+use xteink_x4_display::refresh::{RefreshDecision, RefreshPolicy, RefreshState};
 
 #[test]
 fn refresh_policy_covers_absolute_seed_full_screen_and_gated_dirty_chunks() {
@@ -22,14 +20,14 @@ fn refresh_policy_covers_absolute_seed_full_screen_and_gated_dirty_chunks() {
 }
 
 #[test]
-fn cadence_forces_periodic_absolute_cleanup() {
+fn repeated_differential_updates_never_force_automatic_full_cleanup() {
     let mut state = RefreshState::new();
     state.record_success(0, RefreshDecision::FullBwSeed);
-    for page in 1..=DEFAULT_FULL_REFRESH_CADENCE {
+    for page in 1..=100 {
         state.record_success(page, RefreshDecision::FullScreenDifferential);
+        assert_eq!(
+            state.decide(page + 1, None),
+            RefreshDecision::FullScreenDifferential
+        );
     }
-    assert_eq!(
-        state.decide(DEFAULT_FULL_REFRESH_CADENCE + 1, None),
-        RefreshDecision::FullGrayscale
-    );
 }

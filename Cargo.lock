@@ -198,6 +198,7 @@ name = "binbook-fw"
 version = "0.1.0"
 dependencies = [
  "binbook-core",
+ "binbook-decompress",
  "binbook-diagnostic-protocol",
  "binbook-storage",
  "embassy-executor",

@@ -1,5 +1,6 @@
 #![cfg_attr(target_arch = "riscv32", no_std)]
 #![cfg_attr(target_arch = "riscv32", no_main)]
+#![cfg_attr(feature = "mounted-storage-owner", allow(dead_code))]
 
 #[cfg(target_arch = "riscv32")]
 use embassy_executor::Spawner;
@@ -37,9 +38,16 @@ mod runtime;
 
 #[cfg(target_arch = "riscv32")]
 const DISPLAY_SPI_FREQUENCY_MHZ: u32 = 40;
-#[cfg(target_arch = "riscv32")]
+#[cfg(all(
+    target_arch = "riscv32",
+    feature = "diagnostic-console",
+    not(feature = "sd-storage")
+))]
 const PROBE_BOOK: &[u8] = include_bytes!("../fixtures/nav_probe.binbook");
-#[cfg(target_arch = "riscv32")]
+#[cfg(all(
+    target_arch = "riscv32",
+    any(feature = "sd-storage", feature = "diagnostic-console")
+))]
 const BINBOOK_SCRATCH_BYTES: usize = 8192;
 
 #[cfg(target_arch = "riscv32")]
@@ -56,6 +64,8 @@ fn main() -> ! {
         ADC1,
         GPIO1,
         GPIO2,
+        GPIO3,
+        LPWR,
         SPI2,
         GPIO7,
         GPIO8,
@@ -83,6 +93,8 @@ fn main() -> ! {
         adc1: ADC1,
         gpio1: GPIO1,
         gpio2: GPIO2,
+        gpio3: GPIO3,
+        lpwr: LPWR,
         spi2: SPI2,
         gpio7: GPIO7,
         gpio8: GPIO8,

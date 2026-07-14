@@ -26,6 +26,7 @@ where
     UploadTooFragmented,
     FileTooFragmented,
     BadUploadOffset,
+    UnexpectedEof,
 }
 
 pub struct FatDirectory;
@@ -156,8 +157,8 @@ impl FatDirectory {
                 }
                 filled += read;
             }
-            for byte in out.iter_mut().skip(filled) {
-                *byte = 0;
+            if filled != out.len() {
+                return Err(StorageError::UnexpectedEof);
             }
         }
         fs.unmount().map_err(StorageError::Fat)
@@ -378,7 +379,7 @@ where
     Ok(0)
 }
 
-fn entry_name<D, IO, TP, OCC>(
+pub(crate) fn entry_name<D, IO, TP, OCC>(
     entry: &lamfat::DirEntry<'_, IO, TP, OCC>,
 ) -> Result<String<NAME_BUF_LEN>, StorageError<D>>
 where

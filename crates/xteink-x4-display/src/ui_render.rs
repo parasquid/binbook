@@ -11,6 +11,7 @@
 //! 3. Convert staged planes to absolute red/black RAM rows
 //! 4. Write each RAM row through the existing `X4Panel` SPI path
 
+use binbook_core::{Book, ReadAt};
 use embedded_hal::{
     digital::{InputPin, OutputPin},
     spi::SpiDevice,
@@ -20,11 +21,376 @@ use gray2_render::canonical_row_to_staged;
 use ssd1677_driver::NoopBusyWaitObserver;
 
 use crate::{
+    buffers::RenderBuffers,
     framebuffer::Gray2Framebuffer,
     panel::{RefreshMode, X4Panel},
     profile::{CHUNK_COUNT, CHUNK_ROWS, PHYSICAL_WIDTH, ROW_BYTES},
+    render_timing::RamTarget,
     DisplayResult,
 };
+
+pub const FAST_BASE_BYTES: usize = (crate::profile::PHYSICAL_HEIGHT as usize) * ROW_BYTES;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DifferentialRamTarget {
+    Previous,
+    Target,
+}
+
+impl DifferentialRamTarget {
+    const fn ram_target(self) -> RamTarget {
+        match self {
+            Self::Previous => RamTarget::Red,
+            Self::Target => RamTarget::Black,
+        }
+    }
+}
+
+pub fn stage_book_fast_base<R, SPI, DC, RST, BUSY>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    page: u32,
+    buffers: &mut RenderBuffers<'_>,
+    target: DifferentialRamTarget,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    crate::native::stage_fast_base_to_ram(panel, book, page, buffers, target.ram_target())
+}
+
+/// Decode one page's physical 1-bit fast-base plane into caller-owned memory.
+/// This function performs no panel I/O, so the caller may use it while a
+/// scoped file source is mounted and release that source before staging.
+pub fn decode_book_fast_base<R: ReadAt>(
+    book: &mut Book<R>,
+    page: u32,
+    compressed: &mut [u8],
+    output: &mut [u8],
+) -> DisplayResult<()> {
+    if compressed.is_empty() {
+        return Err(crate::DisplayError::BufferTooSmall {
+            required: 1,
+            provided: 0,
+        });
+    }
+    if output.len() < FAST_BASE_BYTES {
+        return Err(crate::DisplayError::BufferTooSmall {
+            required: FAST_BASE_BYTES,
+            provided: output.len(),
+        });
+    }
+    let page = crate::page_source::read_x4_page(book, page)?;
+    let plane = crate::page_source::required_plane(page.planes, binbook_core::PlaneSlot::FastBase)?;
+    let mut decoder = crate::page_source::PlaneDecoder::new(plane);
+    for row in output[..FAST_BASE_BYTES].chunks_exact_mut(ROW_BYTES) {
+        decoder.fill(book, compressed, row)?;
+    }
+    decoder.finish()
+}
+
+/// Stage a previously decoded physical fast-base plane into controller RAM.
+/// No book/file source is consulted and no refresh is activated.
+pub fn stage_decoded_fast_base<SPI, DC, RST, BUSY>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    decoded: &[u8],
+    target: DifferentialRamTarget,
+) -> DisplayResult<()>
+where
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    if decoded.len() < FAST_BASE_BYTES {
+        return Err(crate::DisplayError::BufferTooSmall {
+            required: FAST_BASE_BYTES,
+            provided: decoded.len(),
+        });
+    }
+    use crate::profile::PHYSICAL_HEIGHT;
+    panel
+        .controller()
+        .set_window(0, 0, PHYSICAL_WIDTH, PHYSICAL_HEIGHT)?;
+    let mut offset = 0usize;
+    let mut fill = |_: u16, output: &mut [u8; ROW_BYTES]| {
+        output.copy_from_slice(&decoded[offset..offset + ROW_BYTES]);
+        offset += ROW_BYTES;
+    };
+    if target.ram_target() == RamTarget::Red {
+        panel
+            .controller()
+            .write_red_frame_rows(PHYSICAL_HEIGHT, &mut fill)?;
+    } else {
+        panel
+            .controller()
+            .write_frame_rows(PHYSICAL_HEIGHT, &mut fill)?;
+    }
+    Ok(())
+}
+
+pub fn stage_ui_base<SPI, DC, RST, BUSY>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    fb: &Gray2Framebuffer,
+    target: DifferentialRamTarget,
+) -> DisplayResult<()>
+where
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    write_ui_base_to_ram_sync(panel, fb, target.ram_target())
+}
+
+/// Differentially replace one UI frame with another while reusing the same
+/// caller-owned framebuffer. The previous frame is streamed to red RAM before
+/// `compose` mutates the framebuffer; the target is then streamed to black RAM.
+pub async fn render_ui_transition<SPI, DC, RST, BUSY, D, C>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    fb: &mut Gray2Framebuffer,
+    compose: C,
+    delay: &mut D,
+) -> DisplayResult<()>
+where
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+    C: FnOnce(&mut Gray2Framebuffer),
+{
+    write_ui_base_to_ram(panel, fb, RamTarget::Red, delay).await?;
+    compose(fb);
+    write_ui_base_to_ram(panel, fb, RamTarget::Black, delay).await?;
+    activate_differential(panel, delay).await
+}
+
+/// Differentially replace one UI frame with another using the accepted fast
+/// preview followed immediately by its cleanup waveform.
+///
+/// Both full previous and target planes are staged before activation; callers
+/// that can prove a smaller dirty window should use a window-specific path
+/// instead of assuming unchanged controller RAM.
+pub async fn render_ui_transition_fast<SPI, DC, RST, BUSY, D, C>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    fb: &mut Gray2Framebuffer,
+    compose: C,
+    delay: &mut D,
+) -> DisplayResult<()>
+where
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+    C: FnOnce(&mut Gray2Framebuffer),
+{
+    write_ui_base_to_ram(panel, fb, RamTarget::Red, delay).await?;
+    compose(fb);
+    write_ui_base_to_ram(panel, fb, RamTarget::Black, delay).await?;
+    activate_fast_differential(panel, delay).await
+}
+
+/// Differentially replace a visible UI framebuffer with a BinBook fast-base
+/// page without allocating another full-screen framebuffer.
+pub async fn render_ui_to_book_differential<R, SPI, DC, RST, BUSY, D>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    fb: &Gray2Framebuffer,
+    book: &mut Book<R>,
+    page: u32,
+    buffers: &mut RenderBuffers<'_>,
+    delay: &mut D,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+{
+    write_ui_base_to_ram(panel, fb, RamTarget::Red, delay).await?;
+    crate::native::write_fast_base_to_ram(panel, book, page, buffers, RamTarget::Black, delay)
+        .await?;
+    activate_differential(panel, delay).await
+}
+
+/// Differentially replace a visible BinBook page with a prepared UI frame.
+pub async fn render_book_to_ui_differential<R, SPI, DC, RST, BUSY, D>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    page: u32,
+    fb: &Gray2Framebuffer,
+    buffers: &mut RenderBuffers<'_>,
+    delay: &mut D,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+{
+    crate::native::write_fast_base_to_ram(panel, book, page, buffers, RamTarget::Red, delay)
+        .await?;
+    write_ui_base_to_ram(panel, fb, RamTarget::Black, delay).await?;
+    activate_differential(panel, delay).await
+}
+
+pub async fn activate_differential<SPI, DC, RST, BUSY, D>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    delay: &mut D,
+) -> DisplayResult<()>
+where
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+{
+    panel
+        .refresh_observed(RefreshMode::Partial, delay, &mut NoopBusyWaitObserver)
+        .await
+}
+
+/// Activate target data already staged identically in both controller RAM
+/// planes using the X4's single-pass clean (`0xD7`) waveform.
+pub async fn activate_clean<SPI, DC, RST, BUSY, D>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    delay: &mut D,
+) -> DisplayResult<()>
+where
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+{
+    panel
+        .refresh_observed(RefreshMode::Clean, delay, &mut NoopBusyWaitObserver)
+        .await
+}
+
+/// Activate already-staged previous/target planes with the accepted fast
+/// preview waveform, then immediately run its accepted cleanup waveform.
+///
+/// This is the same preview/cleanup recipe used by Fast page turns, exposed for
+/// menu↔book transitions whose planes are staged by the firmware owner path.
+pub async fn activate_fast_differential<SPI, DC, RST, BUSY, D>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    delay: &mut D,
+) -> DisplayResult<()>
+where
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+{
+    panel.load_custom_lut_candidate(crate::panel::CustomLutCandidate::PreviewFastV1)?;
+    panel
+        .refresh_observed(
+            RefreshMode::StagedGrayscale,
+            delay,
+            &mut NoopBusyWaitObserver,
+        )
+        .await?;
+    crate::native::cleanup_fast_preview(panel, delay).await
+}
+
+async fn write_ui_base_to_ram<SPI, DC, RST, BUSY, D>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    fb: &Gray2Framebuffer,
+    target: RamTarget,
+    delay: &mut D,
+) -> DisplayResult<()>
+where
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+{
+    write_ui_base_to_ram_sync(panel, fb, target)?;
+    delay.delay_ns(0).await;
+    Ok(())
+}
+
+/// Stage only the black/white base of a prepared UI frame into one controller
+/// RAM plane without activating a refresh.
+pub fn stage_ui_base_to_ram<SPI, DC, RST, BUSY>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    fb: &Gray2Framebuffer,
+    target: crate::panel::PanelRamTarget,
+) -> DisplayResult<()>
+where
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    write_ui_base_to_ram_sync(
+        panel,
+        fb,
+        match target {
+            crate::panel::PanelRamTarget::Black => RamTarget::Black,
+            crate::panel::PanelRamTarget::Red => RamTarget::Red,
+        },
+    )
+}
+
+fn write_ui_base_to_ram_sync<SPI, DC, RST, BUSY>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    fb: &Gray2Framebuffer,
+    target: RamTarget,
+) -> DisplayResult<()>
+where
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    use crate::profile::PHYSICAL_HEIGHT;
+
+    panel
+        .controller()
+        .set_window(0, 0, PHYSICAL_WIDTH, PHYSICAL_HEIGHT)?;
+    let mut red_row = [0u8; ROW_BYTES];
+    let mut black_row = [0u8; ROW_BYTES];
+    let mut error = None;
+    let mut fill = |phys_y: u16, output: &mut [u8; ROW_BYTES]| {
+        if error.is_some() {
+            output.fill(0xff);
+            return;
+        }
+        match fill_absolute_row_packed(fb, usize::from(phys_y), &mut red_row, &mut black_row) {
+            Ok(()) => output.copy_from_slice(&black_row),
+            Err(value) => {
+                error = Some(value);
+                output.fill(0xff);
+            }
+        }
+    };
+    if target == RamTarget::Red {
+        panel
+            .controller()
+            .write_red_frame_rows(PHYSICAL_HEIGHT, &mut fill)?;
+    } else {
+        panel
+            .controller()
+            .write_frame_rows(PHYSICAL_HEIGHT, &mut fill)?;
+    }
+    if let Some(error) = error {
+        return Err(error);
+    }
+    Ok(())
+}
 
 /// Write the BW base of a [`Gray2Framebuffer`] to the panel's red and black
 /// RAM, ready for a staged gray overlay.

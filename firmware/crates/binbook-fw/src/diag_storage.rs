@@ -1,4 +1,6 @@
-use binbook_diagnostic_protocol::{encode_store_entry, StorageBackend};
+#[cfg(feature = "sd-storage")]
+use binbook_diagnostic_protocol::encode_store_entry;
+use binbook_diagnostic_protocol::StorageBackend;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageError {
@@ -92,11 +94,7 @@ impl<F> FilesystemStorage<F> {
 #[cfg(feature = "sd-storage")]
 fn crc32_update(bytes: &[u8], mut state: u32) -> u32 {
     for byte in bytes {
-        state ^= u32::from(*byte);
-        for _ in 0..8 {
-            let mask = 0u32.wrapping_sub(state & 1);
-            state = (state >> 1) ^ (0xEDB8_8320 & mask);
-        }
+        state = crate::crc32::update_byte(state, *byte);
     }
     state
 }
@@ -140,7 +138,7 @@ where
                 }
             })
             .map_err(|_| StorageError::Unavailable)?;
-        if encode_failed {
+        if encode_failed && count == 0 {
             return Err(StorageError::BadRequest);
         }
         resp_buf[0..2].copy_from_slice(&count.to_le_bytes());

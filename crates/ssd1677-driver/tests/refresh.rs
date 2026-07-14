@@ -17,6 +17,11 @@ fn refresh_modes_emit_controls_and_track_power_state() {
             ControllerState::Powered,
         ),
         (
+            RefreshMode::Clean,
+            Command::UPDATE_CTRL_CLEAN,
+            ControllerState::PoweredDown,
+        ),
+        (
             RefreshMode::Grayscale,
             Command::UPDATE_CTRL_GRAYSCALE,
             ControllerState::Powered,
@@ -35,6 +40,22 @@ fn refresh_modes_emit_controls_and_track_power_state() {
             .any(|write| write.as_slice() == [Command::MASTER_ACTIVATION]));
         assert_eq!(driver.state(), state);
     }
+}
+
+#[test]
+fn clean_refresh_uses_the_x4_single_pass_temperature_and_update_sequence() {
+    let (mut driver, trace, _) = driver(4);
+    driver.trigger_refresh(RefreshMode::Clean).unwrap();
+
+    let writes = trace.0.borrow();
+    assert_eq!(
+        data_after(&writes, Command::TEMP_SENSOR_WRITE),
+        [Command::CLEAN_REFRESH_TEMPERATURE]
+    );
+    assert_eq!(
+        data_after(&writes, Command::DISPLAY_UPDATE_CTRL2),
+        [Command::UPDATE_CTRL_CLEAN]
+    );
 }
 
 #[test]

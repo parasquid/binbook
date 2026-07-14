@@ -10,13 +10,78 @@ use crate::{
     buffers::{first_input, first_row, RenderBuffers},
     page_source::{read_x4_page, required_plane},
     panel::{CustomLutCandidate, RefreshMode, X4Panel},
-    plane_write::{write_plane, write_plane_timed, PlaneWrite},
+    plane_write::{write_plane, write_plane_full_window_sync, write_plane_timed, PlaneWrite},
     render_timing::{
         elapsed_u32, NoopRenderTimingObserver, PlaneRole, RamTarget, RenderObservers,
         RenderStageStatus, RenderTimingObserver,
     },
     DisplayResult,
 };
+
+pub(crate) fn stage_fast_base_to_ram<R, SPI, DC, RST, BUSY>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    page: u32,
+    buffers: &mut RenderBuffers<'_>,
+    target: RamTarget,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+{
+    let page = read_x4_page(book, page)?;
+    write_plane_full_window_sync(
+        panel,
+        book,
+        required_plane(page.planes, PlaneSlot::FastBase)?,
+        first_input(buffers.compressed)?,
+        first_row(buffers.decoded)?,
+        target,
+    )
+}
+
+pub(crate) async fn write_fast_base_to_ram<R, SPI, DC, RST, BUSY, D>(
+    panel: &mut X4Panel<SPI, DC, RST, BUSY>,
+    book: &mut Book<R>,
+    page: u32,
+    buffers: &mut RenderBuffers<'_>,
+    target: RamTarget,
+    delay: &mut D,
+) -> DisplayResult<()>
+where
+    R: ReadAt,
+    SPI: SpiDevice<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    BUSY: InputPin,
+    D: DelayNs,
+{
+    let page = read_x4_page(book, page)?;
+    let mut epoch = || 0;
+    let completed = write_plane(
+        panel,
+        book,
+        required_plane(page.planes, PlaneSlot::FastBase)?,
+        PlaneWrite::new(
+            first_input(buffers.compressed)?,
+            first_row(buffers.decoded)?,
+            target,
+            0,
+            &mut epoch,
+            delay,
+        )
+        .full_window(),
+    )
+    .await?;
+    if completed {
+        Ok(())
+    } else {
+        Err(crate::DisplayError::InvalidState)
+    }
+}
 
 pub async fn sync_bw_base<R, SPI, DC, RST, BUSY, D, E>(
     panel: &mut X4Panel<SPI, DC, RST, BUSY>,

@@ -41,8 +41,21 @@ where
     }
 
     pub(crate) fn command(&mut self, command: u8) -> Result<(), Error> {
+        if self.state == ControllerState::DeepSleep {
+            return Err(Error::InvalidState);
+        }
+        self.command_unchecked(command)
+    }
+
+    fn command_unchecked(&mut self, command: u8) -> Result<(), Error> {
         self.dc.set_low().map_err(|_| Error::Gpio)?;
         self.spi.write(&[command]).map_err(|_| Error::Spi)
+    }
+
+    pub fn deep_sleep(&mut self) -> Result<(), Error> {
+        self.command_unchecked(Command::DEEP_SLEEP)?;
+        self.state = ControllerState::DeepSleep;
+        Ok(())
     }
 
     fn data(&mut self, data: &[u8]) -> Result<(), Error> {

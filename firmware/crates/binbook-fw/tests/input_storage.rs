@@ -13,21 +13,33 @@ fn decodes_adc_ladder_buttons() {
     assert_eq!(decode_buttons(751, 4095), Some(Button::Left));
     assert_eq!(decode_buttons(1750, 4095), Some(Button::Left));
     assert_eq!(decode_buttons(1751, 4095), Some(Button::Select));
-    assert_eq!(decode_buttons(2200, 4095), Some(Button::Select));
-    assert_eq!(decode_buttons(2800, 4095), Some(Button::Select));
     assert_eq!(decode_buttons(3000, 4095), Some(Button::Select));
     assert_eq!(decode_buttons(3001, 4095), Some(Button::Back));
-    assert_eq!(decode_buttons(3500, 4095), Some(Button::Back));
     assert_eq!(decode_buttons(3800, 4095), Some(Button::Back));
     assert_eq!(decode_buttons(3801, 4095), None);
     assert_eq!(decode_buttons(4095, 500), Some(Button::Down));
     assert_eq!(decode_buttons(4095, 750), Some(Button::Down));
     assert_eq!(decode_buttons(4095, 751), Some(Button::Up));
-    assert_eq!(decode_buttons(4095, 2200), Some(Button::Up));
-    assert_eq!(decode_buttons(4095, 2280), Some(Button::Up));
     assert_eq!(decode_buttons(4095, 2400), Some(Button::Up));
     assert_eq!(decode_buttons(4095, 2401), None);
     assert_eq!(decode_buttons(4095, 4095), None);
+}
+
+#[test]
+fn adc_ladder_boundaries_match_x4_reference() {
+    assert_eq!(decode_buttons(750, 4095), Some(Button::Right));
+    assert_eq!(decode_buttons(751, 4095), Some(Button::Left));
+    assert_eq!(decode_buttons(1750, 4095), Some(Button::Left));
+    assert_eq!(decode_buttons(1751, 4095), Some(Button::Select));
+    assert_eq!(decode_buttons(3000, 4095), Some(Button::Select));
+    assert_eq!(decode_buttons(3001, 4095), Some(Button::Back));
+    assert_eq!(decode_buttons(3800, 4095), Some(Button::Back));
+    assert_eq!(decode_buttons(3801, 4095), None);
+
+    assert_eq!(decode_buttons(4095, 750), Some(Button::Down));
+    assert_eq!(decode_buttons(4095, 751), Some(Button::Up));
+    assert_eq!(decode_buttons(4095, 2400), Some(Button::Up));
+    assert_eq!(decode_buttons(4095, 2401), None);
 }
 
 #[test]
