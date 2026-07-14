@@ -350,18 +350,18 @@ All buffers are statically allocated. No `alloc` dependency in firmware crates. 
 - [ ] Grayscale refresh mode
 
 ### v1.2 — UI Shell
-- [ ] File picker (list books, select to read)
-- [ ] BACK button: return to picker
-- [ ] SELECT button: confirm selection
+- SD-backed five-row library with bounded filename listing and selection
+- BACK/SELECT return from reading to the rescanned library
+- SELECT opens the exact selected BinBook
 - [ ] Chapter navigation
 
 ### v1.3 — Storage Expansion
-- [ ] SD card support (FAT32)
+- FAT SD storage with shared reader/diagnostic access
 - [ ] Move books between flash and SD
 
 ### v1.4 — Power Management
-- [ ] Deep sleep on POWER long-press
-- [ ] Wake on POWER button
+- Two-second POWER hold prepares SSD1677 and ESP32-C3 deep sleep
+- POWER/GPIO3 is the active-low wake source
 - [ ] Battery level display
 
 ### v1.5 — Performance

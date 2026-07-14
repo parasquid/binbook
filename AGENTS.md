@@ -220,6 +220,28 @@ Required hardware verification steps for firmware tasks:
 
 **Do not claim firmware work is complete without hardware evidence.** Host tests and builds are necessary but not sufficient.
 
+### E-Ink Refresh Discipline
+
+- Avoid full-screen/full-waveform refreshes whenever the panel's known prior
+  state permits a differential or bounded partial refresh.
+- Treat visible response time as part of correctness for interactive firmware:
+  menu navigation, menu-to-book, book-to-menu, and ordinary page turns must use
+  the fastest verified refresh path that preserves legibility and panel state.
+- Do not call a helper that hard-codes a full refresh from a routine UX path
+  without documenting why a partial/differential update is unsafe there.
+- Keep enough explicit display state to generate correct previous and target
+  planes; do not choose a full refresh merely to avoid tracking that state.
+- Firmware must not schedule an automatic full refresh, including for routine
+  cleanup, reset/wake, or recovery from unknown panel state. A visible full
+  refresh requires an explicit user request, currently two short POWER taps
+  whose releases are at most 500 ms apart. Recovery must use a verified
+  non-full-refresh path or leave the persisted image visible until the user
+  requests cleanup.
+- Verify refresh-policy changes on live hardware. Record activation latency,
+  affected region, ghosting/stale-pixel observations, cleanup cadence, and the
+  starting/ending panel state; compilation or framebuffer tests alone are not
+  sufficient.
+
 ### Display Test Image Discipline
 
 Use a persistent orientation frame on every firmware display-test page so
@@ -247,6 +269,15 @@ content changes.
 ### Plan Writing Conventions
 
 - Write plans assuming the executing agent starts cold with no prior conversation context. Include all necessary file paths, commands, and constraints explicitly.
+- Before adding any task or completion gate, verify that the requirement is
+  valid for the actual hardware and architecture and state exactly what the
+  proposed test can distinguish. Identify the observable signal, the component
+  that produces it, and the evidence that would prove the intended behavior.
+  Do not require physical manipulation when the hardware has no sensor or
+  distinct runtime signal for that condition; test the software contract at
+  the boundary where it is observable and classify physical exercises as
+  optional board qualification when that is all they prove. Do not use a test
+  of one failure mechanism as evidence for a broader class of failures.
 - Emphasize test-driven development: each task should begin with a failing test, followed by the minimal implementation to pass it.
 - Require relevant tests to pass after each task before moving to the next. If a task leaves tests failing, the plan is incomplete.
 - Make hardware verification an explicit completion gate for firmware tasks. Include the exact flashing/serial commands needed to confirm behavior on real hardware, and do not mark firmware work complete without evidence from a live device run. See "Hardware Verification Discipline" for mandatory requirements.
@@ -269,6 +300,34 @@ content changes.
 - Prefer caller-owned buffers, streaming/file-backed staging, borrowed views, and in-place construction over fixed temporary arrays or by-value transfers.
 - Keep fixed buffers only when they represent intentional persistent state or bounded hardware contracts.
 - When diagnosing failures, test whether a buffer or FFI boundary materializes hidden temporaries before increasing stack/heap. Larger stacks are diagnostic data, not the default fix.
+
+## RAM-Staged Persistence
+
+For latency-sensitive firmware paths, treat bounded RAM state as the immediate
+working copy and persist it asynchronously when durability is not required
+before responding to the user.
+
+- Apply user-visible state changes in RAM first and mark the state dirty.
+- Keep SD-card scans, metadata enrichment, serialization, and ordinary state
+  writes out of the interaction-critical path.
+- Flush dirty state during idle time using a bounded debounce interval. New
+  interaction may postpone nonessential writes.
+- Retry failed background writes without discarding the dirty RAM state.
+- Define explicit durability barriers, such as deep sleep, shutdown, media
+  removal, export, or a user-requested save, and synchronously write and verify
+  state before crossing them.
+- Use atomic or recoverable on-storage formats, such as CRC-protected A/B slots,
+  so interrupted background writes preserve the previous committed state.
+- Make the possible data-loss window explicit: unexpected power loss may lose
+  changes since the last successful flush, but must not corrupt previously
+  committed state.
+- Keep staging memory bounded and measured. Reuse existing authoritative RAM
+  objects where possible; do not allocate duplicate full-state or framebuffer
+  caches merely to defer persistence.
+- Background work must yield to foreground input and display operations and
+  must not monopolize the storage owner, SPI bus, or executor.
+- Instrument dirty age, flush duration, retries, and failures so asynchronous
+  persistence can be verified rather than inferred.
 
 ## Debug Instrumentation
 

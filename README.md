@@ -66,6 +66,8 @@ Firmware uses the pinned nightly command documented in `AGENTS.md`. Live-device 
 ## Documentation
 
 - [Format specification](BINBOOK_FORMAT_SPEC.md)
+- [X4 e-reader library, cache, reading, refresh, state, and power design](docs/specs/2026-07-01-library-menu-reading-flow-design.md)
+- [X4 e-reader POC implementation plan](docs/plans/2026-07-13-binbook-ereader-poc-plan.md)
 - [Rust crate architecture](docs/reference/rust-crate-architecture.md)
 - [Compiler roadmap](docs/reference/compiler-roadmap.md)
 - [Firmware flashing](docs/reference/xteink-x4-firmware-flashing.md)

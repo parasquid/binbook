@@ -266,8 +266,16 @@ The names below are current working labels and may change.
 | Baseline staged gray | `STAGED_GRAY_LUT` | `0x8f` | Verified normal staged-gray refinement baseline. |
 | Diagnostic fast probe | `FastA` | `0x6f` | Measured about `70 ms` in prior probe/preview runs; visually ghosted but better than `FastB`. |
 | Diagnostic fast probe | `FastB` | `0x4f` | Measured about `95 ms`; visually worse ghosting in prior runs. |
-| Accepted Fast preview | `PreviewFastV1` | `0x7f` | Current Fast-mode preview recipe; latest live run measured preview BUSY about `63 ms`. |
-| Accepted Fast cleanup | `CleanupStrongV1` | `0xbf` | Current Fast-mode cleanup recipe after preview; latest live run measured cleanup BUSY about `106 ms`. |
+| Accepted Fast preview | `PreviewFastV1` | `0x7f` | Current Fast-mode and menu-transition preview recipe; latest isolated live run measured preview BUSY about `63 ms`. |
+| Accepted Fast cleanup | `CleanupStrongV1` | `0xbf` | Current cleanup immediately after Fast/menu preview; latest isolated live run measured cleanup BUSY about `106 ms`. |
 
 Always check `crates/xteink-x4-display/src/panel.rs` for the authoritative
 current bytes before quoting a candidate value.
+
+For the mounted reader, `activate_fast_differential` applies these two accepted
+waveforms to already-staged full previous/target planes. Phase-level live runs
+measure their combined activation at approximately `184 ms`; menu navigation,
+menu-to-book, and book-to-menu use that recipe. Routine page turns retain their
+separate balanced/deferred-gray policy. The combined `DisplayRequestEnd` time
+must not be reported as LUT/BUSY time because it also includes storage,
+decompression, plane writes, composition, and sometimes verified state save.

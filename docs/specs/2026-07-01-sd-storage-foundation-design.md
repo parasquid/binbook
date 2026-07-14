@@ -56,14 +56,15 @@ is owned by the firmware app's board module, not by the storage crate.
 - Make all FAT/enumeration/ReadAt logic unit-testable on host without hardware,
   via a mock block device and a mock `Filesystem` trait.
 
-## Non-goals (deferred)
+## Foundation scope boundary
 
-- Writing to the card, upload/list/delete over serial, and any host CLI — these
-  are Sub-project **B**. A delivers read + enumerate only.
-- The library menu, reading-flow integration, and resume state — Sub-project **C**.
+- Writing to the card, upload/list/delete over serial, and the host CLI are
+  implemented by the diagnostic storage layer rather than this foundation.
+- The library menu, reading-flow integration, and reader state are implemented
+  in `binbook-fw` rather than this foundation.
 - A second storage backend on internal flash (LittleFS) — roadmap item, not built
   here. The backend-agnostic trait below anticipates it.
-- "No card inserted" / "empty card" *display* behavior — Sub-project **C**.
+- "No card inserted" / "empty card" display behavior belongs to `binbook-fw`.
 
 ## Crate architecture
 
@@ -155,9 +156,9 @@ Wires the `board` shared bus → `embedded-sd-storage` → `binbook-storage` →
 - **Crate split:** generic `embedded-sd-storage` (SD+FAT) separated from
   binbook-specific `binbook-storage` (enumeration + `ReadAt`), per the explicit
   requirement that storage be reusable by any firmware code, not BinBook-coupled.
-- **`nav_probe.binbook`** remains embedded via `include_bytes!` as a fallback for
-  now; whether to drop it is decided in Sub-project C (the embedded-fallback menu
-  entry).
+- **`nav_probe.binbook`** remains embedded only for diagnostic builds without
+  `sd-storage`. Normal and diagnostic+SD reader builds never insert it into the
+  library or use it as a no-card fallback.
 
 ## Data flow (reading a page off SD)
 

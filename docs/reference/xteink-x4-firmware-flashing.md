@@ -6,7 +6,8 @@ This document records the working flash path for the BinBook bare-metal Rust fir
 
 - Target board: Xteink X4, ESP32-C3 over USB JTAG serial.
 - Firmware artifact: repository-root `target/riscv32imc-unknown-none-elf/release/binbook-fw`.
-- Current firmware behavior: 16-page labeled navigation probe with directional button and diagnostic KEY page turns.
+- Current firmware behavior: SD-backed library/reader with per-book resume and
+  physical deep sleep. The compiled navigation probe is diagnostic-only.
 - Flash tool: `espflash 4.4.0`.
 
 SquidScript's command:
@@ -47,7 +48,29 @@ From the repo root:
 firmware/scripts/flash-xteink-x4-nav-probe.sh
 ```
 
-Use the wrapper above for navigation-probe firmware flashing. Do not use an arbitrary `cargo build --target riscv32imc-unknown-none-elf` from `PATH`; if `cargo` and `rustc` resolve from different toolchain managers, the build can fail with a missing `core` crate or reject nightly-only flags even when the target is installed. The wrapper pins rustup's nightly `cargo` and `rustc`.
+The historically named wrapper is the canonical firmware flash entrypoint. Set
+`FW_FEATURES` for the desired runtime. Do not use an arbitrary `cargo build
+--target riscv32imc-unknown-none-elf` from `PATH`; the wrapper pins rustup's
+nightly `cargo` and `rustc`.
+
+Normal SD reader:
+
+```bash
+FW_FEATURES="firmware-bin,sd-storage" \
+  firmware/scripts/flash-xteink-x4-nav-probe.sh
+```
+
+The `sd-storage` feature selects the mounted storage-owner reader. It is the
+normal bounded cursor/session implementation; `mounted-storage-owner` remains
+only as a compatibility feature name for older local scripts and need not be
+listed separately.
+
+SD reader with packet diagnostics for acceptance testing:
+
+```bash
+FW_FEATURES="firmware-bin,diagnostic-console,sd-storage" \
+  firmware/scripts/flash-xteink-x4-nav-probe.sh
+```
 
 Equivalent explicit command:
 
@@ -72,6 +95,31 @@ ${ESPFLASH:-${HOME}/.cargo/bin/espflash} flash \
 ```
 
 Do not pass `--monitor` to the flash command. Let flashing and USB re-enumeration finish, then capture debug text with the pyserial command in `AGENTS.md` or use the diagnostic CLI for packet firmware; headless `espflash monitor` cannot initialize its input reader on this host.
+
+## SD reader controls
+
+In the library, Up/Left select the previous filename, Down/Right select the
+next filename, and Select opens the highlighted book. The five visible rows are
+backed by a validated file cursor and bounded prefetch; entering the menu does
+not synchronously enumerate the entire directory.
+
+While reading, Up/Left move to the previous page, Down/Right move to the next
+page, and either Back or Select closes the book and returns to the preserved
+library selection. Reopening restores that book's last successfully displayed
+page. A failed open shows `CANNOT OPEN BOOK`; Select retries and Back returns to
+the library.
+
+POWER is separate from the ADC navigation ladder. One short press is a no-op,
+two short taps whose releases are at most 500 ms apart request the only normal
+full-waveform cleanup, and one continuous two-second hold requests state save,
+panel deep sleep, and ESP32-C3 deep sleep. The initiating hold must be released
+before CPU sleep; the next POWER press wakes the device through GPIO3. Do not
+interpret diagnostic KEY POWER injection as physical sleep/wake evidence.
+
+With packet diagnostics enabled, KEY events enter the same mode-aware request
+queue as navigation input. PAGE first/last/goto directly exercise exact-page
+rendering in an open SD book and must be followed by STATUS and visible panel
+verification; an acknowledgement alone is not evidence of a committed page.
 
 ## Firmware requirements for `espflash`
 
@@ -111,9 +159,12 @@ The previous smoke-test display behavior was a clear screen followed by four fil
 
 The smoke firmware first cleared both SSD1677 RAM planes to white and performed a full refresh. It then wrote four 128×96 black windows using SSD1677 window writes and performed another full refresh. That milestone focused on reset, init, RAM-window writes, coordinate coverage, and full refresh.
 
-## Current navigation probe
+## Diagnostic navigation probe
 
-The current `binbook-fw` binary initializes the SSD1677 grayscale path, opens `firmware/crates/binbook-fw/fixtures/nav_probe.binbook` via `include_bytes!`, and renders page 0. The fixture contains 16 labeled `GRAY2_PACKED` pages stored at `800x480` with RLE PackBits compression.
+When built with `diagnostic-console` and without `sd-storage`, `binbook-fw`
+opens `firmware/crates/binbook-fw/fixtures/nav_probe.binbook` via
+`include_bytes!`. Normal and diagnostic+SD builds instead scan `/BOOKS` and
+open the selected SD file.
 
 Every page retains the orientation/calibration frame and a large `PAGE NN` label. Distinct checker, stripe, text, diagonal, crosshatch, rectangle, bar, quadrant, dot, and asymmetric X patterns identify individual pages.
 

@@ -5,6 +5,15 @@ The authoritative BinBook 0.1 candidate file-format specification lives at
 
 ## Current Reference
 
+Use this ownership map when changing the reader. Record durable product and
+architecture decisions in the reader design, executable cold-start task order
+and acceptance criteria in the POC plan, reusable Rust constraints in the Rust
+standards, and live machine/device state only in the gitignored `HANDOFF.md`.
+Do not use `HANDOFF.md` or a dated precursor plan as the sole record of a
+technical decision.
+
+- [`specs/2026-07-01-library-menu-reading-flow-design.md`](specs/2026-07-01-library-menu-reading-flow-design.md) - current X4 e-reader decisions for library indexing, bounded caching/cursors, background refresh, reading, progress, display refresh, sleep/wake, and module ownership.
+- [`plans/2026-07-13-binbook-ereader-poc-plan.md`](plans/2026-07-13-binbook-ereader-poc-plan.md) - cold-start implementation order and evidence gates for completing that reader foundation.
 - [`reference/rust-development-standards.md`](reference/rust-development-standards.md) - operational Rust and firmware standards for crate placement, APIs, constrained memory, testing, hardware evidence, and completion review.
 - [`reference/rust-crate-architecture.md`](reference/rust-crate-architecture.md) - implemented Rust workspace boundaries, external-consumer dependencies, buffer contracts, and quality gates.
 - [`reference/xteink-x4-firmware-flashing.md`](reference/xteink-x4-firmware-flashing.md) - pinned X4 firmware build and flashing procedure.
@@ -15,7 +24,12 @@ The authoritative BinBook 0.1 candidate file-format specification lives at
 
 ## Dated Plans And Specs
 
-Files under [`plans/`](plans/) and dated files under [`specs/`](specs/) are implementation records. They can mention old crate paths, old protocol versions, temporary artifact paths, or tasks that have since completed. Prefer the current reference docs, the root format spec, and [`ROADMAP.md`](ROADMAP.md) for present-state behavior.
+Unless explicitly listed under Current Reference above, files under
+[`plans/`](plans/) and dated files under [`specs/`](specs/) are implementation
+records. They can mention old crate paths, old protocol versions, temporary
+artifact paths, or tasks that have since completed. Prefer the documents named
+under Current Reference, the root format spec, and [`ROADMAP.md`](ROADMAP.md)
+for present-state behavior.
 
 ## Historical POC Material
 

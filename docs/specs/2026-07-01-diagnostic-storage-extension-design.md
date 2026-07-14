@@ -1,10 +1,8 @@
 # Diagnostic Storage Extension Design
 
-Status: Partially implemented. Diagnostic protocol v2, storage opcodes, CLI
-commands, and firmware dispatch seams exist. The current diagnostic firmware
-still wires `UnavailableStorage` unless a real storage backend is integrated, so
-live storage CRUD remains backend-dependent rather than generally available.
-The LittleFS internal-flash backend remains roadmap work.
+Status: Implemented for the SD backend when firmware is built with
+`diagnostic-console,sd-storage`. The LittleFS internal-flash backend remains
+roadmap work.
 
 Correction note: the upload design writes directly to the final filename and
 guarantees integrity via CRC32 verification at commit plus `binbook-storage`
@@ -57,13 +55,35 @@ Current code has protocol version 2, larger frames, storage opcodes,
 - Provide a host CLI (`binbook diag storage ...`) that drives the whole CRUD path
   and produces independent verification evidence.
 
-## Non-goals (deferred)
+## Diagnostic-storage scope boundary
 
 - The internal-flash (LittleFS) backend itself — **roadmap item** (see end of
   doc). B reserves the `backend` selector and implements `sd` only.
-- The library menu and reading flow — Sub-project **C**.
-- "Book is open in the reader" vs delete — there is no reader yet in B; the
-  reader (C) will close-before-delete. B defines no open-book concept.
+- The library menu and reading flow are implemented by the reader runtime, not
+  by diagnostic storage.
+- Diagnostic storage defines no open-book ownership concept. The reader drops
+  its active `Book` before rescanning the library on close.
+
+## Current owner-backed implementation
+
+The reader, state store, library refresh, and diagnostic console all submit
+typed requests to the single mounted FAT owner. Diagnostic commands must not
+mount, enumerate, or borrow the filesystem independently.
+
+- `StoreList` pages through the validated `BINBOOK.LIBRARY.INDEX`; it does not
+  start a competing directory scan. The CLI advances a `start_index` cursor
+  until the device returns an empty page.
+- List records preserve portable names up to 121 bytes. `page_count` is zero
+  because the persistent index does not store BinBook page metadata.
+- `StoreRead` uses bounded owner reads and the CLI iterates to EOF.
+- Upload begin/write/commit uses exact ascending offsets, size checking, and
+  whole-file CRC32. `storage begin` and `storage abort` expose cleanup of an
+  incomplete upload for diagnostics.
+- Successful commit, delete, or re-add schedules a cooperative background
+  library refresh. The last valid index remains visible until replacement scan
+  and save finish.
+- An in-scan owner failure is cancelled before another refresh begins so a
+  stale scan token cannot make every later `ScanStart` return busy.
 
 ## Protocol changes (`binbook-diagnostic-protocol`)
 
@@ -111,8 +131,8 @@ acks), which composes cleanly with the stateless model.
    place — but it is **invisible to `StoreList`** because `binbook-storage`'s
    enumeration validates every file via `Book::open` (a truncated/corrupt file
    fails to open and is skipped). The host may then `StoreDelete` it or re-upload.
-4. `StoreAbort { backend, name }` (optional) → delete the file and drop the cached
-   handle.
+4. `StoreAbort { upload_id }` → delete the incomplete file and drop the owner
+   upload session.
 
 A per-frame CRC already protects transport; the final whole-file CRC32 is the
 application-level integrity check, and `StoreRead` back to the host is the
@@ -132,7 +152,7 @@ during validation. Full `BookMetadata` (title/author) is a deeper read and is
 - **Layout:** BinBook files live in a **`/books/`** subdirectory on the FAT
   volume — keeps the card clean when mounted on a PC. (Root is not used.)
 - **Filename rules:** enforce `.binbook` extension; long filenames (LFN) enabled;
-  ≤ 64 characters; reject path separators (flat `/books/` only); UTF-8.
+  at most 121 UTF-8 bytes; reject path separators (flat `/books/` only).
 
 ## `StoreDelete`
 
@@ -151,21 +171,19 @@ confirm it is byte-identical to the source — the completion-evidence backbone.
 New noun-based subcommand under the existing `diag` command:
 
 ```
-binbook diag storage --device {sd|flash} {upload,list,delete,read} ...
+binbook diag storage {upload,list,delete,read,begin,abort} ...
 ```
 
-`--device` **defaults to `sd`**. `upload <path>` reads a local `.binbook` and
+The current CLI targets SD. `upload <path>` reads a local `.binbook` and
 pushes it (pipelined, ascending offsets); `list` prints entries; `delete <name>`
 removes; `read <name>` fetches bytes (used by the verification harness). The CLI
 reads `max_frame_bytes` from `Hello` and adapts chunk sizing.
 
 ## Crate wiring (`binbook-fw`)
 
-`diag::dispatch_command` gains new `DispatchResult` variants that route storage
-opcodes to `binbook-storage` / `embedded-sd-storage` over the `binbook-fw` shared
-bus (gated). The diagnostic task is the sole SD accessor in B (C's reader will
-share the same arbiter). One cached write-handle per active upload name; released
-on commit/abort.
+The async diagnostic runtime routes decoded storage frames through the mounted
+storage-owner request channel. The owner is the sole FAT and block-device
+accessor. One write session may be active; commit or abort releases it.
 
 ## Concurrency / bus
 

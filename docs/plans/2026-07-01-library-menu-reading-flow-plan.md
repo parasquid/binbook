@@ -1,5 +1,10 @@
 # Library Menu and Reading Flow (Sub-project C) Implementation Plan
 
+> Superseded by
+> [`2026-07-13-binbook-ereader-poc-plan.md`](2026-07-13-binbook-ereader-poc-plan.md).
+> Do not execute this plan: its embedded fallback and internal-flash resume
+> assumptions are no longer valid.
+
 > **Location note:** Authored under `.omo/plans/` (planning agent sandbox). Belongs
 > at `docs/plans/2026-07-01-library-menu-reading-flow-plan.md`. Move before execution.
 

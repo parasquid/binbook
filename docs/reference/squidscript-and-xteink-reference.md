@@ -162,11 +162,11 @@ BinBook stores canonical values. Firmware converts to native at display time.
 
 | Button | Pin | Type | ADC Range |
 |--------|-----|------|-----------|
-| BACK | GPIO1 | ADC ladder | > 2200–2500 |
-| SELECT | GPIO1 | ADC ladder | > 1600–2200 |
-| LEFT | GPIO1 | ADC ladder | > 750–1600 |
+| BACK | GPIO1 | ADC ladder | > 3000–3800 |
+| SELECT | GPIO1 | ADC ladder | > 1750–3000 |
+| LEFT | GPIO1 | ADC ladder | > 750–1750 |
 | RIGHT | GPIO1 | ADC ladder | ≤ 750 |
-| UP | GPIO2 | ADC ladder | > 750–2200 |
+| UP | GPIO2 | ADC ladder | > 750–2400 |
 | DOWN | GPIO2 | ADC ladder | ≤ 750 |
 | POWER | GPIO3 | GPIO input | Pull-up, active-low, wake-capable |
 
@@ -180,18 +180,18 @@ Each ADC channel is decoded independently. The ladder is active-low: idle reads 
 ```c
 // GPIO1: RIGHT/LEFT/SELECT/BACK
 if (raw <= 750)   → RIGHT
-if (raw <= 1600)  → LEFT
-if (raw <= 2200)  → SELECT
-if (raw <= 2500)  → BACK
+if (raw <= 1750)  → LEFT
+if (raw <= 3000)  → SELECT
+if (raw <= 3800)  → BACK
 else              → NONE (idle)
 
 // GPIO2: DOWN/UP
 if (raw <= 750)   → DOWN
-if (raw <= 2200)  → UP
+if (raw <= 2400)  → UP
 else              → NONE (idle)
 ```
 
-The two channels are combined with `ch1_button.or(ch2_button)` — ch1 takes priority when both are active (should not happen in normal use). A raw value above 2500 on ch1 or above 2200 on ch2 means no button is pressed on that channel.
+The two channels are combined with `ch1_button.or(ch2_button)` — ch1 takes priority when both are active (should not happen in normal use). A raw value above 3800 on ch1 or above 2400 on ch2 means no button is pressed on that channel.
 
 **Critical gotcha**: the idle state reads `ch1=4095, ch2=4095`. Using `>` thresholds (e.g. `ch1 > 2200 → Back`) instead of `<=` thresholds incorrectly decodes the idle state as a button press.
 

@@ -1,187 +1,306 @@
 # Library Menu and Reading Flow Design
 
-> **Location note:** Authored under `.omo/specs/` (planning agent sandbox).
-> Belongs at `docs/specs/2026-07-01-library-menu-reading-flow-design.md`.
-> Move before implementation.
-
 ## Status and authority
 
-This is an approved design for Sub-project **C** of the SD-card library feature
-(**A** SD storage foundation → **B** diagnostic storage extension → **C** library
-menu + reading flow). C delivers the visible e-ink library menu (browse with
-up/down, select to open, back to return) and the menu↔reading state machine,
-reading BinBook files off the SD card delivered by A.
+This document describes the current Xteink X4 e-reader foundation. The BinBook
+wire format remains authoritative in `BINBOOK_FORMAT_SPEC.md`; this feature adds
+firmware state files but no BinBook sections.
 
-`BINBOOK_FORMAT_SPEC.md` is authoritative for BinBook bytes and the X4 GRAY2
-canonical values. `docs/reference/squidscript-and-xteink-reference.md` is
-authoritative for X4 display/buttons/pins. C adds no BinBook format sections.
+This is the durable technical-decision record for the reader UX foundation.
+Contributors should use it for product behavior, storage/cache policy, memory
+bounds, refresh policy, state durability, power behavior, and module ownership.
+The executable task order and acceptance procedure live in
+`docs/plans/2026-07-13-binbook-ereader-poc-plan.md`. Current machine/device
+state and live evidence live only in the gitignored `HANDOFF.md`.
 
-Build order is **A → B → C**. C depends on A (SD-backed `ReadAt`) and benefits
-from B (a populated card for testing).
+## Decision summary
 
-## Capability gap (confirmed during design)
+| Concern | Decision | Reason |
+| --- | --- | --- |
+| Library authority | Persist a sorted binary index on the SD card and replace it only after a complete successful scan. | Menu entry must not wait for a fresh directory scan, while failed scans must retain a usable library. |
+| Menu memory | Keep a validated file-backed cursor and at most 15 records in the RAM viewport. | The menu must support 200 books without materializing 200 filenames at entry. |
+| Open acceleration | Prefetch at most 15 mount-generation-scoped FAT sessions for exact viewport names. | Selected-book open must avoid a directory rescan without paying for a 200-session RAM cache. |
+| Refresh timing | Display the cached viewport first and update the index cooperatively in the background. | Directory freshness must not be on the menu/open/back interaction path. |
+| Cache durability | Treat the cursor, viewport, and FAT sessions as volatile; reconstruct them after reset/deep sleep from the SD index. | ESP32-C3 deep sleep does not preserve the working RAM cache reliably enough to make it persistent state. |
+| Reading progress | Persist per-filename and per-rendition progress in CRC-protected A/B binary state slots. | Books resume independently and replacement content cannot inherit an invalid page. |
+| Visible transitions | Use the accepted fast preview/cleanup differential recipe for menu navigation and menu↔book, retain the balanced page-turn policy, and reserve full refresh for a POWER double-tap. | Phase-level hardware evidence separates panel activation from SD, plane staging, composition, and state persistence instead of attributing the whole request to e-ink. |
+| Storage concurrency | Give one task exclusive ownership of mounted FAT and expose bounded typed requests. | Multiple FAT owners are unsafe, while long synchronous scans block the single-core executor. |
 
-The firmware today has **no runtime graphics or text rendering**. Every
-`render_*` / `fill_*` function in `xteink-x4-display` is a page-pixel streamer
-that reads pre-rasterized BinBook pixels and pushes them to the SSD1677. There is
-no `embedded-graphics` dependency, no font, no glyph, and no rectangle/text
-drawing anywhere in the firmware. **C therefore includes adding a runtime
-graphics + text-rendering stack**, plus a mode state machine, plus refresh-mode
-integration. This makes C the largest of the three sub-projects.
+## Library behavior
 
-## Goals
+- Normal firmware enumerates `.binbook` files in `/BOOKS` on the SD card. The
+  embedded navigation probe is available only in diagnostic builds without SD
+  storage and is never presented as a normal library entry.
+- The library supports at most 200 files and filenames up to
+  `binbook_storage::MAX_BINBOOK_NAME_BYTES` (121 UTF-8 bytes). Exceeding either
+  bound produces an explicit screen rather than a partial list.
+- Filenames are ordered by ASCII case-folded bytes with original UTF-8 bytes as
+  the deterministic tie-breaker. Non-ASCII bytes are not case-folded.
+- The five-row viewport wraps at the ends and preserves its selected filename
+  when returning from a book. Rows show filenames; metadata and covers remain
+  future UX work.
+- `No SD card`, `SD card error`, `No BinBooks`, too-many-books, and unsupported
+  filename states are visible and recoverable. Select retries a failed scan.
+- The X4 has no SD card-detect input. `No SD card` is therefore the software
+  classification of an SD protocol `CardNotFound` result, not a physical
+  insertion signal. Other SD device and FAT failures classify as `SD card
+  error`. Failed scans retain the last valid index and never prune progress.
+  Physical removal is optional board qualification, not proof of this complete
+  error-classification contract; hot removal while reading is out of scope.
 
-- Draw a library menu on the e-ink display: a 5-row viewport of `.binbook` files
-  with a clear highlight on the selected row.
-- Navigate with up/down (wrap-around), open the selected book with select, and
-  return from reading to the menu with select/back.
-- Reuse the existing staged GRAY2 refresh pipeline (BW base → gray differential
-  after idle) for the menu, with an interruptible gray settle so navigation feels
-  snappy.
-- Read selected books off the SD card (via A's `ReadAt`) through the existing
-  page-rendering pipeline, unchanged.
-- Always boot to something readable: fall back to the embedded `nav_probe.binbook`
-  when no SD card or an empty `/books/` is present.
-- Remember and resume the last book/page/menu position across power cycles.
+## Library index, cursor, and cache architecture
 
-## Non-goals (deferred)
+The production design does not materialize all 200 filenames when the menu is
+entered. It separates three concerns that must not be collapsed into one large
+RAM cache:
 
-- Title/author rows, covers, and rich metadata in the menu — v1 shows filename +
-  page count (matches B's cheap `StoreList`). Titles can be added later via an
-  on-demand `BookMetadata` fetch.
-- A separate fast 1bpp refresh path — deliberately rejected in favor of reusing
-  the staged GRAY2 pipeline (see Refresh model).
-- Settings, table-of-contents, search, and any menu beyond the library list.
-- The internal-flash (LittleFS) backend — roadmap (see B spec).
+1. A persistent, sorted `/BINBOOK/BINBOOK.LIBRARY.INDEX` is the card-local
+   source for menu ordering. Its binary format has a 16-byte CRC-protected header followed
+   by fixed 139-byte records. Records contain the complete filename, size, and
+   filename hash. Mounted FAT handles and other process-local lookup tokens are
+   never persisted.
+2. A validated file-backed `LibraryIndexCursor` provides random record access.
+   Firmware streams the complete index through CRC and structural validation
+   before publishing it, then retains only a 15-entry `LibraryViewport`: five
+   visible rows plus bounded look-ahead/look-behind prefetch. The measured
+   viewport object is 2,432 bytes; menu RAM is therefore independent of the
+   total book count.
+3. A small bounded mounted-file-session prefetch/LRU accelerates opening the
+   selected and nearby records. Sessions are scoped to the current mount and
+   scan generation and are invalid after cancellation or replacement. Tokens
+   remain reusable for that generation: when the active book changes, its file
+   session returns to its indexed viewport slot instead of being discarded.
+   They are an optimization only; persistent identity remains the filename and
+   hashes in the index.
 
-## Graphics foundation
+The persistent cache is therefore the SD-card index, not a 200-book RAM data
+structure. The cursor, 15-record viewport, and mounted sessions are working RAM
+only. Deep sleep/reset discards them; wake remounts the card, validates the
+index, reconstructs the viewport, and schedules a cooperative refresh.
 
-- **`embedded-graphics` `DrawTarget` in `xteink-x4-display`**, backed by a **GRAY2
-  framebuffer** (480×800 ÷ 4 bits/pixel = **96 KB**; acceptable on ESP32-C3).
-  Use `embedded-graphics` primitives (rectangles, fill/stroke) and a compiled
-  bitmap font (e.g. `profont`) for menu text. This `DrawTarget` seam is reusable
-  by SquidScript's `display.rect`/`text` API.
-- The framebuffer is treated as a **content source** for the existing staged
-  refresh pipeline (the same row-fill path the BinBook page renderer uses), so
-  menu frames refresh with identical mechanics to book pages.
-- Reading is **unchanged**: BinBook pages still stream GRAY2 directly from the
-  card via A's `ReadAt`; no framebuffer is allocated for reading.
+The owner-path prototype proved the lookup optimization: retaining sessions for
+all 200 books cost 17,312 bytes, and an earlier active-plus-pending version cost
+33,312 bytes. A live 29-book run reduced selected-book descriptor lookup from
+4,541 ms without a session to 205 ms with a cached session. Both large caches
+have now been replaced by an explicit 15-name/15-session prefetch backend that
+measures 4,560 bytes. Only names supplied from the sorted viewport receive
+generation-scoped tokens; unrelated scan records remain indexable but do not
+consume session RAM. The mounted refresh path submits the viewport names before
+scanning. A physical A -> B -> A run measured metadata lookup at 206 ms, 205 ms,
+and 206 ms respectively, with total opens of 1,139 ms, 1,140 ms, and 1,139 ms.
+Before reusable session recycling, the final A metadata lookup fell back to
+4,252 ms.
 
-## Mode state machine (`Menu ↔ Reading`)
+FAT provides no notification when a book is added or removed. The storage
+owner therefore performs a cooperative scan at boot and opportunistically
+after return-to-menu or during idle time. It processes at most eight raw
+directory entries per step and yields between steps. A scan constructs a
+replacement index and session generation off to the side; only a complete,
+valid result may be published. Failure or cancellation retains the last valid
+index and must not prune progress. Deterministic case-folded ordering must be
+built with file-backed replacement records and bounded sort metadata/record
+offsets, not a second full resident filename collection.
 
-- The mode + menu state live in **`display_task`** (which already owns the engine
-  and page state), keeping all rendering logic in one place.
-- Input is delivered as button **intents** rather than page-oriented requests.
-  `displayRequest` is extended with menu intents
-  (`MenuNext`/`MenuPrev`/`MenuSelect`/`MenuBack`/`MenuRender`). The exact split
-  of translation responsibility (input task emits intents vs. forwards raw
-  `Button` events for `display_task` to translate) is a plan detail — see open
-  questions. Either way, `display_task` interprets intents per the current mode:
-  - **Menu:** up/down → move selection (and scroll the viewport at the ends);
-    select → open the selected book (load via A, switch to Reading); back →
-    no-op at the top level (POWER owns sleep via its 2s hold).
-  - **Reading:** up/down/left/right → page turns through the existing engine;
-    select/back → return to the menu (close book, persist resume state).
-- The diagnostic `Key`/`Page` opcodes continue to coexist by injecting the same
-  intents (diagnostic-driven navigation still works in both modes).
+Select must never synchronously rescan `/BOOKS`. It normally opens the exact
+selected record through an already-prefetched session. If that token is absent,
+the owner performs a foreground exact-file lookup without running a directory
+scan; the menu remains the persisted panel image until open succeeds or the
+recoverable error screen is rendered. Book-to-menu likewise paints from the
+validated index viewport immediately; any refresh scan continues afterward.
 
-## Menu rendering
+The cursor, viewport loader, mount-generation tokens, bounded session storage,
+and full-session-cache performance probe are implemented and host-tested. The
+normal `sd-storage` build has an interactive menu, bounded open/turn/back
+path, owner-backed A/B reader-state load/save, per-rendition resume, visible
+open-error recovery, and cancellable delayed grayscale refinement. Live
+evidence covers cached and active-session opens, persisted nonzero-page resume,
+page turns, Back, retry/Back from a bad book, and cancellation of an obsolete
+gray refinement. Physical POWER hold, deep sleep, and wake restoration remain
+mandatory acceptance gates; contributors must not describe the full POC as
+complete until those outcomes are observed on the X4.
 
-- **5-row viewport** on the 480×800 logical display (matches SquidScript's proven
-  geometry: rows start around y≈76, ~52 px stride).
-- **Stroke-highlight rect** around the selected row (SquidScript's choice — a 1 px
-  border box — chosen because it composes cleanly with the staged refresh and is
-  visually clean in GRAY2).
-- Rows show **filename + page count** (from B's `StoreList` / A's
-  `enumerate_binbooks`). No title/author in v1.
-- Composed via `embedded-graphics` text + rect into the GRAY2 framebuffer, then
-  staged refresh.
+## Reading behavior
 
-## Scrolling
+- Select opens the exact selected SD filename through the shared filesystem
+  handle and renders its saved page or page 0. `Book::open` validates the
+  structural records needed to construct the book; the X4 display path validates
+  the profile and each rendered page.
+- Left/Up move to the previous page and Right/Down move to the next page. Page
+  boundaries clamp.
+- Back or Select closes the active book and returns to the same library row.
+- A page is committed only after the display engine reports a successful base
+  render. Failed rendering does not advance in-memory or persisted progress.
+- A failed open renders `CANNOT OPEN BOOK`, the selected filename, and retry/back
+  guidance. The menu and serial diagnostic loop remain responsive.
 
-Viewport model (SquidScript pattern): `library_top` (index of the first visible
-entry) + `library_selected` (0..=4 within the viewport). down at the viewport
-bottom scrolls `library_top` by one; up at the top scrolls back. **Wrap-around**
-at both list ends. The menu keeps a **bounded name cache** (it never holds the
-whole library in RAM); `enumerate_binbooks` (A) is iterable/paginated.
+## Graphics and refresh
 
-## Refresh model (interruptible gray settle — the locked decision)
+The menu is drawn with `embedded-graphics` and `profont` into the reusable
+480x800 packed-GRAY2 framebuffer in `xteink-x4-display`. Reader pages remain
+streamed from BinBook data and do not use that framebuffer.
 
-Menu navigation reuses the **same staged pipeline as BinBook rendering**, with the
-gray overlay **interruptible by new input**:
+Routine menu navigation, menu-to-book, book-to-menu, and page turns use bounded
+partial or differential updates whenever the previous visible panel state is
+known. They must not invoke the roughly four-second full waveform merely to
+change modes. There is no automatic periodic full-refresh cleanup. Two short
+POWER taps, with releases at most 500 ms apart, explicitly request a full
+cleanup refresh; a two-second continuous hold requests sleep. Fault recovery
+must use a verified non-full-refresh path or retain the persisted image until
+the user requests cleanup; unknown panel state does not authorize an automatic
+full waveform. Book pages otherwise use the staged black/white base, grayscale
+overlay, and background base-synchronization pipeline. Diagnostic KEY events
+and physical buttons enter the same request queue.
 
-1. A menu transition (up/down) renders the new menu state as the **BW base**
-   (immediate visual feedback).
-2. The engine enters the gray-idle wait (existing `GrayDelay` + `gray_deadline`).
-3. If another button arrives during that wait, **cancel the pending gray overlay**
-   (the engine already has `cancel_overlay()` / `begin_base_sync()`) and render
-   the next state as a fresh BW base.
-4. When input stops and idle elapses, the gray differential overlay applies,
-   settling the current state to full GRAY2.
+Phase-level live measurements are the refresh-latency authority. Menu
+navigation measures approximately 652 ms end to end: about 189 ms for each
+full UI plane, 90 ms composition, and 184 ms accepted preview plus cleanup. A
+physical press adds 40 ms debounce and up to one 20 ms polling interval.
+Menu-to-book measures approximately 1,139 ms: 205–207 ms cached session/book
+metadata, 5–6 ms page metadata, 189–194 ms previous UI plane, 549–553 ms target
+book plane, and 184 ms activation. The target-book stage is dominated by SD
+reads (about 360 ms), not decompression (about 27 ms). Book-to-menu uses the
+CrossPoint-style Clean transition. The current live run completed the whole
+Back display request in 2,169 ms; no storage write occurred inside that
+request. Durable state persistence is scheduled after interaction has been
+idle for two seconds.
 
-Net effect: snappy BW response on every keystroke, gray2 catches up on pause, and
-**no separate 1bpp fast path** is needed. The engine primitives to support this
-(`GrayDelay`, `gray_deadline`, `cancel_overlay`) already exist; the menu is a new
-content source feeding the BW base. Entering the menu and opening a book also use
-the full staged refresh.
+Dirty-window and incremental-row menu prototypes were rejected. The rotated
+window reduced each plane by only about 45 ms and produced ambiguous retained
+highlight bands; incremental row composition was slower than byte-clearing and
+redrawing the complete five-row framebuffer. Neither is part of the current
+panel-state contract.
 
-## No-card / empty-library UX
+## Persistent reader state
 
-If no SD card is present or `/books/` is empty, the menu shows the **embedded
-`nav_probe.binbook`** as a fallback entry so the device always boots to something
-readable (never an empty screen). `nav_probe.binbook` remains compiled in via
-`include_bytes!` for this purpose.
+State is card-local and stored transactionally in `/BINBOOK/BINBOOK.A.STATE`
+and `/BINBOOK/BINBOOK.B.STATE`. The binary `BBST` version-1 format contains:
 
-## Resume (persist & resume across power cycles)
+- a wrapping generation number;
+- saved mode (`Menu` or `Reading`);
+- selected and active filename hashes;
+- the active 32-byte rendition hash; and
+- up to 200 `{filename hash, rendition hash, page}` progress records.
 
-- Persist `{ last_book_name, last_page, menu_scroll_position }` to a **small
-  state record in internal flash** (always present, even if the SD card is
-  removed or swapped — chosen over an SD file so resume still works if the card
-  changes).
-- Written **infrequently**: on book close and on power-down/sleep entry, to bound
-  flash wear. No write-per-keystroke.
-- On boot, if the recorded book is still available (on SD or the embedded
-  fallback), resume to it at the recorded page; otherwise boot to the menu.
+The firmware selects the newest valid CRC-protected slot and falls back to the
+other slot after a torn or corrupt write. Progress is independent per filename
+and rendition. Replacing content under the same filename with a different
+rendition starts at page 0. A successful library scan prunes deleted filenames;
+a missing or unreadable card never prunes state.
 
-## Crate changes
+Slot readback verification compares progress records semantically, independent
+of insertion order. Encoding sorts records canonically, so decoded readback may
+have a different vector order while representing identical state. Once verified,
+the decoded canonical state replaces the RAM copy.
 
-- **`xteink-x4-display`** (reusable): add the GRAY2 framebuffer type, the
-  `embedded-graphics` `DrawTarget` impl, and the means to feed the framebuffer
-  through the existing staged refresh as a content source. Add `embedded-graphics`
-  + a bitmap font as dependencies.
-- **`binbook-fw`** (app): add the `Menu ↔ Reading` mode state machine in
-  `display_task`, menu rendering (via the `DrawTarget`), intent-based input
-  handling, resume-state read/write to internal flash, and the embedded-fallback
-  behavior.
+Page turns, selection changes, book open, and book close update the bounded
+authoritative `ReaderState` in RAM and mark it dirty. A successful foreground
+interaction postpones ordinary persistence until two seconds after the last
+interaction. A failed idle write leaves RAM dirty and schedules a retry after
+five seconds. Deep sleep is a durability barrier: it still requires a
+synchronous, verified save and is cancelled if that save fails. Unexpected
+power loss may lose changes since the last successful idle flush, but the
+CRC-protected A/B slots preserve the prior committed generation.
 
-## Testing and verification
+After a state-slot upload is flushed and its exact size is checked, the mounted
+owner converts that same write session into the read session used for verified
+readback. It does not reopen the metadata directory. This preserves decode,
+semantic comparison, canonical RAM replacement, and A/B generation ordering
+while reducing live readback from 1,521 ms to 5 ms. In the current staged run,
+the complete verified idle save took 581 ms, including a 424 ms initial phase,
+40 ms write, 101 ms commit, and 5 ms readback. FAT create/open and flush remain
+synchronous once an idle flush starts, so input that arrives during that
+bounded operation queues until it finishes. Foreground input wins before an
+idle flush starts and postpones it; this is idle scheduling, not preemptible FAT
+I/O.
 
-- **Host unit tests (no hardware):**
-  - `DrawTarget` correctness: render known text + rects into the GRAY2 framebuffer
-    and assert expected packed GRAY2 bytes (including the highlight rect).
-  - Mode state machine: feed intent sequences and assert mode transitions,
-    selection/scroll math (including wrap-around and viewport scrolling), and
-    resume-state round-trip.
-- **Hardware evidence gate (webcam):**
-  - Boot with a populated card → menu shows the list; navigate up/down (observe
-    snappy BW highlight, gray settle on pause); select a book → correct page 0
-    renders; page-turn forward/back; select/back returns to the menu at the same
-    scroll position.
-  - No-card / empty-card boot → menu shows the `nav_probe.binbook` fallback.
-  - Power-cycle mid-book → resumes to the same book/page.
+## Power lifecycle
 
-Capture webcam frames and serial state for each step. Per the completion-evidence
-discipline, the visual result (correct page, correct highlight, correct resume)
-must be independently observed, not inferred from ack responses.
+GPIO3 is an active-low power input. A continuous two-second hold requests sleep;
+one short press has no effect, while two short taps request explicit display
+cleanup. After the display task finishes its active operation,
+the firmware saves state, sends SSD1677 deep-sleep command `0x10`, waits for the
+initiating button hold to be released, and enters ESP32-C3 deep sleep with GPIO3
+low as the wake source.
 
-## Open questions for the implementation plan
+The shared sleep-preparation coordinator permits panel sleep only after a
+verified state save and permits CPU deep sleep only after panel sleep succeeds.
+State-save failure returns a failed acknowledgement and renders `CANNOT SAVE /
+SLEEP CANCELLED`; panel-sleep failure also returns a failed acknowledgement but
+does not claim a recoverable panel state.
 
-- Final `embedded-graphics` + bitmap-font crate choices and versions; confirm
-  `no_std` + allocator-free rendering into the 96 KB GRAY2 framebuffer.
-- Exact wiring of the framebuffer as a content source into the existing staged
-  refresh (how `cancel_overlay` is triggered by a new intent mid-`GrayDelay`
-  without racing the engine).
-- Resume-state record layout, the internal-flash region it occupies (clear of the
-  crash sector and the existing `FlashStorage` table), and the wear budget.
-- Whether the input task forwards raw `Button` events or pre-translated intents,
-  and how diagnostic-injected intents share the channel cleanly.
+Every power request consumes exactly one display-task acknowledgement. A full
+refresh acknowledgement never authorizes CPU sleep; only the acknowledgement
+paired with the current successful sleep-preparation request does so.
+
+Wake is reset-like: mount the SD card, validate the persistent index, schedule
+a cooperative refresh scan, initialize the panel, and restore the saved menu
+selection or active book/page. Missing or replaced books fall back to the
+library.
+
+## Module boundaries
+
+- `binbook-core`: format parsing and rendition identity.
+- `binbook-storage` and `embedded-sd-storage`: named random access and FAT I/O.
+- `ssd1677-driver`: controller commands, including deep sleep.
+- `xteink-x4-display`: framebuffer, panel wrapper, streaming page renderer, and
+  display engine.
+- `binbook-fw`: shared SD ownership, library/menu state, reader-state slots,
+  physical input, application lifecycle, and diagnostics.
+
+Contributor ownership within `binbook-fw` and the SD adapter is intentionally
+more specific:
+
+- `src/library.rs`: persistent index layout, deterministic records, cursor,
+  viewport, filename identity, and ephemeral mount tokens.
+- `src/library_index_load.rs`: bounded index validation/loading, including the
+  viewport loader; its legacy full-library loader is a migration seam, not the
+  target menu authority.
+- `src/library_index_save.rs`: transactional index publication.
+- `src/storage_owner.rs`: the single-owner request protocol, cooperative scan
+  records, generation-scoped sessions/tokens, and active-file promotion.
+- `src/owner_book.rs`: selected-book metadata/page clients over the owner.
+- `src/owner_reader.rs`: owner-backed menu/open/render/turn lifecycle and the
+  commit-after-success invariant; it contains no board or panel I/O.
+- `src/runtime/mounted_reader_io.rs`: bounded owner request exchange and direct
+  prepared-row streaming into SSD1677 RAM planes plus owner-state slot
+  exchanges. It must not materialize a complete page or publish reader state
+  before the panel operation succeeds.
+- `src/runtime/mounted_display_task.rs`: board/runtime wiring for the bounded
+  viewport, cached/active-session open, display commit, deferred-gray
+  cancellation, visible error recovery, state persistence, explicit cleanup,
+  and power preparation.
+- `src/runtime/library_refresh_task.rs`: legacy probe wiring retained outside
+  the normal mounted reader path.
+- `embedded-sd-storage/src/sd_filesystem.rs`: mounted FAT scan and exact file
+  sessions; it must remain independent of menu policy.
+
+The reusable crates contain no board pin ownership or Embassy application
+state. There must be exactly one FAT/block-device owner shared by reader, state,
+index, and diagnostic operations. The mounted normal reader uses that owner
+task for cursor loads, exact selected-file sessions, state slots, and bounded
+page streaming. Typed requests transfer control and bounded records rather than
+complete pages or the full library through channels.
+
+An active upload is scheduler-affine to the client that began it until commit
+or abort. Upload requests from other clients remain queued; they must not be
+executed between chunks and rejected as `Busy`. This permits reader-state saves
+to overlap background index publication without turning a successful Back or
+sleep transition into an error.
+
+## Verification requirements
+
+Completion requires all of the following:
+
+- host tests for 200-entry bounds, sorting, viewport behavior, state wire
+  layout/CRC/generation/fault injection, rendition matching, exact SD reads,
+  display commit semantics, power hold/release gating, and SSD1677 deep sleep;
+- workspace and feature-gated firmware tests;
+- pinned-nightly builds for base, SD, and diagnostic+SD firmware variants;
+- a live X4 flash and at least 15 seconds of serial boot capture;
+- diagnostic and webcam evidence for library navigation, exact selected-book
+  open, page turns, independent per-book resume, recoverable open failure,
+  physical sleep, and wake restoration.
+
+Acknowledgements or successful command transport are not visual or state
+evidence. Hardware results and any remaining unverified criteria belong in the
+host-local `HANDOFF.md` acceptance matrix.

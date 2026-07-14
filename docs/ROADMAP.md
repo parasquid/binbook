@@ -36,13 +36,98 @@ Use the current Espressif Rust radio stack that matches the pinned `esp-hal` gen
 
 Acceptance requires host tests for feature-gated command/configuration surfaces, firmware builds for no-radio, Wi-Fi-only, BLE-only, and coexistence configurations as applicable, live flash/serial evidence, measured RAM impact, measured idle and active power impact, and verification that display refresh, ADC input, SD/storage, and diagnostic USB behavior remain responsive while radio tasks are active.
 
+## Single streaming compiler core for host and device
+
+Refactor the existing host-oriented BinBook compiler into one streaming,
+bounded-memory compiler core that is used unchanged for both host compilation
+and future on-device EPUB-to-BinBook compilation. Do not create independent
+"desktop" and "firmware" compilers. Platform-specific code may provide file,
+SD, temporary-storage, scheduling, progress-reporting, and cancellation
+adapters, but EPUB interpretation, layout, page rendering, compression, index
+generation, policy/rendition hashes, and BinBook wire output must have one
+implementation so the two targets cannot drift.
+
+Current context for a cold-starting agent:
+
+- `crates/binbook-compiler` coordinates EPUB ingestion, rendering, image
+  processing, and encoding.
+- `crates/binbook-epub` currently uses host-oriented EPUB/HTML/CSS dependencies,
+  including `zip`, `rbook`, `html5ever`, and `markup5ever_rcdom`.
+- `crates/binbook-render` currently uses `cosmic-text`, and
+  `crates/binbook-image` currently uses host-oriented image and SVG libraries.
+- `crates/binbook-encode/src/writer.rs::BookBuilder` retains every
+  `CompiledPage` in a `Vec`, then `build_bytes()` assembles the complete output
+  in another `Vec<u8>`.
+- `crates/binbook-encode/src/indices.rs::build_pages` separately accumulates
+  the complete page index, chunk index, transition index, and `PAGE_DATA` in
+  memory. This architecture cannot be copied directly into the constrained
+  ESP32-C3 firmware.
+- CrossPoint demonstrates that EPUB processing on the Xteink X4 is feasible
+  when chapter/intermediate data is aggressively cached to SD. Treat that as
+  evidence for an SD-backed incremental architecture, not as evidence that the
+  existing host compiler or its dependency graph is firmware-ready.
+- `BINBOOK_FORMAT_SPEC.md` remains authoritative. Its seekable header, section
+  table, relative page-data offsets, and independent sections permit a writer
+  to reserve/backpatch metadata and spool page data and indexes without holding
+  the whole output in RAM.
+
+Required architecture:
+
+1. Define compiler-owned traits for sequential input, seekable output,
+   temporary/spooled storage, caller-owned scratch buffers, progress events,
+   cancellation, and resource limits. Host filesystem and firmware SD/FAT
+   implementations must be adapters to these traits; reusable compiler crates
+   must not depend on Embassy, ESP HAL types, or board GPIO details.
+2. Replace whole-book DOM and output accumulation with bounded EPUB entry
+   processing and bounded chapter/layout state. Explicitly cap ZIP entries,
+   CSS/markup complexity, decoded image dimensions, font resources, and every
+   scratch allocation. Oversized or unsupported content must return a typed,
+   recoverable error rather than exhausting RAM.
+3. Render and compress one page, or another explicitly measured bounded unit,
+   at a time. Immediately spool compressed plane blobs and page/chunk records
+   to temporary storage, then release the page buffers before continuing.
+4. Build navigation, strings, page indexes, chunk indexes, transition indexes,
+   and `PAGE_DATA` through bounded records or SD-backed spools. Reserve and
+   backpatch the final header and section table only after final offsets,
+   lengths, counts, CRCs, and hashes are known.
+5. Preserve deterministic output. Given the same source bytes, compiler
+   configuration, fonts, and target profile, host and device adapters must
+   produce byte-identical `.binbook` files. A smaller device-supported EPUB
+   feature profile is acceptable only as an explicit configuration of the same
+   core; it must not fork parsing, layout, or encoding behavior.
+6. Publish on-device results transactionally: keep the uploaded EPUB, compile
+   under a temporary name/work directory, strictly validate the completed
+   BinBook, then atomically publish it into `/BOOKS`. Cancellation, power loss,
+   insufficient space, malformed EPUBs, and unsupported content must leave no
+   library-visible partial BinBook and must preserve the last valid output.
+7. Migrate incrementally. First make the host compiler use the streaming core
+   without changing output bytes. Then add constrained-memory host tests and
+   fault-injected spool tests. Only after those pass should firmware SD adapters
+   and an on-device upload/compile UX be added.
+
+Acceptance is evidence-gated:
+
+- Existing host compiler fixtures remain byte-for-byte identical unless an
+  intentional format/spec change is separately approved.
+- Tests run the same corpus through host and device-style adapters and compare
+  complete BinBook bytes, strict-validation results, hashes, indexes, page
+  pixels, and errors.
+- Peak live memory is measured with adversarial large books, chapters, CSS,
+  images, fonts, and compressed payloads; memory use must remain within a
+  documented bound independent of total book size.
+- Tests inject failures at EPUB reads, every temporary-spool boundary, page
+  rendering/compression, final copying, backpatching, flushing, validation, and
+  publication, proving recovery and cleanup behavior.
+- The firmware target builds without pulling host-only `std` dependencies into
+  reusable device compiler crates.
+- Completion requires a real Xteink X4 run that uploads an EPUB, compiles it on
+  SD, validates and opens the resulting BinBook, reboots/resumes it, and proves
+  via serial evidence and visible display inspection that no host-side compiler
+  participated.
+
 ## Python authoring package modularization
 
 Split binary format models/writing, EPUB ingestion, raster rendering, viewer, and kerning-proof server into independently testable modules. Define an explicit public package API, add basedpyright strict checking and Ruff gates, and preserve existing CLI output and BinBook bytes.
-
-## SquidScript Rust-native BinBook/display adoption
-
-After SquidScript chooses its post-Zephyr firmware architecture, consume `binbook-core`, `binbook-decompress`, `gray2-render`, `ssd1677-driver`, and `xteink-x4-display` directly. Do not add a C ABI or compatibility facade before that architecture is selected.
 
 ## Internal Flash LittleFS
 
