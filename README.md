@@ -23,7 +23,7 @@ target/debug/binbook encode book.epub -o forced.binbook --font-family opendyslex
 
 `--input-format auto` uses path shape and file signatures. Explicit `image` and `epub` overrides reject mismatches. Directory names must be UTF-8, are sorted lexically, and unsupported or animated entries produce stderr warnings and are skipped; a single unsupported input or directory with no usable pages fails. Output is assembled and strictly validated in a sibling temporary file, then atomically renamed.
 
-EPUB compilation supports package metadata, linear spine order, EPUB3 navigation, EPUB2 NCX fallback, fragments, common block/inline HTML, the documented CSS subset, static images, embedded TTF/OTF/WOFF/WOFF2 fonts, and standard IDPF/Adobe font obfuscation. Unsupported CSS/content degrades deterministically with stable warnings. DRM-protected resources are rejected.
+EPUB compilation supports package metadata, linear spine order, EPUB3 navigation, EPUB2 NCX fallback, fragments, common block/inline HTML, the documented CSS subset, and embedded TTF/OTF/WOFF/WOFF2 fonts. Referenced static artwork is rendered on standalone pages: portrait and square images use one page, landscape images use two uncropped left-to-right panels, and associated figure captions are retained. Unsupported CSS/content degrades deterministically with stable warnings. DRM-protected resources are rejected.
 
 Inspect and decode through Rust:
 
@@ -68,6 +68,8 @@ Firmware uses the pinned nightly command documented in `AGENTS.md`. Live-device 
 - [Format specification](BINBOOK_FORMAT_SPEC.md)
 - [X4 e-reader library, cache, reading, refresh, state, and power design](docs/specs/2026-07-01-library-menu-reading-flow-design.md)
 - [X4 e-reader POC implementation plan](docs/plans/2026-07-13-binbook-ereader-poc-plan.md)
+- [Illustrated EPUB pagination and X4 device replacement plan](docs/plans/2026-07-14-illustrated-epub-pagination-and-device-load-plan.md)
+- [EPUB artwork pagination design](docs/specs/2026-07-14-epub-artwork-pagination-design.md)
 - [Rust crate architecture](docs/reference/rust-crate-architecture.md)
 - [Compiler roadmap](docs/reference/compiler-roadmap.md)
 - [Firmware flashing](docs/reference/xteink-x4-firmware-flashing.md)

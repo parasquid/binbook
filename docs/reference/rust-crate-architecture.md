@@ -12,7 +12,7 @@ The Rust implementation uses the repository root `Cargo.toml` and `Cargo.lock`. 
 | `binbook-image` | Static PNG/JPEG/WebP/SVG decoding, fitting, quantization, and page decoding | image codecs, core/render/encode crates |
 | `binbook-document` | Path-free styled document, navigation, resource, font, and diagnostic model | no source parser or renderer dependency |
 | `binbook-epub` | EPUB2/3 package, HTML/CSS, resources, navigation, and embedded fonts | document model and read-only parser dependencies |
-| `binbook-render` | Reflow pagination, supplied-font shaping, 2× rasterization, warnings, and anchors | document, image, encode, `cosmic-text` without system fonts |
+| `binbook-render` | Reflow pagination, supplied-font shaping, captioned artwork page expansion, 2× rasterization, warnings, and remapped anchors | document, image, encode, `cosmic-text` without system fonts |
 | `binbook-compiler` | Path-free image/EPUB dispatch and compile event API | compiler crates above; no paths or CLI types |
 | `binbook-decompress` | Exact PackBits and optional LZ4 decoding | `binbook-core`, optional `lz4_flex` |
 | `gray2-render` | Pure canonical/staged GRAY2 and ordered-dither row conversion | none beyond small `no_std` utilities |
