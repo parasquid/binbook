@@ -69,3 +69,28 @@ fn document_owns_navigation_fonts_resources_and_deterministic_diagnostics() {
     assert_eq!(document.navigation[0].fragment.as_deref(), Some("start"));
     assert!(document.fonts[0].obfuscated);
 }
+
+#[test]
+fn image_constructors_preserve_alt_text_and_optional_caption() {
+    // Given/When: captionless and captioned images are constructed.
+    let captionless = Node::image(ResourceId(7), "river bank");
+    let captioned = Node::captioned_image(ResourceId(8), "Rat and Mole", "THE RIVER BANK");
+
+    // Then: their typed fields remain distinct and complete.
+    assert_eq!(
+        captionless,
+        Node::Image {
+            resource: ResourceId(7),
+            alt: "river bank".into(),
+            caption: None,
+        }
+    );
+    assert_eq!(
+        captioned,
+        Node::Image {
+            resource: ResourceId(8),
+            alt: "Rat and Mole".into(),
+            caption: Some("THE RIVER BANK".into()),
+        }
+    );
+}

@@ -69,6 +69,7 @@ pub(crate) fn warning_code(code: WarningCode) -> CompileWarningCode {
         WarningCode::MissingResource => CompileWarningCode::MissingResource,
         WarningCode::OversizedTableRow => CompileWarningCode::OversizedTableRow,
         WarningCode::UnsupportedContent => CompileWarningCode::UnsupportedContent,
+        WarningCode::UnsupportedImage => CompileWarningCode::UnsupportedImage,
     }
 }
 
@@ -78,5 +79,6 @@ pub(crate) fn warning_message(code: WarningCode) -> &'static str {
         WarningCode::MissingResource => "missing resource rendered as fallback",
         WarningCode::OversizedTableRow => "oversized table row rendered sequentially",
         WarningCode::UnsupportedContent => "unsupported content degraded deterministically",
+        WarningCode::UnsupportedImage => "unsupported image rendered as alt-text fallback",
     }
 }

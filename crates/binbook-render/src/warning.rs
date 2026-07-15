@@ -6,6 +6,7 @@ pub enum WarningCode {
     MissingResource,
     OversizedTableRow,
     UnsupportedContent,
+    UnsupportedImage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

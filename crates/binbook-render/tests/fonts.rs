@@ -65,6 +65,7 @@ fn records_only_rasterized_faces_and_forced_font_separately() {
                 family: "Forced".into(),
                 bytes: LITERATA.to_vec(),
             },
+            ..RenderOptions::default()
         },
     )
     .unwrap();

@@ -8,6 +8,7 @@ use html5ever::{parse_document, tendril::TendrilSink};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 
 use crate::css::{merge_patch, parse_css, parse_inline, Stylesheet};
+use crate::html_image::{figure_image, image_reference, is_figure_container};
 use crate::EpubError;
 
 pub(crate) fn parse_html(
@@ -100,8 +101,17 @@ fn convert(
             if style.display == DisplayMode::None {
                 return None;
             }
-            if tag == "img" {
-                let src = attr(&attrs, "src")?;
+            if is_figure_container(&tag, &attrs) {
+                if let Some(image) = figure_image(handle, path, resources) {
+                    return Some(Node::Block {
+                        kind: BlockKind::Figure,
+                        style,
+                        children: vec![image],
+                    });
+                }
+            }
+            if matches!(tag.as_str(), "img" | "image") {
+                let src = image_reference(&attrs)?;
                 let resolved = resolve_resource_path(path, &src).ok()?;
                 let resource = resources.iter().find(|resource| resource.path == resolved);
                 return match resource {

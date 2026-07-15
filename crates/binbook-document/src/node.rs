@@ -41,6 +41,7 @@ pub enum Node {
     Image {
         resource: ResourceId,
         alt: String,
+        caption: Option<String>,
     },
     LineBreak,
     HorizontalRule,
@@ -67,6 +68,20 @@ impl Node {
         Self::Image {
             resource,
             alt: alt.into(),
+            caption: None,
+        }
+    }
+
+    #[must_use]
+    pub fn captioned_image(
+        resource: ResourceId,
+        alt: impl Into<String>,
+        caption: impl Into<String>,
+    ) -> Self {
+        Self::Image {
+            resource,
+            alt: alt.into(),
+            caption: Some(caption.into()),
         }
     }
 }

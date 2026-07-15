@@ -4,12 +4,24 @@ use binbook_document::{BlockKind, ComputedStyle, Node, ResourceId};
 
 use crate::{RenderWarning, WarningCode};
 
+#[cfg(test)]
+mod tests;
+
 const CHARS_PER_PAGE: usize = 1_250;
 
 #[derive(Debug, Default)]
 pub(crate) struct Page {
     pub spans: Vec<Span>,
-    len: usize,
+    pub artwork: Option<Artwork>,
+    pub(crate) len: usize,
+}
+
+#[derive(Debug)]
+pub(crate) struct Artwork {
+    pub resource: ResourceId,
+    pub alt: String,
+    pub caption: Option<String>,
+    pub spine_index: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -55,7 +67,11 @@ fn visit(
         }
         Node::LineBreak => push_text("\n", inherited, pages),
         Node::HorizontalRule => push_text("\n────────\n", inherited, pages),
-        Node::Image { alt, .. } => push_text(&format!("\n[image: {alt}]\n"), inherited, pages),
+        Node::Image {
+            resource,
+            alt,
+            caption,
+        } => push_artwork(*resource, alt, caption.as_deref(), spine_index, pages),
         Node::Inline {
             style, children, ..
         } => {
@@ -112,6 +128,26 @@ fn visit(
             }
         }
     }
+}
+
+fn push_artwork(
+    resource: ResourceId,
+    alt: &str,
+    caption: Option<&str>,
+    spine_index: u32,
+    pages: &mut Pages,
+) {
+    if pages.pages.last().is_some_and(|page| page.len > 0) {
+        pages.pages.push(Page::default());
+    }
+    let page = pages.pages.last_mut().expect("page exists");
+    page.artwork = Some(Artwork {
+        resource,
+        alt: alt.into(),
+        caption: caption.map(Into::into),
+        spine_index,
+    });
+    pages.pages.push(Page::default());
 }
 
 fn push_text(mut value: &str, style: &ComputedStyle, pages: &mut Pages) {
@@ -198,63 +234,5 @@ fn page_index(pages: &Pages) -> u32 {
 fn record_family(family: &str, pages: &mut Pages) {
     if !pages.families.iter().any(|value| value == family) {
         pages.families.push(family.into());
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn split_decision_returns_none_when_next_scalar_does_not_fit() {
-        // Given: one fewer byte than each UTF-8 scalar requires.
-        let cases = [("é", 1), ("—", 2), ("🦀", 3)];
-
-        // When/Then: no complete scalar can be consumed.
-        for (value, remaining) in cases {
-            assert_eq!(split_decision(value, remaining), None);
-        }
-    }
-
-    #[test]
-    fn push_text_preserves_utf8_when_scalar_crosses_page_boundary() {
-        // Given: punctuation whose first scalar cannot fit in the final byte.
-        let value = format!("{}—‘tail", "a".repeat(CHARS_PER_PAGE - 1));
-        let style = ComputedStyle::default();
-
-        // When: the text is paginated twice from identical state.
-        let render = || {
-            let mut pages = Pages {
-                pages: vec![Page::default()],
-                ..Pages::default()
-            };
-            push_text(&value, &style, &mut pages);
-            pages
-        };
-        let first = render();
-        let second = render();
-
-        // Then: pagination progresses without empty spans or byte loss.
-        assert_eq!(first.pages.len(), 2);
-        assert!(first.pages.iter().all(|page| page.len <= CHARS_PER_PAGE));
-        assert!(first
-            .pages
-            .iter()
-            .flat_map(|page| &page.spans)
-            .all(|span| !span.text.is_empty()));
-        let first_text = first
-            .pages
-            .iter()
-            .flat_map(|page| &page.spans)
-            .map(|span| span.text.as_str())
-            .collect::<String>();
-        let second_text = second
-            .pages
-            .iter()
-            .flat_map(|page| &page.spans)
-            .map(|span| span.text.as_str())
-            .collect::<String>();
-        assert_eq!(first_text, value);
-        assert_eq!(second_text, first_text);
     }
 }

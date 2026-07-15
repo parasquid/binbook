@@ -1,4 +1,4 @@
-use binbook_document::{BlockKind, DiagnosticCode, DisplayMode, FontWeight, Node};
+use binbook_document::{BlockKind, DiagnosticCode, DisplayMode, FontWeight, Node, ResourceId};
 use binbook_epub::{parse_epub, EpubError, EpubVersion};
 
 mod fixture;
@@ -81,6 +81,20 @@ fn parses_epub3_metadata_resources_spine_navigation_css_and_obfuscated_font() {
     assert!(!contains_text(root, "hidden text"));
     assert!(contains_text(root, "missing art"));
     assert_ne!(style.display, DisplayMode::None);
+
+    let images = collect_images(root);
+    assert_eq!(images.len(), 3);
+    assert_eq!(images[0].1, "pixel");
+    assert_eq!(images[0].2, None);
+    assert_eq!(images[1].1, "Rat and Mole");
+    assert_eq!(images[1].2, Some("THE RIVER BANK"));
+    assert_eq!(images[2].1, "");
+    assert_eq!(images[2].2, None);
+    assert!(!contains_text(root, "THE RIVER BANK"));
+
+    let resource_path = |id: ResourceId| parsed.document.resource(id).unwrap().path.as_str();
+    assert_eq!(resource_path(images[1].0), "OPS/images/pixel.jpg");
+    assert_eq!(resource_path(images[2].0), "OPS/images/pixel.webp");
 }
 
 #[test]
@@ -123,5 +137,19 @@ fn contains_text(node: &Node, needle: &str) -> bool {
             children.iter().any(|child| contains_text(child, needle))
         }
         _ => false,
+    }
+}
+
+fn collect_images(node: &Node) -> Vec<(ResourceId, &str, Option<&str>)> {
+    match node {
+        Node::Image {
+            resource,
+            alt,
+            caption,
+        } => vec![(*resource, alt, caption.as_deref())],
+        Node::Block { children, .. } | Node::Inline { children, .. } => {
+            children.iter().flat_map(collect_images).collect()
+        }
+        _ => Vec::new(),
     }
 }

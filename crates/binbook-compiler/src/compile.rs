@@ -94,8 +94,15 @@ fn compile_epub(
     let parsed = binbook_epub::parse_epub(input.bytes).map_err(|_| CompileError::Epub)?;
     progress(observer, CompilePhase::Layout);
     let font_mode = forced_font(options.forced_font);
-    let rendered = render_document(&parsed.document, &RenderOptions { font_mode })
-        .map_err(|_| CompileError::Render)?;
+    let rendered = render_document(
+        &parsed.document,
+        &RenderOptions {
+            font_mode,
+            storage_format: storage(options.pixel_format),
+            dither: options.dither,
+        },
+    )
+    .map_err(|_| CompileError::Render)?;
     progress(observer, CompilePhase::Rasterize);
     let mut builder = BookBuilder::new(config(options));
     builder.set_metadata(BookMetadata {

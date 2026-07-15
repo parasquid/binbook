@@ -77,6 +77,7 @@ pub enum CompileWarningCode {
     MissingResource,
     OversizedTableRow,
     UnsupportedContent,
+    UnsupportedImage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
