@@ -196,7 +196,7 @@ where
         rows: &[u8],
         target: PanelRamTarget,
     ) -> DisplayResult<()> {
-        if rows.is_empty() || rows.len() % profile::ROW_BYTES != 0 {
+        if rows.is_empty() || !rows.len().is_multiple_of(profile::ROW_BYTES) {
             return Err(DisplayError::InvalidPage);
         }
         let row_count = u16::try_from(rows.len() / profile::ROW_BYTES)

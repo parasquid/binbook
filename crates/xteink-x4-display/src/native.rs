@@ -114,6 +114,7 @@ where
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn sync_bw_base_timed<R, SPI, DC, RST, BUSY, D, E, T>(
     panel: &mut X4Panel<SPI, DC, RST, BUSY>,
     book: &mut Book<R>,
@@ -251,6 +252,7 @@ where
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn render_lut_preview_timed<R, SPI, DC, RST, BUSY, D, B, T>(
     panel: &mut X4Panel<SPI, DC, RST, BUSY>,
     book: &mut Book<R>,

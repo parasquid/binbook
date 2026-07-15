@@ -507,7 +507,7 @@ impl<'a> OwnerPlaneStream<'a> {
         rows: &mut [u8],
     ) -> Result<OwnerPlaneStreamUpdate, OwnerPlaneStreamError> {
         const ROW_BYTES: usize = xteink_x4_display::profile::ROW_BYTES;
-        if rows.len() < ROW_BYTES || rows.len() % ROW_BYTES != 0 {
+        if rows.len() < ROW_BYTES || !rows.len().is_multiple_of(ROW_BYTES) {
             return Err(OwnerPlaneStreamError::Buffer);
         }
         if self.needs_read {

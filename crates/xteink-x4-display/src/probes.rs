@@ -113,7 +113,7 @@ pub const fn partial_window_busy_cases() -> [PartialWindowBusyCase; 6] {
 
 #[must_use]
 pub const fn probe_polarity(round: u16) -> PartialWindowPolarity {
-    if round % 2 == 0 {
+    if round.is_multiple_of(2) {
         PartialWindowPolarity::WhiteOnBlack
     } else {
         PartialWindowPolarity::BlackOnWhite
@@ -396,13 +396,17 @@ where
 
 fn custom_lut_previous_row(row: u16, output: &mut [u8; DISPLAY_ROW_BYTES]) {
     output.fill(0xff);
-    if row < 12 || row >= DISPLAY_HEIGHT - 12 {
+    if !(12..DISPLAY_HEIGHT - 12).contains(&row) {
         output.fill(0x00);
     }
 }
 
 fn custom_lut_target_row(row: u16, output: &mut [u8; DISPLAY_ROW_BYTES]) {
-    output.fill(if (row / 24) % 2 == 0 { 0x00 } else { 0xff });
+    output.fill(if (row / 24).is_multiple_of(2) {
+        0x00
+    } else {
+        0xff
+    });
     output[0] = 0x00;
     output[DISPLAY_ROW_BYTES - 1] = 0x00;
 }

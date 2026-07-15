@@ -81,7 +81,7 @@ impl TimeSource for FixedTime {
         // FAT date/time fields: see FAT32 specification.
         let year_off = (2026u16 - 1980) & 0x7f;
         let date = (year_off << 9) | (7 << 5) | 1; // year=46, month=7, day=1
-        let time = (12 << 11) | (0 << 5) | (0); // hour=12, min=0, sec=0
+        let time = 12 << 11; // hour=12, min=0, sec=0
         embedded_sdmmc::Timestamp::from_fat(date, time)
     }
 }

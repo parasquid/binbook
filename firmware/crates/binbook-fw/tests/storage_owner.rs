@@ -1,4 +1,5 @@
 #![cfg(feature = "sd-storage")]
+#![allow(clippy::drop_non_drop)]
 
 use binbook_fw::storage_owner::{
     decode_scan_records, encode_scan_records, BufferLease, BufferPool, BufferSlot, CompletionError,

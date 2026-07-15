@@ -275,6 +275,7 @@ pub struct SdBookSource<'a, F> {
 }
 
 impl<'a, F> SdBookSource<'a, F> {
+    #[allow(clippy::result_unit_err)]
     pub fn new(fs: SdHandle<'a, F>, name: &str) -> Result<Self, ()> {
         Ok(Self {
             fs,

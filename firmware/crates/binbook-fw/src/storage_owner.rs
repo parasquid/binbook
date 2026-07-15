@@ -473,6 +473,7 @@ impl<'a, B: OwnerBackend, const N: usize> StorageOwnerPump<'a, B, N> {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn enqueue(
         &mut self,
         request: OwnedRequest<'a>,
@@ -533,6 +534,7 @@ impl<'a, const N: usize> OwnedMailbox<'a, N> {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn push(&mut self, request: OwnedRequest<'a>) -> Result<(), OwnedRequest<'a>> {
         self.pending.push(request)
     }

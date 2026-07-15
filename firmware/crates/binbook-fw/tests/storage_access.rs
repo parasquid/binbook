@@ -1,4 +1,5 @@
 #![cfg(feature = "sd-storage")]
+#![allow(clippy::drop_non_drop)]
 
 use std::collections::BTreeMap;
 use std::{cell::RefCell, rc::Rc};

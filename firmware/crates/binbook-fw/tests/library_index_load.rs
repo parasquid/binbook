@@ -1,4 +1,5 @@
 #![cfg(feature = "sd-storage")]
+#![allow(clippy::drop_non_drop)]
 
 use binbook_fw::{
     library::{IncrementalLibraryScan, Library, LibraryStatus, LibraryViewport},

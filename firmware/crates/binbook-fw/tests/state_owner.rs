@@ -1,4 +1,5 @@
 #![cfg(feature = "sd-storage")]
+#![allow(clippy::drop_non_drop)]
 
 use binbook_fw::{
     reader_state::{ProgressRecord, ReaderState, MAX_PROGRESS_RECORDS, MAX_STATE_BYTES},

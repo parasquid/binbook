@@ -93,7 +93,7 @@ impl<'a> LibraryIndexLoadClient<'a> {
                 let file_len =
                     usize::try_from(file_len).map_err(|_| LibraryIndexLoadError::Length)?;
                 if !(INDEX_HEADER_SIZE..=Library::max_index_bytes()).contains(&file_len)
-                    || (file_len - INDEX_HEADER_SIZE) % INDEX_RECORD_SIZE != 0
+                    || !(file_len - INDEX_HEADER_SIZE).is_multiple_of(INDEX_RECORD_SIZE)
                 {
                     self.fail();
                     return Err(LibraryIndexLoadError::Length);
@@ -305,7 +305,7 @@ impl<'a> LibraryViewportLoadClient<'a> {
                 let file_len =
                     usize::try_from(file_len).map_err(|_| LibraryIndexLoadError::Length)?;
                 if !(INDEX_HEADER_SIZE..=Library::max_index_bytes()).contains(&file_len)
-                    || (file_len - INDEX_HEADER_SIZE) % INDEX_RECORD_SIZE != 0
+                    || !(file_len - INDEX_HEADER_SIZE).is_multiple_of(INDEX_RECORD_SIZE)
                 {
                     self.fail();
                     return Err(LibraryIndexLoadError::Length);
@@ -464,6 +464,7 @@ pub struct LibraryViewportWindowClient<'a> {
     expected_len: u16,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum PruneTarget<'a> {
     Empty(&'a mut crate::reader_state::ReaderState),
     Validating {
@@ -526,7 +527,7 @@ impl<'a> LibraryIndexPruneClient<'a> {
                 let file_len =
                     usize::try_from(file_len).map_err(|_| LibraryIndexLoadError::Length)?;
                 if !(INDEX_HEADER_SIZE..=Library::max_index_bytes()).contains(&file_len)
-                    || (file_len - INDEX_HEADER_SIZE) % INDEX_RECORD_SIZE != 0
+                    || !(file_len - INDEX_HEADER_SIZE).is_multiple_of(INDEX_RECORD_SIZE)
                 {
                     self.fail();
                     return Err(LibraryIndexLoadError::Length);
