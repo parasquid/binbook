@@ -19,9 +19,10 @@ pub(super) async fn diagnostic_task(
     usb_device: esp_hal::peripherals::USB_DEVICE<'static>,
     flash: esp_hal::peripherals::FLASH<'static>,
 ) {
+    use embassy_futures::select::{select, Either};
     use esp_hal::usb_serial_jtag::UsbSerialJtag;
 
-    let usb = UsbSerialJtag::new(usb_device);
+    let usb = UsbSerialJtag::new(usb_device).into_async();
     let (mut usb_rx, mut usb_tx) = usb.split();
     let mut serial = SerialState::new();
     let mut crash_store = CrashStore::new(esp_storage::FlashStorage::new(flash));
@@ -41,11 +42,42 @@ pub(super) async fn diagnostic_task(
     let owner_response = OWNER_RESPONSE.init([0; binbook_diagnostic_protocol::MAX_PAYLOAD_BYTES]);
     #[cfg(feature = "sd-storage")]
     let mut owner_runtime = super::diagnostic_owner_storage::DiagnosticOwnerRuntime::new();
+    let completion_rx = AGGREGATOR_COMPLETION_CHANNEL.receiver();
+    let mut published_protocol_errors = 0;
 
     loop {
         let mut usb_read_buf = [0u8; 64];
-        let received = usb_rx.drain_rx_fifo(&mut usb_read_buf);
-        if received > 0 {
+        if !serial.needs_service(false) {
+            match select(
+                embedded_io_async::Read::read(&mut usb_rx, &mut usb_read_buf),
+                completion_rx.receive(),
+            )
+            .await
+            {
+                Either::First(Ok(received)) => {
+                    serial.feed_rx(&usb_read_buf[..received]);
+                }
+                Either::First(Err(error)) => match error {},
+                Either::Second(committed) => {
+                    let status = match committed.completion.status {
+                        RuntimeCompletionStatus::Ok => Status::Ok,
+                        RuntimeCompletionStatus::Error => Status::Error,
+                    };
+                    let _ = complete_pending_command(
+                        &mut serial,
+                        committed.pending,
+                        status,
+                        committed.completion.page,
+                        &[],
+                    );
+                }
+            }
+        }
+        loop {
+            let received = usb_rx.drain_rx_fifo(&mut usb_read_buf);
+            if received == 0 {
+                break;
+            }
             serial.feed_rx(&usb_read_buf[..received]);
         }
 
@@ -63,68 +95,75 @@ pub(super) async fn diagnostic_task(
             );
         }
 
-        let snapshot = match query_aggregator(AggregatorQuery::Status).await {
-            AggregatorResponse::Status(snapshot) => snapshot,
-            AggregatorResponse::Reserve(_)
-            | AggregatorResponse::Log { .. }
-            | AggregatorResponse::Ack => {
-                continue;
-            }
-        };
-        #[cfg(feature = "sd-storage")]
-        let command = binbook_fw::diag::poll_runtime_command_owner_storage(
-            &mut serial,
-            snapshot,
-            &mut storage,
-            owner_transfer,
-        );
-        #[cfg(not(feature = "sd-storage"))]
-        let command = poll_runtime_command(&mut serial, snapshot, &mut storage);
-        if let Some(command) = command {
-            let header = command.header();
-            RUNTIME_EVENT_CHANNEL
-                .sender()
-                .send(RuntimeEvent {
-                    timestamp_ms: embassy_time::Instant::now().as_millis(),
-                    kind: RuntimeEventKind::ProtocolCommand {
-                        opcode: header.opcode as u8,
-                        sequence: header.sequence,
-                    },
-                })
-                .await;
+        if serial.frame_ready() {
+            let snapshot = match query_aggregator(AggregatorQuery::Status).await {
+                AggregatorResponse::Status(snapshot) => snapshot,
+                AggregatorResponse::Reserve(_)
+                | AggregatorResponse::Log { .. }
+                | AggregatorResponse::Ack => {
+                    continue;
+                }
+            };
             #[cfg(feature = "sd-storage")]
-            match command {
-                RuntimeCommand::OwnerStorage { header, command } => {
-                    owner_transfer = super::diagnostic_owner_storage::handle_owner_storage_command(
-                        &mut serial,
-                        &mut owner_runtime,
-                        header,
-                        command,
-                        owner_transfer,
-                        owner_response,
-                    )
-                    .await;
-                }
-                command => {
-                    handle_command(&mut serial, &mut crash_store, snapshot, command).await;
-                }
-            }
+            let command = binbook_fw::diag::poll_runtime_command_owner_storage(
+                &mut serial,
+                snapshot,
+                &mut storage,
+                owner_transfer,
+            );
             #[cfg(not(feature = "sd-storage"))]
-            handle_command(&mut serial, &mut crash_store, snapshot, command).await;
+            let command = poll_runtime_command(&mut serial, snapshot, &mut storage);
+            if let Some(command) = command {
+                let header = command.header();
+                RUNTIME_EVENT_CHANNEL
+                    .sender()
+                    .send(RuntimeEvent {
+                        timestamp_ms: embassy_time::Instant::now().as_millis(),
+                        kind: RuntimeEventKind::ProtocolCommand {
+                            opcode: header.opcode as u8,
+                            sequence: header.sequence,
+                        },
+                    })
+                    .await;
+                #[cfg(feature = "sd-storage")]
+                match command {
+                    RuntimeCommand::OwnerStorage { header, command } => {
+                        owner_transfer =
+                            super::diagnostic_owner_storage::handle_owner_storage_command(
+                                &mut serial,
+                                &mut owner_runtime,
+                                header,
+                                command,
+                                owner_transfer,
+                                owner_response,
+                            )
+                            .await;
+                    }
+                    command => {
+                        handle_command(&mut serial, &mut crash_store, snapshot, command).await;
+                    }
+                }
+                #[cfg(not(feature = "sd-storage"))]
+                handle_command(&mut serial, &mut crash_store, snapshot, command).await;
+            }
         }
 
         if !serial.pending_tx().is_empty() {
             let pending_len = serial.pending_tx().len();
-            if usb_tx.write(serial.pending_tx()).is_ok() {
+            if embedded_io_async::Write::write_all(&mut usb_tx, serial.pending_tx())
+                .await
+                .is_ok()
+                && embedded_io_async::Write::flush(&mut usb_tx).await.is_ok()
+            {
                 serial.consume_tx(pending_len);
             }
         }
 
-        let _ = query_aggregator(AggregatorQuery::ProtocolErrors(
-            serial.protocol_error_count(),
-        ))
-        .await;
-        embassy_time::Timer::after_millis(10).await;
+        let protocol_errors = serial.protocol_error_count();
+        if protocol_errors != published_protocol_errors {
+            let _ = query_aggregator(AggregatorQuery::ProtocolErrors(protocol_errors)).await;
+            published_protocol_errors = protocol_errors;
+        }
     }
 }
 
@@ -142,18 +181,50 @@ pub(super) async fn diagnostic_task_with_sd(
         >,
     >,
 ) {
+    use embassy_futures::select::{select, Either};
     use esp_hal::usb_serial_jtag::UsbSerialJtag;
 
-    let usb = UsbSerialJtag::new(usb_device);
+    let usb = UsbSerialJtag::new(usb_device).into_async();
     let (mut usb_rx, mut usb_tx) = usb.split();
     let mut serial = SerialState::new();
     let mut crash_store = CrashStore::new(esp_storage::FlashStorage::new(flash));
     let mut storage = binbook_fw::diag_storage::FilesystemStorage::new(sd_fs);
+    let completion_rx = AGGREGATOR_COMPLETION_CHANNEL.receiver();
+    let mut published_protocol_errors = 0;
 
     loop {
         let mut usb_read_buf = [0u8; 64];
-        let received = usb_rx.drain_rx_fifo(&mut usb_read_buf);
-        if received > 0 {
+        if !serial.needs_service(false) {
+            match select(
+                embedded_io_async::Read::read(&mut usb_rx, &mut usb_read_buf),
+                completion_rx.receive(),
+            )
+            .await
+            {
+                Either::First(Ok(received)) => {
+                    serial.feed_rx(&usb_read_buf[..received]);
+                }
+                Either::First(Err(error)) => match error {},
+                Either::Second(committed) => {
+                    let status = match committed.completion.status {
+                        RuntimeCompletionStatus::Ok => Status::Ok,
+                        RuntimeCompletionStatus::Error => Status::Error,
+                    };
+                    let _ = complete_pending_command(
+                        &mut serial,
+                        committed.pending,
+                        status,
+                        committed.completion.page,
+                        &[],
+                    );
+                }
+            }
+        }
+        loop {
+            let received = usb_rx.drain_rx_fifo(&mut usb_read_buf);
+            if received == 0 {
+                break;
+            }
             serial.feed_rx(&usb_read_buf[..received]);
         }
 
@@ -171,41 +242,47 @@ pub(super) async fn diagnostic_task_with_sd(
             );
         }
 
-        let snapshot = match query_aggregator(AggregatorQuery::Status).await {
-            AggregatorResponse::Status(snapshot) => snapshot,
-            AggregatorResponse::Reserve(_)
-            | AggregatorResponse::Log { .. }
-            | AggregatorResponse::Ack => {
-                continue;
+        if serial.frame_ready() {
+            let snapshot = match query_aggregator(AggregatorQuery::Status).await {
+                AggregatorResponse::Status(snapshot) => snapshot,
+                AggregatorResponse::Reserve(_)
+                | AggregatorResponse::Log { .. }
+                | AggregatorResponse::Ack => {
+                    continue;
+                }
+            };
+            if let Some(command) = poll_runtime_command(&mut serial, snapshot, &mut storage) {
+                let header = command.header();
+                RUNTIME_EVENT_CHANNEL
+                    .sender()
+                    .send(RuntimeEvent {
+                        timestamp_ms: embassy_time::Instant::now().as_millis(),
+                        kind: RuntimeEventKind::ProtocolCommand {
+                            opcode: header.opcode as u8,
+                            sequence: header.sequence,
+                        },
+                    })
+                    .await;
+                handle_command(&mut serial, &mut crash_store, snapshot, command).await;
             }
-        };
-        if let Some(command) = poll_runtime_command(&mut serial, snapshot, &mut storage) {
-            let header = command.header();
-            RUNTIME_EVENT_CHANNEL
-                .sender()
-                .send(RuntimeEvent {
-                    timestamp_ms: embassy_time::Instant::now().as_millis(),
-                    kind: RuntimeEventKind::ProtocolCommand {
-                        opcode: header.opcode as u8,
-                        sequence: header.sequence,
-                    },
-                })
-                .await;
-            handle_command(&mut serial, &mut crash_store, snapshot, command).await;
         }
 
         if !serial.pending_tx().is_empty() {
             let pending_len = serial.pending_tx().len();
-            if usb_tx.write(serial.pending_tx()).is_ok() {
+            if embedded_io_async::Write::write_all(&mut usb_tx, serial.pending_tx())
+                .await
+                .is_ok()
+                && embedded_io_async::Write::flush(&mut usb_tx).await.is_ok()
+            {
                 serial.consume_tx(pending_len);
             }
         }
 
-        let _ = query_aggregator(AggregatorQuery::ProtocolErrors(
-            serial.protocol_error_count(),
-        ))
-        .await;
-        embassy_time::Timer::after_millis(10).await;
+        let protocol_errors = serial.protocol_error_count();
+        if protocol_errors != published_protocol_errors {
+            let _ = query_aggregator(AggregatorQuery::ProtocolErrors(protocol_errors)).await;
+            published_protocol_errors = protocol_errors;
+        }
     }
 }
 

@@ -73,6 +73,7 @@ thiserror = "2"
 serialport = { version = "4", default-features = false }
 embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
+embedded-io-async = "0.6.1"
 embedded-graphics = { version = "0.8", default-features = false }
 embedded-graphics-core = { version = "0.4", default-features = false }
 profont = { version = "0.7", default-features = false }

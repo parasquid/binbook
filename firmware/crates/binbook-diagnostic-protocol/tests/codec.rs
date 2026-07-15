@@ -141,6 +141,19 @@ fn storage_backend_and_unsupported_status_and_cap_storage() {
     assert_eq!(Status::Unsupported, Status::from_u8(5).unwrap());
     assert_eq!(binbook_diagnostic_protocol::CAP_STORAGE, 1 << 6);
     assert_eq!(binbook_diagnostic_protocol::CAP_REFRESH_MODE, 1 << 7);
+    assert_eq!(
+        binbook_diagnostic_protocol::CAP_STORAGE_UPLOAD_WINDOW_2,
+        1 << 8
+    );
+    assert_ne!(
+        binbook_diagnostic_protocol::ALL_CAPABILITIES
+            & binbook_diagnostic_protocol::CAP_STORAGE_UPLOAD_WINDOW_2,
+        0
+    );
+    assert_eq!(
+        binbook_diagnostic_protocol::CAP_STORAGE_READ_WINDOW_2,
+        1 << 9
+    );
 }
 
 #[test]

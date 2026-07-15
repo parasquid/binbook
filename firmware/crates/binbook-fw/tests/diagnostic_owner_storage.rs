@@ -121,7 +121,7 @@ fn diagnostic_upload_tracks_exact_size_offset_and_crc() {
     assert!(wrong.accept(11, 0, b"nope").is_err());
     assert!(wrong.accept(10, 1, b"nope").is_err());
     wrong.accept(10, 0, b"nope").unwrap();
-    assert_eq!(wrong.finish(10).unwrap().0, false);
+    assert!(!wrong.finish(10).unwrap().0);
 }
 
 #[test]

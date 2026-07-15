@@ -33,6 +33,20 @@ impl SerialSession {
     ) -> Result<Vec<u8>, String> {
         send_and_receive_io(&mut self.port, frame, opcode, sequence, timeout)
     }
+
+    pub(crate) fn exchange_frame_batch(
+        &mut self,
+        requests: &[u8],
+        expected_sequences: &[u16],
+        timeout: Duration,
+    ) -> Result<Vec<Vec<u8>>, String> {
+        crate::upload_serial_batch::exchange_batch(
+            &mut self.port,
+            requests,
+            expected_sequences,
+            timeout,
+        )
+    }
 }
 
 pub fn send_and_receive_io<T: Read + Write>(
@@ -94,6 +108,15 @@ pub fn send_and_receive_io<T: Read + Write>(
         }
     }
     Err("response timeout without matching sequence".into())
+}
+
+pub fn send_upload_batch_io<T: Read + Write>(
+    io: &mut T,
+    requests: &[u8],
+    expected_sequences: &[u16],
+    timeout: Duration,
+) -> Result<Vec<Vec<u8>>, String> {
+    crate::upload_serial_batch::exchange_batch(io, requests, expected_sequences, timeout)
 }
 
 pub fn send_batch_and_receive_io<T: Read + Write>(

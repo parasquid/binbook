@@ -343,6 +343,8 @@ fn cli_hello_formats_identity_and_capabilities() {
     assert!(text.contains("firmware=binbook-fw"));
     assert!(text.contains("target=xteink-x4"));
     assert!(text.contains("KEY,PAGE,STATUS,LOG,CRASH,DISPLAY_PROBE,STORAGE"));
+    assert!(text.contains("STORAGE_UPLOAD_WINDOW_2"));
+    assert!(text.contains("STORAGE_READ_WINDOW_2"));
 }
 
 #[test]

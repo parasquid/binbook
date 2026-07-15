@@ -25,6 +25,7 @@ use super::{
 pub(super) struct DiagnosticOwnerRuntime {
     sequence: u32,
     upload: Option<DiagnosticUpload>,
+    read_file: Option<(StorageName, u64)>,
 }
 
 impl DiagnosticOwnerRuntime {
@@ -32,6 +33,7 @@ impl DiagnosticOwnerRuntime {
         Self {
             sequence: 250_000,
             upload: None,
+            read_file: None,
         }
     }
 
@@ -61,52 +63,50 @@ pub(super) async fn handle_owner_storage_command(
             name,
             offset,
             max_bytes,
-        } => {
-            let size = exchange(runtime, Request::FileSize { name: name.clone() }, None).await;
-            match size.envelope.response {
-                Ok(Response::FileSize(file_size)) if u64::from(offset) <= file_size => {
-                    let available = file_size - u64::from(offset);
-                    let len = available
-                        .min(u64::from(max_bytes))
-                        .min((MAX_PAYLOAD_BYTES - 5) as u64)
-                        .min(u64::from(MAX_BOUNDED_IO_BYTES)) as u16;
-                    if len == 0 {
-                        match encode_store_read_response(&[], true, response_payload) {
-                            Ok(wrote) => (Status::Ok, wrote),
-                            Err(_) => (Status::InternalError, 0),
-                        }
-                    } else {
-                        let request =
-                            Request::read(name, u64::from(offset), len, BufferSlot::Diagnostic)
-                                .expect("diagnostic read is bounded");
-                        let read = exchange(
-                            runtime,
-                            request,
-                            Some(BufferLease::new(BufferSlot::Diagnostic, transfer)),
-                        )
-                        .await;
-                        transfer = take_transfer(read.buffer);
-                        match read.envelope.response {
-                            Ok(Response::Read(actual)) if actual == len => {
-                                let eof = u64::from(offset) + u64::from(actual) >= file_size;
-                                match encode_store_read_response(
-                                    &transfer[..usize::from(actual)],
-                                    eof,
-                                    response_payload,
-                                ) {
-                                    Ok(wrote) => (Status::Ok, wrote),
-                                    Err(_) => (Status::InternalError, 0),
-                                }
+        } => match read_file_size(runtime, &name).await {
+            Some(file_size) if u64::from(offset) <= file_size => {
+                let available = file_size - u64::from(offset);
+                let len = available
+                    .min(u64::from(max_bytes))
+                    .min((MAX_PAYLOAD_BYTES - 5) as u64)
+                    .min(u64::from(MAX_BOUNDED_IO_BYTES)) as u16;
+                if len == 0 {
+                    match encode_store_read_response(&[], true, response_payload) {
+                        Ok(wrote) => (Status::Ok, wrote),
+                        Err(_) => (Status::InternalError, 0),
+                    }
+                } else {
+                    let request =
+                        Request::read(name, u64::from(offset), len, BufferSlot::Diagnostic)
+                            .expect("diagnostic read is bounded");
+                    let read = exchange(
+                        runtime,
+                        request,
+                        Some(BufferLease::new(BufferSlot::Diagnostic, transfer)),
+                    )
+                    .await;
+                    transfer = take_transfer(read.buffer);
+                    match read.envelope.response {
+                        Ok(Response::Read(actual)) if actual == len => {
+                            let eof = u64::from(offset) + u64::from(actual) >= file_size;
+                            match encode_store_read_response(
+                                &transfer[..usize::from(actual)],
+                                eof,
+                                response_payload,
+                            ) {
+                                Ok(wrote) => (Status::Ok, wrote),
+                                Err(_) => (Status::InternalError, 0),
                             }
-                            _ => (Status::Error, 0),
                         }
+                        _ => (Status::Error, 0),
                     }
                 }
-                Ok(Response::FileSize(_)) => (Status::BadRequest, 0),
-                _ => (Status::NotFound, 0),
             }
-        }
+            Some(_) => (Status::BadRequest, 0),
+            None => (Status::NotFound, 0),
+        },
         OwnerStorageCommand::Delete { name } => {
+            runtime.read_file = None;
             let deleted = exchange(runtime, Request::Delete { name }, None).await;
             if matches!(deleted.envelope.response, Ok(Response::Ack)) {
                 request_library_refresh().await;
@@ -120,6 +120,7 @@ pub(super) async fn handle_owner_storage_command(
             file_size,
             expected_crc32,
         } => {
+            runtime.read_file = None;
             if runtime.upload.is_some() {
                 (Status::BadRequest, 0)
             } else {
@@ -238,6 +239,21 @@ pub(super) async fn handle_owner_storage_command(
     };
     queue_runtime_response(serial, header, status, &response_payload[..payload_len]);
     transfer
+}
+
+async fn read_file_size(runtime: &mut DiagnosticOwnerRuntime, name: &StorageName) -> Option<u64> {
+    if let Some((cached_name, file_size)) = runtime.read_file.as_ref() {
+        if cached_name == name {
+            return Some(*file_size);
+        }
+    }
+    let size = exchange(runtime, Request::FileSize { name: name.clone() }, None).await;
+    let Ok(Response::FileSize(file_size)) = size.envelope.response else {
+        runtime.read_file = None;
+        return None;
+    };
+    runtime.read_file = Some((name.clone(), file_size));
+    Some(file_size)
 }
 
 async fn list_index(

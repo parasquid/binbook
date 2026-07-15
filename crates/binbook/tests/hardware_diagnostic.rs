@@ -3,10 +3,12 @@
 use std::io::{self, Read, Write};
 
 use binbook_diagnostic_protocol::{
-    crc16_ccitt_false, decode_frame, decode_page_payload, encode_frame, encode_log_record,
-    encode_log_response_header, encode_page_response, encode_status_payload, FrameHeader,
-    FrameKind, LogRecordPayload, LogResponseHeader, Opcode, PageAction, PanelModeCode, Status,
-    StatusPayload, FRAME_DELIMITER, MAGIC, MAX_FRAME_BYTES, PROTOCOL_VERSION,
+    crc16_ccitt_false, decode_frame, decode_page_payload, decode_store_upload_begin_response,
+    decode_store_upload_write_response, encode_frame, encode_log_record,
+    encode_log_response_header, encode_page_response, encode_status_payload,
+    encode_store_upload_write_request, FrameHeader, FrameKind, LogRecordPayload, LogResponseHeader,
+    Opcode, PageAction, PanelModeCode, Status, StatusPayload, StoreUploadWriteRequest,
+    FRAME_DELIMITER, MAGIC, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
 };
 
 const PORT: &str = "/dev/ttyACM0";
@@ -61,6 +63,17 @@ fn find_frame(data: &[u8]) -> Option<&[u8]> {
     data.iter()
         .position(|&b| b == FRAME_DELIMITER)
         .map(|pos| &data[..=pos])
+}
+
+fn crc32_iso_hdlc(bytes: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xedb8_8320 & (0u32.wrapping_sub(crc & 1)));
+        }
+    }
+    !crc
 }
 
 #[test]
@@ -1049,6 +1062,79 @@ fn hardware_two_frame_batched_request() {
 
     assert!(sequences.contains(&42), "should contain sequence 42");
     assert!(sequences.contains(&43), "should contain sequence 43");
+}
+
+#[test]
+#[ignore]
+fn hardware_two_max_frame_storage_write_requests() {
+    const DATA_BYTES: usize = MAX_PAYLOAD_BYTES - 8;
+    const NAME: &str = "max-frame-window.binbook";
+    let data = [0x55u8; DATA_BYTES * 2];
+    let crc32 = crc32_iso_hdlc(&data);
+    let begin =
+        binbook::diag_protocol::store_upload_begin_request(50, NAME, data.len() as u32, crc32);
+    let mut port = open_port();
+    let begin_response = binbook::serial_transport::send_and_receive_io(
+        &mut port,
+        &begin,
+        Opcode::StoreUploadBegin,
+        50,
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap();
+    let mut payload = [0u8; MAX_PAYLOAD_BYTES];
+    let (_, payload_len) = decode_frame(&begin_response, &mut payload).unwrap();
+    let upload_id = decode_store_upload_begin_response(&payload[..payload_len]).unwrap();
+
+    let mut batch = Vec::with_capacity(MAX_FRAME_BYTES * 2);
+    for (index, sequence) in [51u16, 52].into_iter().enumerate() {
+        let request = StoreUploadWriteRequest {
+            upload_id,
+            offset: (index * DATA_BYTES) as u32,
+            data: &data[index * DATA_BYTES..(index + 1) * DATA_BYTES],
+        };
+        let mut request_payload = [0u8; MAX_PAYLOAD_BYTES];
+        let request_len =
+            encode_store_upload_write_request(&request, &mut request_payload).unwrap();
+        let header = FrameHeader {
+            kind: FrameKind::Request,
+            opcode: Opcode::StoreUploadWrite,
+            status: Status::Ok,
+            sequence,
+            payload_len: request_len as u16,
+        };
+        let mut frame = [0u8; MAX_FRAME_BYTES];
+        let frame_len = encode_frame(&header, &request_payload[..request_len], &mut frame).unwrap();
+        assert_eq!(frame_len, MAX_FRAME_BYTES);
+        batch.extend_from_slice(&frame[..frame_len]);
+    }
+
+    let responses = binbook::serial_transport::send_upload_batch_io(
+        &mut port,
+        &batch,
+        &[51, 52],
+        std::time::Duration::from_secs(10),
+    )
+    .unwrap();
+    for response in responses {
+        let (header, payload_len) = decode_frame(&response, &mut payload).unwrap();
+        assert_eq!(header.opcode, Opcode::StoreUploadWrite);
+        assert_eq!(header.status, Status::Ok);
+        assert_eq!(
+            decode_store_upload_write_response(&payload[..payload_len]).unwrap(),
+            DATA_BYTES as u32
+        );
+    }
+
+    let abort = binbook::diag_protocol::store_abort_request(53, upload_id);
+    binbook::serial_transport::send_and_receive_io(
+        &mut port,
+        &abort,
+        Opcode::StoreAbort,
+        53,
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap();
 }
 
 #[test]

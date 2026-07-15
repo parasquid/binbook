@@ -49,14 +49,7 @@ pub enum Commands {
         #[arg(short, long)]
         firmware: PathBuf,
     },
-    Upload {
-        #[arg(short, long)]
-        port: String,
-        #[arg(short, long)]
-        file: PathBuf,
-        #[arg(short, long)]
-        name: String,
-    },
+    Upload(UploadArgs),
     List {
         #[arg(short, long)]
         port: String,
@@ -69,6 +62,29 @@ pub enum Commands {
     },
     #[command(subcommand)]
     Diag(DiagCommand),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct UploadArgs {
+    #[arg(short, long)]
+    pub port: String,
+    #[arg(short, long)]
+    pub file: PathBuf,
+    #[arg(short, long, visible_alias = "path")]
+    pub name: Option<String>,
+    #[arg(long, value_enum)]
+    pub progress: Option<ProgressMode>,
+    #[arg(long)]
+    pub no_wait_library: bool,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ProgressMode {
+    Always,
+    Auto,
+    Never,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -329,14 +345,7 @@ pub enum StorageCommand {
         crc32: u32,
     },
     /// Upload a file to a storage backend
-    Upload {
-        #[arg(short, long)]
-        port: String,
-        #[arg(long)]
-        path: String,
-        #[arg(short, long)]
-        file: std::path::PathBuf,
-    },
+    Upload(UploadArgs),
     /// Abort an in-progress upload by its device-assigned ID
     Abort {
         #[arg(short, long)]

@@ -1,12 +1,13 @@
 #![cfg(feature = "diagnostic-console")]
 
+use binbook_diagnostic_protocol::MAX_FRAME_BYTES;
+use binbook_fw::diag::SerialState;
+
 #[test]
 fn diag_serial_keeps_partial_frame_until_delimiter() {
     use binbook_diagnostic_protocol::{
         encode_frame, FrameHeader, FrameKind, Opcode, Status, MAX_FRAME_BYTES,
     };
-    use binbook_fw::diag::SerialState;
-
     let mut state = SerialState::new();
     let header = FrameHeader {
         kind: FrameKind::Request,
@@ -31,6 +32,63 @@ fn diag_serial_keeps_partial_frame_until_delimiter() {
         state.next_frame(&mut out).is_some(),
         "should yield frame after delimiter"
     );
+}
+
+#[test]
+fn maximum_frame_in_64_byte_fragments_dispatches_only_after_delimiter() {
+    let mut serial = SerialState::new();
+    let mut frame = vec![1u8; MAX_FRAME_BYTES];
+    frame[MAX_FRAME_BYTES - 1] = 0;
+
+    for (index, fragment) in frame.chunks(64).enumerate() {
+        let result = serial.feed_rx(fragment);
+        assert_eq!(result.consumed, fragment.len());
+        if index + 1 == frame.len().div_ceil(64) {
+            assert!(result.frame_ready);
+            assert!(serial.frame_ready());
+        } else {
+            assert!(!result.frame_ready);
+            assert!(!serial.frame_ready());
+        }
+    }
+
+    let mut decoded = [0u8; MAX_FRAME_BYTES];
+    assert_eq!(serial.next_frame(&mut decoded), Some(MAX_FRAME_BYTES));
+    assert_eq!(decoded, frame.as_slice());
+    assert!(!serial.frame_ready());
+    assert_eq!(serial.protocol_error_count(), 0);
+}
+
+#[test]
+fn two_maximum_frames_fill_existing_ring_without_drop_or_reorder() {
+    let mut first = vec![1u8; MAX_FRAME_BYTES];
+    first[MAX_FRAME_BYTES - 1] = 0;
+    let mut second = vec![2u8; MAX_FRAME_BYTES];
+    second[MAX_FRAME_BYTES - 1] = 0;
+    let mut serial = SerialState::new();
+    for fragment in first
+        .iter()
+        .chain(second.iter())
+        .copied()
+        .collect::<Vec<_>>()
+        .chunks(64)
+    {
+        serial.feed_rx(fragment);
+    }
+
+    let mut decoded = [0u8; MAX_FRAME_BYTES];
+    assert_eq!(serial.next_frame(&mut decoded), Some(MAX_FRAME_BYTES));
+    assert_eq!(decoded, first.as_slice());
+    assert_eq!(serial.next_frame(&mut decoded), Some(MAX_FRAME_BYTES));
+    assert_eq!(decoded, second.as_slice());
+    assert_eq!(serial.protocol_error_count(), 0);
+}
+
+#[test]
+fn completion_without_usb_input_requires_immediate_service() {
+    let serial = SerialState::new();
+    assert!(!serial.needs_service(false));
+    assert!(serial.needs_service(true));
 }
 
 #[test]

@@ -95,6 +95,14 @@ impl SerialState {
         Some(frame_len)
     }
 
+    pub fn frame_ready(&self) -> bool {
+        self.rx_buf[..self.rx_pos].contains(&FRAME_DELIMITER)
+    }
+
+    pub fn needs_service(&self, completion_pending: bool) -> bool {
+        completion_pending || self.frame_ready() || self.tx_pos != 0
+    }
+
     pub fn queue_tx(&mut self, frame: &[u8]) -> Result<(), TransportError> {
         if self.tx_pos + frame.len() > SERIAL_TX_BUF_SIZE {
             return Err(TransportError::BufferFull);

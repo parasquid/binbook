@@ -14,6 +14,8 @@ pub const CAP_CRASH: u32 = 1 << 4;
 pub const CAP_DISPLAY_PROBE: u32 = 1 << 5;
 pub const CAP_STORAGE: u32 = 1 << 6;
 pub const CAP_REFRESH_MODE: u32 = 1 << 7;
+pub const CAP_STORAGE_UPLOAD_WINDOW_2: u32 = 1 << 8;
+pub const CAP_STORAGE_READ_WINDOW_2: u32 = 1 << 9;
 
 pub const ALL_CAPABILITIES: u32 = CAP_KEY
     | CAP_PAGE
@@ -22,7 +24,9 @@ pub const ALL_CAPABILITIES: u32 = CAP_KEY
     | CAP_CRASH
     | CAP_DISPLAY_PROBE
     | CAP_STORAGE
-    | CAP_REFRESH_MODE;
+    | CAP_REFRESH_MODE
+    | CAP_STORAGE_UPLOAD_WINDOW_2
+    | CAP_STORAGE_READ_WINDOW_2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolError {

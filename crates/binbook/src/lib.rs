@@ -10,6 +10,8 @@ mod inspect;
 pub mod nav_burst;
 pub mod page_turn_cadence;
 pub mod partial_window_busy;
+#[cfg(feature = "serial-device")]
+pub mod progress;
 pub mod protocol;
 
 #[cfg(feature = "serial-device")]
@@ -22,10 +24,27 @@ mod exercise_decode;
 mod exercise_validation;
 #[cfg(feature = "serial-device")]
 pub mod serial_transport;
+#[cfg(feature = "serial-device")]
+pub mod storage_readback;
+#[cfg(feature = "serial-device")]
+pub mod upload;
+#[cfg(feature = "serial-device")]
+pub mod upload_command;
+#[cfg(feature = "serial-device")]
+mod upload_library;
+#[cfg(feature = "serial-device")]
+mod upload_protocol;
+#[cfg(feature = "serial-device")]
+mod upload_serial_batch;
+#[cfg(feature = "serial-device")]
+mod upload_source;
+#[cfg(feature = "serial-device")]
+mod upload_types;
 
 pub use args::{
     Cli, Commands, DiagCommand, ExerciseCommand, FontChoice, InputFormat, PageAction, PixelFormat,
-    ProbeCommand, Profile, RefreshModeAction, RefreshModeChoice, StorageCommand,
+    ProbeCommand, Profile, ProgressMode, RefreshModeAction, RefreshModeChoice, StorageCommand,
+    UploadArgs,
 };
 pub use decode::run_decode;
 pub use encode::run_encode;

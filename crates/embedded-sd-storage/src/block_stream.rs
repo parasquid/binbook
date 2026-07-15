@@ -75,10 +75,12 @@ where
             let absolute = self.base_offset + self.position;
             let block_idx = BlockIdx((absolute / 512) as u32);
             let block_off = (absolute % 512) as usize;
-            self.device
-                .read(core::slice::from_mut(&mut self.scratch), block_idx)
-                .map_err(StreamError::Device)?;
             let len = min(input.len(), 512 - block_off);
+            if block_off != 0 || len != 512 {
+                self.device
+                    .read(core::slice::from_mut(&mut self.scratch), block_idx)
+                    .map_err(StreamError::Device)?;
+            }
             self.scratch.contents[block_off..block_off + len].copy_from_slice(&input[..len]);
             self.device
                 .write(core::slice::from_ref(&self.scratch), block_idx)

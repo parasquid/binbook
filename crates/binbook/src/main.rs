@@ -6,6 +6,21 @@ fn run_diag(cmd: DiagCommand) {
     binbook::diag_cli::run_diag(cmd);
 }
 
+#[cfg(feature = "serial-device")]
+fn run_upload(args: binbook::UploadArgs) {
+    if let Err(error) = binbook::upload_command::run_command(&args) {
+        eprintln!("error: {error}");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(not(feature = "serial-device"))]
+fn run_upload(args: binbook::UploadArgs) {
+    let _ = args;
+    eprintln!("serial-device feature is not enabled. Rebuild with --features serial-device.");
+    std::process::exit(1);
+}
+
 #[cfg(not(feature = "serial-device"))]
 fn run_diag(cmd: DiagCommand) {
     let _ = cmd;
@@ -46,9 +61,7 @@ fn main() {
         Commands::Flash { port, firmware } => {
             println!("Flashing {} to {}...", firmware.display(), port);
         }
-        Commands::Upload { port, file, name } => {
-            println!("Uploading {} as {} to {}...", file.display(), name, port);
-        }
+        Commands::Upload(args) => run_upload(args),
         Commands::List { port } => {
             println!("Listing books on {}...", port);
         }

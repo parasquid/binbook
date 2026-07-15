@@ -4,7 +4,7 @@ use std::io::{self, Read, Write};
 use std::time::Duration;
 
 use binbook::serial_transport::{
-    send_and_receive_io, send_batch_and_receive_io, send_batch_observed_io,
+    send_and_receive_io, send_batch_and_receive_io, send_batch_observed_io, send_upload_batch_io,
 };
 use binbook_diagnostic_protocol::{
     decode_frame, encode_frame, FrameHeader, FrameKind, KeyCode, Opcode, Status, MAX_FRAME_BYTES,
@@ -212,6 +212,28 @@ fn batch_transport_collects_every_sequence_checked_response() {
 
     assert_eq!(io.written, requests);
     assert_eq!(decoded_sequences(&responses), [10, 11, 12]);
+}
+
+#[test]
+fn upload_batch_collects_fragmented_success_and_error_responses_before_validation() {
+    let requests = key_batch(&[(10, KeyCode::Right), (11, KeyCode::Left)]);
+    let first = response(Opcode::Key, 10, Status::InternalError);
+    let second = response(Opcode::Key, 11, Status::Ok);
+    let mut combined = first.clone();
+    combined.extend_from_slice(&second);
+    let fragments = combined.chunks(3).map(<[u8]>::to_vec).collect();
+    let mut io = FakeIo {
+        reads: fragments,
+        index: 0,
+        written: vec![],
+    };
+
+    let responses =
+        send_upload_batch_io(&mut io, &requests, &[10, 11], Duration::from_secs(2)).unwrap();
+
+    assert_eq!(io.written, requests);
+    assert_eq!(decoded_sequences(&responses), [10, 11]);
+    assert_eq!(responses, [first, second]);
 }
 
 #[test]
