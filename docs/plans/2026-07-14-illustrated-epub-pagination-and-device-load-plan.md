@@ -1,5 +1,7 @@
 # Illustrated EPUB Pagination and X4 Device Replacement Plan
 
+**Status:** Completed and verified on live Xteink X4 hardware on 2026-07-15.
+
 > **For the implementing agent:** Start cold from the repository root and
 > execute this plan sequentially in the current branch/worktree. Do not
 > delegate to subagents. Use a todo tracker and update it as each task moves
@@ -235,9 +237,9 @@ its one or two `CompiledPage` values are produced.
 
 ## 3. Task 0 - Establish a Safe Baseline
 
-- [ ] Read all authoritative references and code-path files listed above.
-- [ ] Start/update the todo tracker with Tasks 0 through 10 from this plan.
-- [ ] Confirm branch, commits, and tracked cleanliness:
+- [x] Read all authoritative references and code-path files listed above.
+- [x] Start/update the todo tracker with Tasks 0 through 10 from this plan.
+- [x] Confirm branch, commits, and tracked cleanliness:
 
   ```bash
   git branch --show-current
@@ -245,7 +247,7 @@ its one or two `CompiledPage` values are produced.
   git status --short
   ```
 
-- [ ] Confirm the official source is present or download it only to ignored
+- [x] Confirm the official source is present or download it only to ignored
   evidence storage:
 
   ```bash
@@ -257,12 +259,12 @@ its one or two `CompiledPage` values are produced.
   unzip -l target/diag-evidence/wind-in-the-willows/pg27805.epub
   ```
 
-- [ ] Confirm the archive metadata says eBook 27805, title *The Wind in the
+- [x] Confirm the archive metadata says eBook 27805, title *The Wind in the
   Willows*, author Kenneth Grahame, and contains the 16 expected JPEG resources.
-- [ ] Do **not** rerun the known runaway encoder before Task 1. The recorded
+- [x] Do **not** rerun the known runaway encoder before Task 1. The recorded
   >15 GiB RSS trace is sufficient RED evidence and another run can destabilize
   the host.
-- [ ] Run focused pre-change tests to distinguish new regressions from existing
+- [x] Run focused pre-change tests to distinguish new regressions from existing
   state:
 
   ```bash
@@ -281,35 +283,35 @@ mutation has occurred.
 
 **Primary file:** `crates/binbook-render/src/pagination.rs`
 
-- [ ] Add a private split-decision helper and its failing unit tests before
+- [x] Add a private split-decision helper and its failing unit tests before
   changing `push_text`. The helper should return `None` when a nonempty string
   has no complete scalar that fits the remaining budget. Cover a 2-byte,
   3-byte, and 4-byte scalar with only 1, 2, and 3 bytes remaining.
-- [ ] Run the exact new tests and observe RED because the helper/behavior does
+- [x] Run the exact new tests and observe RED because the helper/behavior does
   not exist. Do not run a test that deliberately enters the old infinite loop.
-- [ ] Implement the smallest progress-safe behavior:
+- [x] Implement the smallest progress-safe behavior:
   - an empty input returns immediately;
   - a positive split appends a nonempty span and consumes exactly that prefix;
   - a zero/`None` split starts a new text page without appending an empty span;
   - every loop iteration therefore consumes input or increases usable page
     capacity.
-- [ ] Add the full regression test using `"a".repeat(1249)` followed by UTF-8
+- [x] Add the full regression test using `"a".repeat(1249)` followed by UTF-8
   punctuation and tail text. Assert:
   - two pages are produced;
   - every span is nonempty;
   - concatenated text is byte-identical to the input;
   - no page exceeds the 1,250-byte budget;
   - a second run is deterministic.
-- [ ] Include a case where the boundary text contains the curly quote/em dash
+- [x] Include a case where the boundary text contains the curly quote/em dash
   class used by the Gutenberg source.
-- [ ] Run:
+- [x] Run:
 
   ```bash
   rustup run nightly cargo test -p binbook-render
   rustup run nightly cargo test -p binbook-compiler
   ```
 
-- [ ] Commit only this independently correct bug fix and its tests:
+- [x] Commit only this independently correct bug fix and its tests:
 
   ```bash
   git add crates/binbook-render/src/pagination.rs
@@ -330,34 +332,34 @@ no empty spans, and focused suites pass.
 - `crates/binbook-epub/src/html.rs`
 - `crates/binbook-epub/tests/epub.rs` and its synthetic fixture builder
 
-- [ ] First update model tests to require captionless and captioned image
+- [x] First update model tests to require captionless and captioned image
   constructors to preserve resource ID, alt text, and optional caption.
-- [ ] Run `cargo test -p binbook-document` and observe RED.
-- [ ] Add the `caption` field and constructor shown in section 2; update all
+- [x] Run `cargo test -p binbook-document` and observe RED.
+- [x] Add the `caption` field and constructor shown in section 2; update all
   exhaustive `Node::Image` patterns with explicit fields or `..`.
-- [ ] Run `cargo test -p binbook-document` and require GREEN.
-- [ ] Extend the synthetic EPUB fixture before parser implementation with:
+- [x] Run `cargo test -p binbook-document` and require GREEN.
+- [x] Extend the synthetic EPUB fixture before parser implementation with:
   - a normal `<img>` without a caption;
   - a Gutenberg-style `<div class="figcenter" role="figure">` containing one
     `<img>` and one `<span class="caption">`;
   - an SVG wrapper containing `<image xlink:href="...">`;
   - a missing image reference.
-- [ ] Add failing parser assertions that:
+- [x] Add failing parser assertions that:
   - all three present resources become `Node::Image` nodes;
   - only the figure image receives its normalized real caption;
   - the associated caption is absent from ordinary text nodes;
   - the SVG reference resolves relative to its XHTML resource;
   - the missing resource remains a visible fallback plus a
     `MissingResource` diagnostic.
-- [ ] Implement figure extraction without leaking DOM/dependency types into
+- [x] Implement figure extraction without leaking DOM/dependency types into
   public APIs. Only collapse a recognized figure/cover container when exactly
   one descendant image reference resolves; otherwise keep normal recursive
   conversion and diagnostics.
-- [ ] Attribute matching must use local names so `href` and `xlink:href` both
+- [x] Attribute matching must use local names so `href` and `xlink:href` both
   work. Normalize caption whitespace in the same deterministic manner as body
   text.
-- [ ] Ensure the consumed caption subtree is not converted a second time.
-- [ ] Run:
+- [x] Ensure the consumed caption subtree is not converted a second time.
+- [x] Run:
 
   ```bash
   rustup run nightly cargo test -p binbook-document
@@ -383,7 +385,7 @@ the locked typed representation and no duplicate caption text.
 - `crates/binbook-render/tests/golden.rs`
 - `crates/binbook-render/Cargo.toml`
 
-- [ ] Add RED render tests using in-memory `Document` resources and tiny
+- [x] Add RED render tests using in-memory `Document` resources and tiny
   lossless images with unmistakable colors/patterns:
   1. portrait art between two text blocks produces text, one artwork page,
      then text;
@@ -397,17 +399,17 @@ the locked typed representation and no duplicate caption text.
   8. aspect ratio is preserved and white letterboxing is allowed;
   9. unsupported image bytes produce a visible alt fallback and the new stable
      warning instead of aborting the document.
-- [ ] Run the exact new tests and observe RED.
-- [ ] Introduce private text/artwork page variants. On image insertion:
+- [x] Run the exact new tests and observe RED.
+- [x] Introduce private text/artwork page variants. On image insertion:
   - finish a nonempty current text page;
   - do not preserve redundant empty pages around the image;
   - append one private artwork input page;
   - resume text on a fresh page.
-- [ ] Add `UnsupportedImage` to render/compiler warning enums, mappings, CLI
+- [x] Add `UnsupportedImage` to render/compiler warning enums, mappings, CLI
   message, and exhaustive tests before using it.
-- [ ] Expand `RenderOptions` with storage format and dithering. Update every
+- [x] Expand `RenderOptions` with storage format and dithering. Update every
   construction site and default without changing default output.
-- [ ] Implement 2x RGBA artwork composition:
+- [x] Implement 2x RGBA artwork composition:
   - decode a resource once;
   - partition landscape source rectangles exactly;
   - create only one 960x1600 canvas at a time;
@@ -415,15 +417,15 @@ the locked typed representation and no duplicate caption text.
   - render caption text with supplied fonts and locked dimensions;
   - compile with the requested storage format/dither settings;
   - release temporary decoded/canvas buffers promptly.
-- [ ] For long captions, determine the last fitting UTF-8 boundary, append an
+- [x] For long captions, determine the last fitting UTF-8 boundary, append an
   ellipsis, and emit `UnsupportedContent`. Add a boundary test containing
   multibyte punctuation.
-- [ ] Record the compiled-output start page for each private input page. Remap
+- [x] Record the compiled-output start page for each private input page. Remap
   every anchor through that table after rasterization.
-- [ ] Add a navigation test with anchors before and after a landscape image;
+- [x] Add a navigation test with anchors before and after a landscape image;
   the later target must shift by two artwork pages, not one.
-- [ ] Ensure warnings remain stably sorted and include resource/spine context.
-- [ ] Run:
+- [x] Ensure warnings remain stably sorted and include resource/spine context.
+- [x] Run:
 
   ```bash
   rustup run nightly cargo test -p binbook-render
@@ -445,10 +447,10 @@ tests pass; no test relies only on page count.
 - `crates/binbook-compiler/tests/compile_epub.rs`
 - `crates/binbook/tests/compiler_cli.rs`
 
-- [ ] Extend the compiler's synthetic EPUB fixture with one portrait image,
+- [x] Extend the compiler's synthetic EPUB fixture with one portrait image,
   one odd-width landscape image, captions, text, and a navigation target after
   the landscape image.
-- [ ] Add RED assertions for:
+- [x] Add RED assertions for:
   - strict BinBook validation;
   - expected metadata and navigation;
   - one portrait plus two landscape pages in correct sequence;
@@ -457,12 +459,12 @@ tests pass; no test relies only on page count.
     selected;
   - `UnsupportedImage` warning propagation;
   - deterministic complete output bytes across two runs.
-- [ ] Pass `CompileOptions.pixel_format` and `dither` into `RenderOptions`.
+- [x] Pass `CompileOptions.pixel_format` and `dither` into `RenderOptions`.
   Do not change CLI flags or BinBook wire layout.
-- [ ] Add a process-level CLI regression containing the UTF-8 boundary and
+- [x] Add a process-level CLI regression containing the UTF-8 boundary and
   artwork. Require atomic output: success leaves one valid output; any injected
   render failure leaves no partial final file.
-- [ ] Run:
+- [x] Run:
 
   ```bash
   rustup run nightly cargo test -p binbook-compiler
@@ -481,21 +483,21 @@ with actual art, correct navigation, and requested rendition options.
 
 **Documentation:**
 
-- [ ] Add `docs/specs/2026-07-14-epub-artwork-pagination-design.md` as a
+- [x] Add `docs/specs/2026-07-14-epub-artwork-pagination-design.md` as a
   current-state technical specification. Record image discovery, caption
   association, orientation heuristic, exact landscape partition, no-crop
   invariant, caption layout, fallback/warning behavior, anchor remapping, and
   bounded per-image temporaries.
-- [ ] Update `README.md` so its existing "static images" claim states the
+- [x] Update `README.md` so its existing "static images" claim states the
   actual standalone-page behavior rather than an unqualified promise.
-- [ ] Update `docs/reference/rust-crate-architecture.md` only where the current
+- [x] Update `docs/reference/rust-crate-architecture.md` only where the current
   crate responsibility description needs clarification.
-- [ ] Link the new spec from `docs/README.md`.
-- [ ] Grep `docs/ROADMAP.md` for `image`, `EPUB`, `memory`, `stream`, and
+- [x] Link the new spec from `docs/README.md`.
+- [x] Grep `docs/ROADMAP.md` for `image`, `EPUB`, `memory`, `stream`, and
   `compiler`. Keep the future single-streaming-compiler work because this task
   does not complete it; remove or rewrite only claims directly contradicted by
   the implementation.
-- [ ] Do not add host-local paths, webcam coordinates, temporary filenames, or
+- [x] Do not add host-local paths, webcam coordinates, temporary filenames, or
   evidence paths to tracked docs.
 
 **Full gates:**
@@ -513,9 +515,9 @@ rustup run nightly cargo fmt --all --check
 git diff --check
 ```
 
-- [ ] Distinguish any pre-existing failure from a regression with exact output.
+- [x] Distinguish any pre-existing failure from a regression with exact output.
   Do not waive a new failure.
-- [ ] Commit implementation and documentation with focused Conventional
+- [x] Commit implementation and documentation with focused Conventional
   Commits. The intended remaining commits are:
 
   ```text
@@ -524,7 +526,7 @@ git diff --check
   ```
 
   Stage specific files only; never use `git add .` or `git add -A`.
-- [ ] Push the current branch to its configured upstream after all committed-
+- [x] Push the current branch to its configured upstream after all committed-
   tree checks pass. Do not amend, force-push, or change branches.
 
 **Gate:** The committed tree passes all relevant host/WASM/Python checks and
@@ -542,10 +544,10 @@ rustup run nightly cargo build \
   -p binbook --release --features serial-device
 ```
 
-- [ ] Remove only stale generated output from previous failed attempts; keep
+- [x] Remove only stale generated output from previous failed attempts; keep
   the verified source EPUB.
-- [ ] Record source size and SHA-256.
-- [ ] Resolve a GNU-compatible `time` executable, run the release encoder with
+- [x] Record source size and SHA-256.
+- [x] Resolve a GNU-compatible `time` executable, run the release encoder with
   verbose resource reporting, and preserve its full
   transcript under ignored evidence storage:
 
@@ -556,11 +558,11 @@ rustup run nightly cargo build \
     -o target/diag-evidence/wind-in-the-willows/the-wind-in-the-willows.binbook
   ```
 
-- [ ] Require normal exit, a nonempty final file, no partial sibling file, and
+- [x] Require normal exit, a nonempty final file, no partial sibling file, and
   maximum resident set size below **512 MiB**. If memory exceeds the bound, do
   not merely raise it: identify retained page/image buffers and add a targeted
   regression before proceeding.
-- [ ] Strictly inspect and record JSON:
+- [x] Strictly inspect and record JSON:
 
   ```bash
   target/release/binbook inspect \
@@ -570,24 +572,24 @@ rustup run nightly cargo build \
     target/diag-evidence/wind-in-the-willows/the-wind-in-the-willows.binbook
   ```
 
-- [ ] Require title `The Wind in the Willows`, author `Kenneth Grahame`, a
+- [x] Require title `The Wind in the Willows`, author `Kenneth Grahame`, a
   nonzero page count, default GRAY2 X4 rendition, and zero validation issues.
-- [ ] Decode page 0 and confirm it is the actual cover, not alt text or a blank
+- [x] Decode page 0 and confirm it is the actual cover, not alt text or a blank
   page.
-- [ ] Decode pages 0 through 40 (or through the end if the book is shorter)
+- [x] Decode pages 0 through 40 (or through the end if the book is shorter)
   into a numbered ignored directory. Build a thumbnail contact sheet with an
   available image tool, then record the exact full-resolution page numbers for
   the cover, flyleaf panels, and first story illustration. Do not guess page
   numbers from source chapter numbers.
-- [ ] Use those recorded page numbers to inspect at least:
+- [x] Use those recorded page numbers to inspect at least:
   - the cover;
   - one portrait story illustration with its caption;
   - the left and right pages of the 630x423 landscape flyleaf, both with the
     same caption.
-- [ ] Inspect those decoded images directly. Verify correct orientation,
+- [x] Inspect those decoded images directly. Verify correct orientation,
   readable captions, aspect preservation, exact left-to-right coverage, no
   discarded content, and only intentional white letterboxing.
-- [ ] Run strict inspection a second time after visual inspection to ensure no
+- [x] Run strict inspection a second time after visual inspection to ensure no
   artifact was modified.
 
 **Gate:** The official illustrated EPUB compiles within the memory bound into
@@ -607,7 +609,7 @@ BOOK=target/diag-evidence/wind-in-the-willows/the-wind-in-the-willows.binbook
 NAME=the-wind-in-the-willows.binbook
 ```
 
-- [ ] Run actual host-bound checks; never infer device state from sandboxed
+- [x] Run actual host-bound checks; never infer device state from sandboxed
   device visibility:
 
   ```bash
@@ -616,15 +618,15 @@ NAME=the-wind-in-the-willows.binbook
   "$BIN" diag storage list --port "$PORT"
   ```
 
-- [ ] Require protocol 2 and `STORAGE`, `KEY`, `STATUS`, and `LOG`
+- [x] Require protocol 2 and `STORAGE`, `KEY`, `STATUS`, and `LOG`
   capabilities. Record the complete initial list.
-- [ ] Clear logs, inject `BACK`, retrieve all new logs, and independently
+- [x] Clear logs, inject `BACK`, retrieve all new logs, and independently
   verify the reader returned to the library. Do not infer library mode from an
   `ok` key acknowledgement.
-- [ ] Take a fresh webcam capture using `AGENTS.local.md`, show the capture path
+- [x] Take a fresh webcam capture using `AGENTS.local.md`, show the capture path
   to the user, inspect that exact file, and verify the library is visible. If
   the device/camera moved, recrop before interpreting the display.
-- [ ] Query storage list once more immediately before deletion. This second
+- [x] Query storage list once more immediately before deletion. This second
   result is the deletion source of truth.
 
 **Gate:** The book is closed, the library is visibly active, capabilities are
@@ -634,29 +636,29 @@ correct, and the exact deletion set has been captured.
 
 ## 11. Task 8 - Delete Every Existing BinBook Safely
 
-- [ ] Extract every exact filename from the final pre-delete storage response
+- [x] Extract every exact filename from the final pre-delete storage response
   whose name ends in `.binbook`. Preserve UTF-8 and spaces; pass each name as
   one quoted `--path` argument. Do not use unsafe whitespace-splitting `xargs`.
-- [ ] For each captured name, run:
+- [x] For each captured name, run:
 
   ```bash
   "$BIN" diag storage delete --port "$PORT" --path "$EXACT_NAME"
   ```
 
-- [ ] After each acknowledgement, continue only if response opcode/status are
+- [x] After each acknowledgement, continue only if response opcode/status are
   correct. Acknowledgement proves that request only; it does not prove the
   complete directory state.
-- [ ] Poll/re-list with bounded retries after the complete deletion pass,
+- [x] Poll/re-list with bounded retries after the complete deletion pass,
   because each successful delete schedules an asynchronous library refresh:
 
   ```bash
   "$BIN" diag storage list --port "$PORT"
   ```
 
-- [ ] Require `entry_count=0`. If anything remains, compare against the
+- [x] Require `entry_count=0`. If anything remains, compare against the
   original exact set and retry only the specific remaining `.binbook` entries.
   Do not upload while the list is nonempty.
-- [ ] Query logs/status and require zero new protocol errors and no unexplained
+- [x] Query logs/status and require zero new protocol errors and no unexplained
   storage error.
 
 **Gate:** A fresh independent list proves the library contains zero BinBooks.
@@ -665,9 +667,9 @@ correct, and the exact deletion set has been captured.
 
 ## 12. Task 9 - Upload, Read Back, Open, and Visually Verify
 
-- [ ] Record the local file byte length, CRC32 reported by the uploader, and
+- [x] Record the local file byte length, CRC32 reported by the uploader, and
   SHA-256.
-- [ ] Upload the verified artifact:
+- [x] Upload the verified artifact:
 
   ```bash
   "$BIN" diag storage upload \
@@ -676,15 +678,15 @@ correct, and the exact deletion set has been captured.
     --file "$BOOK"
   ```
 
-- [ ] Require upload begin/write/commit success and matching whole-file CRC32.
+- [x] Require upload begin/write/commit success and matching whole-file CRC32.
   If upload fails, use diagnostic abort/delete for only `$NAME`, independently
   re-list, then retry from the known local artifact. Do not regenerate the book
   during a transport retry.
-- [ ] Poll `storage list` with bounded retries until background refresh settles.
+- [x] Poll `storage list` with bounded retries until background refresh settles.
   Require exactly one entry named `$NAME` with the local byte size. Record but
   do not accept `pages=0` as page-count evidence; this is the current mounted
   list placeholder described in the starting-state section.
-- [ ] Read the entire stored file back:
+- [x] Read the entire stored file back:
 
   ```bash
   "$BIN" diag storage read \
@@ -700,24 +702,24 @@ correct, and the exact deletion set has been captured.
     --validate --strict --json
   ```
 
-- [ ] Require `cmp` success, equal SHA-256 values, and zero strict-validation
+- [x] Require `cmp` success, equal SHA-256 values, and zero strict-validation
   issues. This is the independent storage-integrity proof.
-- [ ] Ensure the library is displayed. With exactly one entry, inject `SELECT`.
+- [x] Ensure the library is displayed. With exactly one entry, inject `SELECT`.
   Retrieve logs and require the selected filename/rendition was opened and page
   0 displayed; do not infer this from the key acknowledgement.
-- [ ] Query STATUS independently. Require:
+- [x] Query STATUS independently. Require:
   - `current_page=0`;
   - `page_count` equals the host-inspected count;
   - `dropped_log_count=0`;
   - `protocol_error_count=0`;
   - `last_error=0`.
-- [ ] Take a new webcam capture, reveal its path to the user, inspect the same
+- [x] Take a new webcam capture, reveal its path to the user, inspect the same
   image, and require the real illustrated cover in correct X4 orientation.
   A locally decoded page is not live-device evidence.
-- [ ] Return to the library once and require the single filename is visible;
+- [x] Return to the library once and require the single filename is visible;
   reopen it and reconfirm page 0 to prove the post-refresh library index is
   usable, not merely the still-open upload path.
-- [ ] Finish with one final storage list and STATUS query.
+- [x] Finish with one final storage list and STATUS query.
 
 **Gate:** The device contains exactly one byte-identical, strictly valid book;
 the library opens it; queried state matches; and the webcam shows its cover.
@@ -726,7 +728,7 @@ the library opens it; queried state matches; and the webcam shows its cover.
 
 ## 13. Task 10 - Evidence, Adversarial Review, and Handoff
 
-- [ ] Update gitignored `HANDOFF.md` as a current-state snapshot, not a diary.
+- [x] Update gitignored `HANDOFF.md` as a current-state snapshot, not a diary.
   Include:
   - source URL, source digest, and archive identity;
   - output size, page count, CRC32, and SHA-256;
@@ -740,11 +742,11 @@ the library opens it; queried state matches; and the webcam shows its cover.
   - open/log/STATUS evidence;
   - exact fresh webcam capture path and what is actually visible;
   - any remaining limitation or failure.
-- [ ] Keep `HANDOFF.md`, source EPUBs, BinBooks, decoded pages, contact sheets,
+- [x] Keep `HANDOFF.md`, source EPUBs, BinBooks, decoded pages, contact sheets,
   and transcripts untracked.
-- [ ] Build an acceptance matrix matching every requirement below to its code
+- [x] Build an acceptance matrix matching every requirement below to its code
   path, automated test, and observed evidence.
-- [ ] Perform the mandatory adversarial completion review:
+- [x] Perform the mandatory adversarial completion review:
   - try the UTF-8 boundary with multiple scalar widths;
   - inspect image parsing for both `src` and namespaced `href`;
   - inspect panel arithmetic for odd width and no lost column;
@@ -754,7 +756,7 @@ the library opens it; queried state matches; and the webcam shows its cover.
   - prove the final list is fresh and contains exactly one entry;
   - prove the webcam file is a fresh capture from the configured live camera, not a decoded
     fixture.
-- [ ] Run final repository checks:
+- [x] Run final repository checks:
 
   ```bash
   rustup run nightly cargo fmt --all --check
@@ -763,7 +765,7 @@ the library opens it; queried state matches; and the webcam shows its cover.
   git log -4 --oneline
   ```
 
-- [ ] If implementation created any uncommitted tracked change, test it and
+- [x] If implementation created any uncommitted tracked change, test it and
   commit/push it intentionally before completion. Never hide work in a dirty
   tree.
 
@@ -811,3 +813,12 @@ This plan is complete only when:
 9. a fresh webcam capture visibly shows the real illustrated cover; and
 10. `HANDOFF.md` and the acceptance matrix truthfully distinguish every
     verified result from any remaining limitation.
+
+Observed completion evidence: the official 1,093,651-byte EPUB matched the
+locked SHA-256 and contained 16 JPEG resources. Release compilation completed
+in 17.96 seconds with 123,636 KiB maximum RSS. The strictly valid GRAY2 artifact
+contains 323 pages and is 24,671,670 bytes. The sole device entry has that exact
+name and size; complete optimized readback passed `cmp` and SHA-256. After a
+Back-to-library cycle, the one-entry refreshed index reopened page 0/323,
+`BOOK_OPENED` was logged, STATUS retained zero dropped logs/protocol errors and
+`last_error=0`, and a fresh live webcam capture showed the illustrated cover.

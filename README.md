@@ -35,6 +35,26 @@ target/debug/binbook decode book.binbook --page 0 -o page0.png
 
 `inspect --json` writes JSON only to stdout. `decode` writes an 800×480 logical-content PNG for the stored X4 page and rejects out-of-range pages without leaving partial output. Device diagnostics remain under `binbook diag ...`; build them with `--features serial-device`.
 
+Upload to an X4 with bounded streaming, acknowledged progress, CRC verification,
+and library publication waiting:
+
+```bash
+target/debug/binbook upload --port "$PORT" --file book.binbook \
+  --progress auto
+```
+
+Use `--progress always|auto|never`, `--json` for a machine-readable final
+summary, and `--no-wait-library` when publication does not need to be observed.
+On failure after an upload begins, the command attempts device-side abort and
+reports whether cleanup was independently confirmed. Full verification can
+stream the stored bytes back without buffering the book in host memory:
+
+```bash
+target/debug/binbook diag storage read --port "$PORT" \
+  --path book.binbook --output device-readback.binbook
+cmp book.binbook device-readback.binbook
+```
+
 ## Python support tools
 
 Python is retained only for the Pygame viewer and bundled-font kerning proof:

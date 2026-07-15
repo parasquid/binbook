@@ -75,7 +75,10 @@ mount, enumerate, or borrow the filesystem independently.
   until the device returns an empty page.
 - List records preserve portable names up to 121 bytes. `page_count` is zero
   because the persistent index does not store BinBook page metadata.
-- `StoreRead` uses bounded owner reads and the CLI iterates to EOF.
+- `StoreRead` uses bounded owner reads and the CLI streams directly to its
+  output. Consecutive reads reuse the owner's cached file size. A host may keep
+  exactly two ascending read requests in flight only when HELLO advertises
+  `CAP_STORAGE_READ_WINDOW_2`; capability absence requires stop-and-wait.
 - Upload begin/write/commit uses exact ascending offsets, size checking, and
   whole-file CRC32. `storage begin` and `storage abort` expose cleanup of an
   incomplete upload for diagnostics.
@@ -108,11 +111,13 @@ payload byte, reserved for forward compatibility. Only `sd` is implemented; a
 > allocation. The original "pre-allocate + rename `.partial`→final" is therefore
 > replaced. Integrity is guaranteed without rename.
 
-Chosen over session-streaming for resumability and robustness. Parallel chunk
-uploads do **not** improve throughput here (single serial pipe + serial SD over
-shared SPI + FAT/embedded-sdmmc is not concurrency-safe for writes); the real
-throughput lever is **host-side pipelining** (send *N* frames before waiting for
-acks), which composes cleanly with the stateless model.
+Chosen over session-streaming for resumability and robustness. Parallel SD
+writes are not permitted (the serial SD/FAT owner remains sequential), but the
+host may overlap transport latency by sending two complete write frames before
+waiting for their acknowledgements. Firmware advertises this exact bound with
+`CAP_STORAGE_UPLOAD_WINDOW_2`; peers without that capability remain strictly
+request/response. The negotiated window does not change protocol version or
+payload layouts.
 
 1. `StoreUploadBegin { backend, name, total_size, expected_crc32 }` → firmware
    **creates the file at its final name** (`Mode::ReadWriteCreate`) and caches one
@@ -123,7 +128,11 @@ acks), which composes cleanly with the stateless model.
    `offset` and writes. The host sends chunks in **ascending offset order**
    (sequential append semantics); arbitrary out-of-order writes are not supported
    (FAT would zero-fill gaps). Re-sending an already-written offset overwrites
-   identically. Host pipelines multiple `StoreUploadWrite` frames.
+   identically. The host uses 3,584-byte aligned data chunks and, only when the
+   capability is advertised, sends exactly two ascending frames at a time.
+   Both response sequences, statuses, and accepted lengths are correlated
+   before progress advances. If either response fails, the host collects the
+   outstanding response, issues no new write, and attempts `StoreAbort`.
 3. `StoreUploadCommit { backend, name, expected_crc32 }` → flush, read back all
    written bytes, compute CRC32, and compare to `expected_crc32`. On match the
    file is complete and valid; on mismatch the response carries
@@ -165,6 +174,12 @@ upload (it won't appear in `StoreList`, but `StoreDelete` removes it by name).
 `StoreRead { backend, name, offset, max_bytes }` → `{ data[], eof }`, paginated
 like `LogGet`. Lets the host independently fetch a stored file's bytes and
 confirm it is byte-identical to the source — the completion-evidence backbone.
+The host never buffers the complete file. With `CAP_STORAGE_READ_WINDOW_2`, it
+sends two consecutive ranges before collecting their correlated responses. It
+validates opcode, sequence, status, returned length, and EOF before writing the
+bytes. A speculative second response after the first range reports EOF is
+discarded. Partial output is removed on failure. Peers without the capability
+remain strictly request/response compatible.
 
 ## Host CLI
 
@@ -222,15 +237,15 @@ task; no cross-task sharing in B.
 Capture the full serial transcript as evidence. Every CRUD path must be exercised
 with discriminating preconditions, per the completion-evidence discipline.
 
-## Open questions for the implementation plan
+## Negotiated transport behavior
 
-- Final opcode byte values and exact payload layouts (LE field order, name
-  encoding/length prefix, offset width).
-- Pipelining window size and ack model on the host (how many in-flight frames,
-  how loss/retransmit is detected given per-frame CRC + idempotent writes).
-- Whether `Hello` should also advertise which backends are implemented (a
-  capabilities refinement) in addition to the reserved `backend` enum.
-- Exact `Unsupported` status byte value.
+Protocol v2 retains the existing payload layouts. `HELLO` advertises
+`CAP_STORAGE` for storage commands, `CAP_STORAGE_UPLOAD_WINDOW_2` for the
+bounded upload window, and `CAP_STORAGE_READ_WINDOW_2` for bounded readback.
+Capability absence is authoritative: a host sends only one request before
+waiting even when the peer reports protocol v2. Per-frame CRC guards transport,
+exact accepted lengths advance acknowledged progress, and the commit CRC plus
+independent complete readback remain the whole-file integrity decision.
 
 ---
 
