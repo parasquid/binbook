@@ -311,6 +311,9 @@ struct TransferLibraryTiming {
 static LIBRARY_REFRESH_TRIGGER_CHANNEL: Channel<CriticalSectionRawMutex, LibraryRefreshTrigger, 1> =
     Channel::new();
 #[cfg(all(feature = "sd-storage", feature = "mounted-storage-owner"))]
+static LIBRARY_REFRESH_BARRIER: binbook_fw::library_refresh_barrier::LibraryRefreshBarrier =
+    binbook_fw::library_refresh_barrier::LibraryRefreshBarrier::new_pending();
+#[cfg(all(feature = "sd-storage", feature = "mounted-storage-owner"))]
 static LIBRARY_REFRESH_COMPLETION_CHANNEL: Channel<
     CriticalSectionRawMutex,
     LibraryRefreshCompletion,

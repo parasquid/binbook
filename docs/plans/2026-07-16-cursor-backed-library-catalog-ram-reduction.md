@@ -2,97 +2,29 @@
 
 ## Status
 
-Host implementation and target verification are complete; live catalog
-acceptance is waiting on restoration of the X4 SD command path. The normal
-image reported driver-level `SdError::NoCard`. A minimal 100 kHz SPI probe now
-sees the card-side MISO pull-up, but raw CMD0 receives only `0xFF` and the
-standard driver ends in `CardNotFound`. The normal image boots without a
-stack-guard fault after converting the full framebuffer initialization to
-in-place static construction. Do not mark this plan complete until Task 9's SD
-catalog, viewport, reboot, fault-image, restoration, and webcam gates pass.
+Completed on 2026-07-16 on branch `wip/cursor-backed-library-catalog`.
 
-Execute this plan sequentially and maintain a todo tracker throughout the
-implementation. Start each task with the stated failing test, make the minimum
-implementation needed to pass it, and run the task gate before moving on. Do
-not delegate tasks to subagents.
+The mounted production runtime uses a version-2 transactional A/B index,
+bounded external-sort workspace, exact-slot cursor, and 15-entry viewport
+without retaining `Library<200>`. The final flashed exact-feature image is
+292,192 bytes and links 240,460 bytes of `.data + .bss`, a 35,272-byte
+reduction from the 275,732-byte baseline.
+
+All host, feature-gated, fault-feature, Clippy, Python, and target-build gates
+pass. Live X4 evidence covers a 21-entry multi-viewport catalog, stable
+filename-hash selection across insertion and reboot, inactive-slot retention
+under injected publication failure, normal recovery, exact restoration of the
+initial ten-file inventory, and direct user inspection of the rendered menu.
+
+The rapid post-publication timeout discovered during acceptance is fixed with
+a refresh barrier that remains pending through display-side cursor adoption
+and host retries for transient list status. Five consecutive immediate uploads
+completed without sleeps and were independently listed before cleanup.
 
 ## Committed resume state
 
-Resume this work from branch `wip/cursor-backed-library-catalog`. Commit
-`8611b9d` is the complete implementation checkpoint built on top of the
-pre-existing serial-transfer work. Do not restart the catalog implementation
-or separate those dependent changes when resuming.
-
-Implemented and host-verified state:
-
-- The mounted production runtime no longer retains `Library<200>` and does not
-  introduce a heap or allocator.
-- The v2 on-SD format uses a 20-byte header, deterministic transactional A/B
-  selection, complete-slot validation, version-1 fallback, and exact-slot
-  cursor reads.
-- Refresh uses a 15-entry bounded run-generation workspace, an SD-backed
-  scratch spool, streaming merge, full readback validation, and publication
-  only after validation succeeds.
-- Selection restoration uses the selected filename hash and preserves the
-  specified insertion/removal/clamping behavior in host tests.
-- The exact-feature linked-RAM measurement is 242,540 bytes (`.data=12,588`,
-  `.bss=229,952`) versus the 275,732-byte baseline, a 33,192-byte reduction.
-- Workspace tests, explicitly feature-gated firmware tests, fault-feature
-  tests, clippy, Python tests, and target builds passed at the checkpoint. Rerun
-  them before final completion because later resume work may change sources.
-- A diagnostic SPI wrapper defect discovered during device diagnosis is fixed:
-  multiple caller operations are forwarded as one inner transaction, so chip
-  select remains asserted. A regression test verifies the boundary.
-- Full framebuffer and mounted reader state use in-place static construction;
-  the normal device image boots without the earlier stack-guard panic.
-
-Current live-device state:
-
-- The X4 is flashed with the `sd-probe` binary, not the normal reader image.
-- The minimal image bypasses display, FAT, the mounted owner, catalog code, and
-  the Embassy application tasks. It drives SPI2 mode 0 at 100 kHz on SCK
-  GPIO8, MOSI GPIO10, MISO GPIO7, and SD CS GPIO12.
-- The first probe found MISO floating: it followed both the ESP32-C3 internal
-  pull-down and pull-up. A later retry found MISO externally held high against
-  the internal pull-down, so the card-side pull-up became electrically visible.
-- Despite that changed electrical state, eight raw CMD0 attempts received only
-  `0xFF`, and `embedded_sdmmc::SdCard::num_bytes()` ended in `CardNotFound`.
-  This does not prove that the card is absent. It leaves CS delivery, card
-  command acceptance, power/contact stability, or a physical card fault
-  unresolved.
-- The host USB hub cannot switch VBUS per port. USB-UART reset, sysfs unbind,
-  and USB authorization changes are logical resets and must not be reported as
-  a full device/card power cycle.
-- An independent SquidScript build was attempted but did not flash: its local
-  RISC-V C toolchain could not find `string.h` while compiling
-  `littlefs2-sys`. This is host-toolchain evidence only and says nothing about
-  SD behavior.
-- No disposable SD files were created or deleted during this attempt. Card
-  contents could not be queried and therefore remain unverified.
-
-Resume sequence:
-
-1. Confirm the branch and checkpoint with `git branch --show-current` and
-   `git log -1 --oneline`.
-2. Read this plan, `docs/specs/library-index-v2.md`, `AGENTS.md`, and the local
-   ignored `HANDOFF.md` when it is available.
-3. With physical access, fully remove device power, inspect/reseat the SD card,
-   reconnect power, and capture the already-flashed minimal probe before
-   flashing another image. A valid CMD0 idle response is `0x01`; repeated
-   `0xFF` is not success.
-4. If the raw probe responds, build and flash the normal exact-feature image.
-   Capture serial for at least 15 seconds and independently confirm successful
-   mount and catalog enumeration.
-5. Execute Task 9 without narrowing it: verify at least 21 entries, two
-   viewport crossings in both directions, exact selection preservation across
-   insertions and reboot, old-slot retention under the fault image, recovery
-   under the normal image, exact inventory restoration, and fresh webcam
-   evidence.
-6. Rerun every host/build gate, update the acceptance matrix with exact
-   observed evidence, perform the adversarial completion review, remove the
-   completed roadmap item, and leave the device on the normal image. Do not
-   claim completion while any live row remains unverified.
-
+Implementation checkpoint `8611b9d` and documentation checkpoint `1aec918`
+precede the final acceptance fixes recorded by this completed plan.
 ## Goal and completion definition
 
 Remove the full-capacity 200-entry library catalog from the production Xteink
@@ -375,10 +307,10 @@ durability boundary.
 
 ### Task 0: Protect the worktree and capture a real baseline
 
-- [ ] Run `git status --short`, record the current commit, and identify all
+- [x] Run `git status --short`, record the current commit, and identify all
   pre-existing modified and untracked files. Do not reset, clean, switch
   branches, or overwrite unrelated changes.
-- [ ] Build the current target with the exact final comparison features:
+- [x] Build the current target with the exact final comparison features:
 
   ```bash
   cd firmware
@@ -388,13 +320,13 @@ durability boundary.
     --target riscv32imc-unknown-none-elf --release
   ```
 
-- [ ] Record `readelf -SW` `.data` and `.bss` values, application size printed
+- [x] Record `readelf -SW` `.data` and `.bss` values, application size printed
   by the flash/build tooling, and the exact feature set in `HANDOFF.md`.
-- [ ] Re-run the target type-size measurement and record `Library`,
+- [x] Re-run the target type-size measurement and record `Library`,
   `LibraryViewport`, `LibraryEntry`, and relevant task future sizes. Use
   `CARGO_PROFILE_RELEASE_STRIP=false` or `-Zprint-type-sizes` without editing a
   tracked Cargo profile.
-- [ ] Run the existing focused library, refresh, load, save, storage-owner, and
+- [x] Run the existing focused library, refresh, load, save, storage-owner, and
   embedded-storage tests before changing behavior. Record any pre-existing
   failures separately.
 
@@ -403,16 +335,16 @@ and focused test results are recorded before implementation.
 
 ### Task 1: Add version-2 codec and slot selection test-first
 
-- [ ] Add failing exact-byte tests for the 20-byte header, generation, CRC,
+- [x] Add failing exact-byte tests for the 20-byte header, generation, CRC,
   record offsets, maximum length, and zero-record index.
-- [ ] Add failing tests for A only, B only, both valid, equal generation,
+- [x] Add failing tests for A only, B only, both valid, equal generation,
   wrapping generation, antipodal generation, corrupt newer slot, corrupt older
   slot, and both corrupt.
-- [ ] Add a failing test proving a valid version-1 index is selected only when
+- [x] Add a failing test proving a valid version-1 index is selected only when
   neither version-2 slot validates.
-- [ ] Implement version-aware headers, `LibraryIndexSlot`, expanded cursor,
+- [x] Implement version-aware headers, `LibraryIndexSlot`, expanded cursor,
   strict streamed validation, and deterministic slot selection.
-- [ ] Keep record encoding byte-identical. Update cursor, viewport, prune, and
+- [x] Keep record encoding byte-identical. Update cursor, viewport, prune, and
   diagnostic consumers to accept a version-aware header size.
 
 Run:
@@ -427,16 +359,16 @@ higher-generation candidate falling back to the older valid slot.
 
 ### Task 2: Add bounded scratch storage operations test-first
 
-- [ ] Add fake-owner tests proving the five fixed scratch requests enforce
+- [x] Add fake-owner tests proving the five fixed scratch requests enforce
   client, sequence, buffer, bounds, and lifecycle rules.
-- [ ] Add mounted FAT-image tests with a spool larger than the scan buffer;
+- [x] Add mounted FAT-image tests with a spool larger than the scan buffer;
   write it in nontrivial chunks, flush, read it at multiple offsets, and delete
   it.
-- [ ] Add injected failures at create, write, flush, read, and delete. A failed
+- [x] Add injected failures at create, write, flush, read, and delete. A failed
   operation must return its real category and leave the storage owner usable.
-- [ ] Implement the fixed `BBLIBRUN.TMP` session in the mounted backend without
+- [x] Implement the fixed `BBLIBRUN.TMP` session in the mounted backend without
   adding generic path access or a second large buffer.
-- [ ] Refactor metadata session caching so A, B, legacy, state A, and state B
+- [x] Refactor metadata session caching so A, B, legacy, state A, and state B
   work through the existing bounded cache with deterministic eviction.
 
 Run:
@@ -451,26 +383,26 @@ deletes cleanly, and does not increase the metadata cache capacity.
 
 ### Task 3: Implement bounded run generation and merge test-first
 
-- [ ] Replace tests that merely prove a 200-entry `Library` can be built with
+- [x] Replace tests that merely prove a 200-entry `Library` can be built with
   tests that drive 200 correlated scan records through the bounded refresh
   state machine.
-- [ ] Add unsorted fixtures for counts `0`, `1`, `15`, `16`, `20`, `21`, and
+- [x] Add unsorted fixtures for counts `0`, `1`, `15`, `16`, `20`, `21`, and
   `200`. Force names that sort across scan-batch and 15-entry run boundaries.
-- [ ] Add a 201-entry fixture that proves `TooManyBooks`, scratch cleanup, and
+- [x] Add a 201-entry fixture that proves `TooManyBooks`, scratch cleanup, and
   no candidate-slot write.
-- [ ] Add maximum-length UTF-8 names, unsupported names, exact duplicates,
+- [x] Add maximum-length UTF-8 names, unsupported names, exact duplicates,
   casefold ties, and fully reversed input.
-- [ ] Add a reference-model differential test: sort in an ordinary host vector,
+- [x] Add a reference-model differential test: sort in an ordinary host vector,
   run the streaming refresh, and compare every final persistent byte.
-- [ ] Implement one-record-at-a-time scan decoding, 15-entry run generation,
+- [x] Implement one-record-at-a-time scan decoding, 15-entry run generation,
   141-byte spool records, run descriptors, vector reuse, and the one-pass
   k-way merge.
-- [ ] Propagate unsupported `.binbook` names explicitly from the mounted FAT
+- [x] Propagate unsupported `.binbook` names explicitly from the mounted FAT
   iterator through `ScanProgress`; do not convert them into a successful scan
   with fewer entries.
-- [ ] Compute the persistent CRC during merge, backpatch the header, and reject
+- [x] Compute the persistent CRC during merge, backpatch the header, and reject
   any output that is not strictly increasing under the canonical comparator.
-- [ ] Collect prepared mount tokens by final absolute record index.
+- [x] Collect prepared mount tokens by final absolute record index.
 
 Run:
 
@@ -485,19 +417,19 @@ slot.
 
 ### Task 4: Make A/B publication transactional under every failure
 
-- [ ] Add fault injection at scan start, each run write, scratch flush, merge
+- [x] Add fault injection at scan start, each run write, scratch flush, merge
   read, inactive-slot begin, provisional header, first/middle/final record,
   header backpatch, commit, readback, validation, and cleanup.
-- [ ] Seed a nonempty valid old slot before every fault. After the failure,
+- [x] Seed a nonempty valid old slot before every fault. After the failure,
   independently run slot selection and assert the old slot, generation, count,
   and records are unchanged and authoritative.
-- [ ] Add media-removal tests during scan, scratch write, candidate write, and
+- [x] Add media-removal tests during scan, scratch write, candidate write, and
   readback.
-- [ ] Add reboot tests with a truncated inactive slot, a CRC-valid stale slot,
+- [x] Add reboot tests with a truncated inactive slot, a CRC-valid stale slot,
   a CRC-invalid newer slot, and a complete newer slot.
-- [ ] Implement candidate abort and cleanup without clearing the active
+- [x] Implement candidate abort and cleanup without clearing the active
   viewport or falsely returning `Ready`.
-- [ ] Read back and strictly validate the complete candidate before emitting
+- [x] Read back and strictly validate the complete candidate before emitting
   `LibraryPublication`.
 
 Run the focused refresh, load, storage-owner, and embedded FAT-image tests.
@@ -507,23 +439,23 @@ flushed, read-back, and validated slot becomes authoritative.
 
 ### Task 5: Integrate cursor navigation and selection preservation
 
-- [ ] Add failing menu/runtime tests for forward and backward movement across
+- [x] Add failing menu/runtime tests for forward and backward movement across
   viewport boundaries with totals `20`, `21`, and `200`.
-- [ ] Prove a window read uses the cursor's exact slot even when the other slot
+- [x] Prove a window read uses the cursor's exact slot even when the other slot
   gains a newer generation afterward.
-- [ ] Add selection tests where entries are inserted before and after the
+- [x] Add selection tests where entries are inserted before and after the
   selected book, the selected book moves to another viewport, and the selected
   book is removed. Preserve by exact filename hash when present; otherwise
   clamp the old ordinal to `min(old_index, new_total - 1)`.
-- [ ] Replace the mounted runtime's `StaticCell<Library>` refresh argument with
+- [x] Replace the mounted runtime's `StaticCell<Library>` refresh argument with
   one bounded `LibraryRefreshWorkspace`.
-- [ ] Load both slots at boot, retain only the selected 15-record viewport, and
+- [x] Load both slots at boot, retain only the selected 15-record viewport, and
   pass the selected cursor through window loads and state pruning.
-- [ ] Split viewport prefetch from catalog refresh. Remove the full refresh
+- [x] Split viewport prefetch from catalog refresh. Remove the full refresh
   call from ordinary viewport crossing.
-- [ ] Preserve name-based book open as the correctness fallback when no token
+- [x] Preserve name-based book open as the correctness fallback when no token
   is prepared.
-- [ ] Ensure failed refresh and media removal leave the current in-RAM viewport
+- [x] Ensure failed refresh and media removal leave the current in-RAM viewport
   usable until a durability or media boundary makes that impossible.
 
 Run all `binbook-fw` tests with `sd-storage` after integration.
@@ -534,21 +466,21 @@ file.
 
 ### Task 6: Update diagnostics and add discriminating evidence
 
-- [ ] Update mounted diagnostic `storage list` to select A/B with the shared
+- [x] Update mounted diagnostic `storage list` to select A/B with the shared
   validator, paginate records through bounded reads, and fall back to version
   1 only under the migration rule. It must never instantiate `Library`.
-- [ ] Add feature-gated runtime events for:
+- [x] Add feature-gated runtime events for:
   - selected index slot, generation, and total count;
   - loaded viewport start, count, and total;
   - selected menu ordinal and filename hash;
   - refresh published versus old-index-retained, with the exact failure phase.
-- [ ] Map those events into existing diagnostic logs with tests for exact
+- [x] Map those events into existing diagnostic logs with tests for exact
   fields. Do not add unconditional debug printing.
-- [ ] Add Cargo feature `library-index-fault-after-first-record`. Require
+- [x] Add Cargo feature `library-index-fault-after-first-record`. Require
   `diagnostic-console` and `sd-storage` with `compile_error!` otherwise. In that
   build, every catalog refresh must fail immediately after the first persistent
   record write to the inactive slot. Normal builds must compile out the hook.
-- [ ] Add tests proving the diagnostic fault damages only the inactive slot and
+- [x] Add tests proving the diagnostic fault damages only the inactive slot and
   that list, viewport load, and reboot continue selecting the old slot.
 
 Run:
@@ -567,19 +499,19 @@ mistaken for a successful refresh.
 
 ### Task 7: Remove full catalogs and prove the RAM result
 
-- [ ] Grep every production and feature-gated path for `Library`,
+- [x] Grep every production and feature-gated path for `Library`,
   `Library::empty`, `LibraryIndexDecoder`, `LibraryIndexStore`,
   `MAX_LIBRARY_ENTRIES`, and `StaticCell`. Classify every remaining use.
-- [ ] Remove the active refresh allocation and the unreachable legacy
+- [x] Remove the active refresh allocation and the unreachable legacy
   full-catalog runtime. A full reference model may remain under tests only.
-- [ ] Remove obsolete load/save/refresh APIs only after all menu, reader,
+- [x] Remove obsolete load/save/refresh APIs only after all menu, reader,
   diagnostic, state-prune, boot, upload, delete, and refresh callers use the
   cursor path.
-- [ ] Add a host size assertion for `LibraryRefreshWorkspace` and rerun target
+- [x] Add a host size assertion for `LibraryRefreshWorkspace` and rerun target
   `-Zprint-type-sizes`. Inspect async future sizes for hidden by-value copies.
-- [ ] Build the exact baseline feature set and record final `.data`, `.bss`,
+- [x] Build the exact baseline feature set and record final `.data`, `.bss`,
   application size, workspace size, and delta.
-- [ ] Require a reduction of at least 24 KiB in `.data + .bss`. If the target is
+- [x] Require a reduction of at least 24 KiB in `.data + .bss`. If the target is
   missed, inspect symbols and future layouts; do not lower the target or claim
   success without identifying the retained allocation.
 
@@ -645,7 +577,7 @@ mkdir -p "$OUT"
 
 #### 9.1 Establish the starting state
 
-- [ ] Build the release CLI with `serial-device` and flash the normal image:
+- [x] Build the release CLI with `serial-device` and flash the normal image:
 
   ```bash
   cargo build --release -p binbook --features serial-device
@@ -654,7 +586,7 @@ mkdir -p "$OUT"
     firmware/scripts/flash-xteink-x4-nav-probe.sh
   ```
 
-- [ ] Capture serial output for at least 15 seconds using the command in
+- [x] Capture serial output for at least 15 seconds using the command in
   `AGENTS.md`, saving it under `$OUT`. Wait for capture to exit. Use this exact
   portable form for every required 15-second capture:
 
@@ -677,7 +609,7 @@ mkdir -p "$OUT"
   Set `$SERIAL_LOG` to a new path under `$OUT` before each later capture; never
   overwrite an earlier boot or fault record.
 
-- [ ] Run independent HELLO, STATUS, LOG, and storage-list queries. Record the
+- [x] Run independent HELLO, STATUS, LOG, and storage-list queries. Record the
   complete initial library inventory, slot, generation, entry count, selected
   ordinal/hash, protocol-error count, and last error.
 
@@ -688,7 +620,7 @@ mkdir -p "$OUT"
   "$BIN" diag storage list --port "$PORT"
   ```
 
-- [ ] Send Back if necessary and use logs plus a fresh webcam capture to prove
+- [x] Send Back if necessary and use logs plus a fresh webcam capture to prove
   the library, rather than an open book, is visible.
 
   ```bash
@@ -700,7 +632,7 @@ mkdir -p "$OUT"
 
 #### 9.2 Create and navigate a multi-viewport catalog
 
-- [ ] Upload uniquely named copies of `$FIXTURE` until the total catalog has at
+- [x] Upload uniquely named copies of `$FIXTURE` until the total catalog has at
   least 21 entries. Use a recorded disposable prefix and never overwrite an
   initial filename:
 
@@ -711,10 +643,10 @@ mkdir -p "$OUT"
     --name "$DISPOSABLE_NAME"
   ```
 
-- [ ] After the final upload, independently list until the refresh settles.
+- [x] After the final upload, independently list until the refresh settles.
   Require the exact expected name/size set, at least 21 entries, a newer valid
   generation, zero protocol errors, and no unexplained last error.
-- [ ] Drive Up until logs independently report selected ordinal 0. Then drive
+- [x] Drive Up until logs independently report selected ordinal 0. Then drive
   Down one event at a time past ordinal 15 and at least one further boundary.
   Drive back across both boundaries. Require `LibraryViewportLoaded` events
   with nonzero starts and exact windows; queued key acknowledgements alone do
@@ -728,7 +660,7 @@ mkdir -p "$OUT"
 
   Repeat one key command at a time, advancing `$LAST_VERIFIED_CURSOR` from each
   decoded log response. Do not batch keys when establishing viewport evidence.
-- [ ] Capture the panel after crossing a boundary and show the user the fresh
+- [x] Capture the panel after crossing a boundary and show the user the fresh
   capture path. Inspect that exact webcam image for correct names, selection,
   orientation, clipping, stale rows, and unexpected full refreshes.
 
@@ -737,24 +669,24 @@ mkdir -p "$OUT"
     ffmpeg -hide_banner -loglevel error -f video4linux2 \
     -i "$VIDEO_DEVICE" -frames:v 1 "$OUT/library-second-viewport.jpg"
   ```
-- [ ] Select a disposable book whose sorted ordinal is at least 15. Verify the
+- [x] Select a disposable book whose sorted ordinal is at least 15. Verify the
   filename hash in logs, page count in STATUS, and visible page. Return to the
   library and prove the same selection is restored.
 
 #### 9.3 Verify publication and reboot recovery
 
-- [ ] While a nonzero selected ordinal is active, upload one name that sorts
+- [x] While a nonzero selected ordinal is active, upload one name that sorts
   before it and one that sorts after it. After each refresh, independently
   prove the selected filename hash is unchanged even though its ordinal may
   move.
-- [ ] Reset/reboot the device, capture at least 15 seconds of serial output,
+- [x] Reset/reboot the device, capture at least 15 seconds of serial output,
   then query HELLO, STATUS, LOG, and storage list. Require the same newest
   generation, exact catalog, valid viewport, and preserved selection.
 
 #### 9.4 Verify an interrupted inactive slot
 
-- [ ] Record the authoritative slot, generation, count, and complete list.
-- [ ] Flash the fault image:
+- [x] Record the authoritative slot, generation, count, and complete list.
+- [x] Flash the fault image:
 
   ```bash
   ESPFLASH_PORT="$PORT" \
@@ -762,27 +694,27 @@ mkdir -p "$OUT"
     firmware/scripts/flash-xteink-x4-nav-probe.sh
   ```
 
-- [ ] Capture boot serial for at least 15 seconds. The boot refresh must report
+- [x] Capture boot serial for at least 15 seconds. The boot refresh must report
   the injected post-first-record failure, and independent listing must still
   return the previously authoritative slot, generation, count, and exact
   records.
-- [ ] Upload one additional disposable fixture with `--no-wait-library`. The
+- [x] Upload one additional disposable fixture with `--no-wait-library`. The
   book upload must commit, the subsequent catalog refresh must hit the same
   injected failure, and an independent list must not expose the new file.
-- [ ] Reboot while still running the fault image. Re-query and prove the old
+- [x] Reboot while still running the fault image. Re-query and prove the old
   catalog remains authoritative after reboot; a transport acknowledgement or
   cached host list is insufficient.
-- [ ] Restore the normal image, capture boot serial, and wait for normal boot
+- [x] Restore the normal image, capture boot serial, and wait for normal boot
   reconciliation. Independently prove a newer valid generation now includes
   the uploaded file.
 
 #### 9.5 Restore the device
 
-- [ ] Delete only names bearing the recorded disposable prefix. Quote every
+- [x] Delete only names bearing the recorded disposable prefix. Quote every
   exact filename; do not use whitespace-splitting `xargs`.
-- [ ] Wait for the resulting refresh, then require the complete final list to
+- [x] Wait for the resulting refresh, then require the complete final list to
   equal the captured initial list exactly.
-- [ ] Leave the normal diagnostic image flashed. Reconfirm HELLO, STATUS, zero
+- [x] Leave the normal diagnostic image flashed. Reconfirm HELLO, STATUS, zero
   protocol errors, acceptable last error, the final slot/generation/count, and
   the restored visible library with a fresh webcam capture.
 
@@ -798,28 +730,28 @@ and is restored to its exact starting library.
 
 ### Task 10: Documentation, adversarial review, and completion matrix
 
-- [ ] Add a current storage-format specification under `docs/specs/` describing
+- [x] Add a current storage-format specification under `docs/specs/` describing
   version 2, A/B selection, migration, CRC, generation ordering, and the
   non-authoritative spool. Do not put this internal index in
   `BINBOOK_FORMAT_SPEC.md`; it is not part of `.binbook`.
-- [ ] Update applicable reference documentation to describe cursor-backed
+- [x] Update applicable reference documentation to describe cursor-backed
   navigation, bounded refresh, and the absence of a production full catalog.
-- [ ] Grep all docs and code for `BINBOOK.LIBRARY.INDEX`, `Library<200>`,
+- [x] Grep all docs and code for `BINBOOK.LIBRARY.INDEX`, `Library<200>`,
   `100 KiB`, `full-capacity catalog`, and related stale claims. Correct them in
   the same change.
-- [ ] Remove the completed catalog-RAM section from `docs/ROADMAP.md`; do not
+- [x] Remove the completed catalog-RAM section from `docs/ROADMAP.md`; do not
   mark it done in the roadmap.
-- [ ] Rewrite the relevant `HANDOFF.md` sections as a current-state snapshot.
+- [x] Rewrite the relevant `HANDOFF.md` sections as a current-state snapshot.
   Distinguish host verification, linked-RAM evidence, successful live behavior,
   injected-failure evidence, visual evidence, and any unresolved issue.
-- [ ] Perform an adversarial review after documentation is written:
+- [x] Perform an adversarial review after documentation is written:
   - attempt to load the partially written newer slot;
   - attempt to make viewport reads switch slots mid-session;
   - attempt to trigger a full index rewrite through ordinary navigation;
   - attempt to hide a 200-entry array in an async future;
   - attempt to expose a committed upload after refresh failure;
   - attempt to disprove the RAM delta with linked symbols and section sizes.
-- [ ] Populate the acceptance matrix below with exact test names, commands,
+- [x] Populate the acceptance matrix below with exact test names, commands,
   outputs, artifact references, and observations. A blank cell means the work
   is incomplete.
 
@@ -827,18 +759,20 @@ and is restored to its exact starting library.
 
 | Requirement | Implementation path | Automated evidence | Live/observed evidence |
 |---|---|---|---|
-| No production `Library<200>` | mounted runtime uses `LibraryRefreshWorkspace` and `LibraryViewport` | source/static-symbol audit; target links | `.data + .bss` is 242,540 bytes; live boot succeeds |
-| At least 24 KiB RAM reduction | full refresh catalog static removed | identical features: baseline 275,732, candidate 242,540 bytes | 33,192-byte reduction; application 289,696 bytes flashed |
-| Supports 0 through 200 books | v2 codec, spool, merge | boundary tests for 0/1/15/16/20/21/200 | Waiting: SD MISO is electrically visible, but CMD0 and standard acquisition receive no card response |
-| Navigation across viewports | exact-slot cursor window reads | forward/backward tests for 20/21/200 | Waiting: no mounted catalog |
-| Stable selection | filename-hash restoration | insert-before/after and removal/clamp tests | Waiting: no mounted catalog |
-| Transactional refresh | A/B slots and full readback validation | publication boundary-failure sweep and fault-feature tests | Waiting: no mounted catalog |
-| Legacy compatibility | version-1 fallback | A/B selector migration tests | Waiting: SD command path unavailable |
-| Diagnostic listing is bounded | sequential slot validator and cursor paging | 200-entry cursor/list component coverage | `StoreList` returned `NotFound` because mount failed |
-| Viewport movement does not rebuild | exact cursor window load | navigation tests prove exact windows | Waiting: live navigation unavailable |
+| No production `Library<200>` | mounted runtime uses `LibraryRefreshWorkspace` and `LibraryViewport` | source/static-symbol audit; target links | `.data + .bss` is 240,460 bytes; live boot succeeds |
+| At least 24 KiB RAM reduction | full refresh catalog static removed | identical features: baseline 275,732, candidate 240,460 bytes | 35,272-byte reduction; 292,192-byte normal application flashed |
+| Supports 0 through 200 books | v2 codec, spool, merge | boundary tests for 0/1/15/16/20/21/200 | live SD catalog grew from 10 to 25 entries and returned exactly to 10 |
+| Navigation across viewports | exact-slot cursor window reads | forward/backward tests for 20/21/200 | typed events traversed ordinals 0 through 20 and cache windows in both directions |
+| Stable selection | filename-hash restoration | insert-before/after and removal/clamp tests | selected hash survived insert-before, insert-after, book open/close, and reboot |
+| Transactional refresh | A/B slots and full readback validation | publication boundary-failure sweep and fault-feature tests | phase-5 fault retained slot 2 generation 22 before and after reboot; normal firmware later adopted the committed book |
+| Legacy compatibility | version-1 fallback | A/B selector migration tests | normal live A/B selection and publication verified; migration remains host-tested |
+| Diagnostic listing is bounded | sequential slot validator and cursor paging | 200-entry cursor/list component coverage | complete 25-entry live list returned without reconstructing a full catalog |
+| Viewport movement does not rebuild | exact cursor window load | navigation tests prove exact windows | generation stayed 17 during ordinary traversal; only publications advanced it |
 | No allocator introduced | heapless/caller-owned storage | dependency/source audit and target builds | normal no-heap image boots |
-| Device restored | no disposable files were created | n/a | no card mutations were attempted; contents remain unverified until the SD command path recovers |
+| Device restored | deletion is restricted to the recorded disposable prefix | exact final-list comparison | final list exactly matched the initial ten names and sizes; normal image and zero-error STATUS restored |
+| Visual menu correctness | unchanged bounded partial-refresh menu path | framebuffer/menu rendering tests | user directly verified readable upright text, one correct highlight, no missing/duplicate/stale rows, and responsive partial navigation; the long title is width-truncated |
+| Rapid publication synchronization | refresh barrier remains pending through display cursor adoption; host retries transient list status | `catalog_stays_pending_until_display_adoption_settles_it`; `library_wait_retries_transient_error_responses_until_catalog_settles` | original immediate second-upload timeout reproduced; five consecutive immediate uploads then completed with `library_visible=true`, exact list, and zero-error STATUS |
 
-Do not use `complete`, `passed`, or remove the roadmap item until every row has
-all applicable evidence and the final adversarial review has failed to disprove
-the claim.
+Every acceptance row has applicable automated and live evidence. The final
+adversarial review did not disprove the completion claims, and the completed
+catalog qualification item has been removed from `docs/ROADMAP.md`.

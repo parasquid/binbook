@@ -460,6 +460,25 @@ pub enum RuntimeEventKind {
         status: u8,
         book_count: u16,
     },
+    LibraryIndexSelected {
+        slot: u8,
+        generation: u32,
+        total: u16,
+    },
+    LibraryViewportLoaded {
+        start: u16,
+        count: u8,
+        total: u16,
+    },
+    LibrarySelection {
+        ordinal: u16,
+        filename_hash: u64,
+    },
+    LibraryPublication {
+        outcome: u8,
+        phase: u8,
+        generation: u32,
+    },
     ReaderStateSaved {
         generation: u32,
         record_count: u16,

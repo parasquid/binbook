@@ -88,6 +88,7 @@ struct FakePeer {
     short_write_index: Option<usize>,
     list_polls: usize,
     visible_after_poll: Option<usize>,
+    list_error_until_poll: Option<usize>,
     fault: Option<ResponseFault>,
 }
 
@@ -188,7 +189,13 @@ impl UploadTransport for FakePeer {
             } else {
                 sequence
             };
-        let response_status = if faulted_write && matches!(self.fault, Some(ResponseFault::NonOk)) {
+        let transient_list_error = opcode == Opcode::StoreList
+            && self
+                .list_error_until_poll
+                .is_some_and(|poll| self.list_polls <= poll);
+        let response_status = if transient_list_error {
+            Status::Error
+        } else if faulted_write && matches!(self.fault, Some(ResponseFault::NonOk)) {
             Status::InternalError
         } else {
             Status::Ok
@@ -261,6 +268,7 @@ fn window_peer(window: usize) -> WindowPeer {
             short_write_index: None,
             list_polls: 0,
             visible_after_poll: None,
+            list_error_until_poll: None,
             fault: None,
         },
         window,
@@ -402,6 +410,7 @@ fn upload_streams_twice_with_aligned_chunks_and_acknowledged_progress() {
         short_write_index: None,
         list_polls: 0,
         visible_after_poll: None,
+        list_error_until_poll: None,
         fault: None,
     };
     let mut progress = FakeProgress::default();
@@ -457,6 +466,7 @@ fn short_acknowledgement_aborts_without_reporting_completion() {
         short_write_index: Some(1),
         list_polls: 0,
         visible_after_poll: None,
+        list_error_until_poll: None,
         fault: None,
     };
     let mut progress = FakeProgress::default();
@@ -502,6 +512,7 @@ fn library_wait_reports_exact_publication_after_bounded_polls() {
         short_write_index: None,
         list_polls: 0,
         visible_after_poll: Some(2),
+        list_error_until_poll: None,
         fault: None,
     };
     let mut progress = FakeProgress::default();
@@ -521,6 +532,34 @@ fn library_wait_reports_exact_publication_after_bounded_polls() {
 }
 
 #[test]
+fn library_wait_retries_transient_error_responses_until_catalog_settles() {
+    let mut source = source();
+    let mut peer = FakePeer {
+        writes: Vec::new(),
+        sequences: Vec::new(),
+        aborts: 0,
+        short_write_index: None,
+        list_polls: 0,
+        visible_after_poll: Some(3),
+        list_error_until_poll: Some(2),
+        fault: None,
+    };
+    let mut progress = FakeProgress::default();
+
+    let summary = upload_stream(
+        &mut source,
+        UploadRequest::new("fixture.binbook", false),
+        &mut peer,
+        &mut progress,
+        &FakeClock,
+    )
+    .unwrap();
+
+    assert!(summary.library_visible);
+    assert_eq!(peer.list_polls, 3);
+}
+
+#[test]
 fn library_wait_timeout_preserves_committed_success_without_false_visibility() {
     let mut source = source();
     let mut peer = FakePeer {
@@ -530,6 +569,7 @@ fn library_wait_timeout_preserves_committed_success_without_false_visibility() {
         short_write_index: None,
         list_polls: 0,
         visible_after_poll: None,
+        list_error_until_poll: None,
         fault: None,
     };
     let mut progress = FakeProgress::default();
@@ -562,6 +602,7 @@ fn malformed_write_responses_abort_and_never_complete() {
             short_write_index: None,
             list_polls: 0,
             visible_after_poll: None,
+            list_error_until_poll: None,
             fault: Some(fault),
         };
         let mut progress = FakeProgress::default();
@@ -593,6 +634,7 @@ fn commit_crc_mismatch_aborts_without_success() {
         short_write_index: None,
         list_polls: 0,
         visible_after_poll: None,
+        list_error_until_poll: None,
         fault: Some(ResponseFault::CommitCrc),
     };
     let mut progress = FakeProgress::default();

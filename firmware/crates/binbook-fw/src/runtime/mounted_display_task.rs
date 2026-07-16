@@ -40,8 +40,8 @@ use super::{
         OwnerStateBuffer,
     },
     LibraryRefreshTrigger, PowerAckSender, PowerRequestReceiver, RequestReceiver, DISPLAY_MODE,
-    LIBRARY_REFRESH_COMPLETION_CHANNEL, LIBRARY_REFRESH_TRIGGER_CHANNEL, REQUEST_EPOCH,
-    RUNTIME_EVENT_CHANNEL,
+    LIBRARY_REFRESH_BARRIER, LIBRARY_REFRESH_COMPLETION_CHANNEL, LIBRARY_REFRESH_TRIGGER_CHANNEL,
+    REQUEST_EPOCH, RUNTIME_EVENT_CHANNEL,
 };
 
 const LATENCY_OPEN_BOOK: u8 = 50;
@@ -141,6 +141,8 @@ pub(super) async fn mounted_display_task(
     {
         menu.restore_selected(selected);
     }
+    emit_catalog_cursor_and_viewport(viewport).await;
+    emit_catalog_selection(viewport, menu.selected()).await;
     compose_menu(menu_fb, status, &menu, viewport);
     let _ = render_ui_bw(&mut panel, menu_fb, &mut delay).await;
     probe(31, 0, 0).await;
@@ -521,6 +523,8 @@ pub(super) async fn mounted_display_task(
                     } else {
                         reader_state.selected_filename_hash = 0;
                     }
+                    emit_catalog_cursor_and_viewport(viewport).await;
+                    emit_catalog_selection(viewport, menu.selected()).await;
                     if DISPLAY_MODE.load(portable_atomic::Ordering::Relaxed) == MODE_MENU {
                         let _ = render_ui_transition(
                             &mut panel,
@@ -638,6 +642,7 @@ pub(super) async fn mounted_display_task(
                     completion.book_count,
                     completion.elapsed_ms,
                 );
+                LIBRARY_REFRESH_BARRIER.mark_settled();
             }
             Either4::Fourth(_) => {
                 let now = embassy_time::Instant::now().as_millis();
@@ -803,6 +808,53 @@ async fn probe(phase: u8, status: u8, elapsed_ms: u32) {
         .await;
 }
 
+async fn emit_catalog_cursor_and_viewport(viewport: &LibraryViewport) {
+    let Some(cursor) = viewport.cursor() else {
+        return;
+    };
+    let slot = match cursor.slot() {
+        binbook_fw::library::LibraryIndexSlot::Legacy => 0,
+        binbook_fw::library::LibraryIndexSlot::A => 1,
+        binbook_fw::library::LibraryIndexSlot::B => 2,
+    };
+    let now = embassy_time::Instant::now().as_millis();
+    RUNTIME_EVENT_CHANNEL
+        .send(binbook_fw::runtime_engine::RuntimeEvent {
+            timestamp_ms: now,
+            kind: binbook_fw::runtime_engine::RuntimeEventKind::LibraryIndexSelected {
+                slot,
+                generation: cursor.generation(),
+                total: cursor.entry_count() as u16,
+            },
+        })
+        .await;
+    RUNTIME_EVENT_CHANNEL
+        .send(binbook_fw::runtime_engine::RuntimeEvent {
+            timestamp_ms: now,
+            kind: binbook_fw::runtime_engine::RuntimeEventKind::LibraryViewportLoaded {
+                start: viewport.start() as u16,
+                count: viewport.entries().len() as u8,
+                total: cursor.entry_count() as u16,
+            },
+        })
+        .await;
+}
+
+async fn emit_catalog_selection(viewport: &LibraryViewport, ordinal: usize) {
+    let Some(entry) = viewport_entry(viewport, ordinal) else {
+        return;
+    };
+    RUNTIME_EVENT_CHANNEL
+        .send(binbook_fw::runtime_engine::RuntimeEvent {
+            timestamp_ms: embassy_time::Instant::now().as_millis(),
+            kind: binbook_fw::runtime_engine::RuntimeEventKind::LibrarySelection {
+                ordinal: ordinal as u16,
+                filename_hash: entry.filename_hash,
+            },
+        })
+        .await;
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn handle_request<SPI, DC, RST, BUSY>(
     request: DisplayRequest,
@@ -870,6 +922,8 @@ where
             if let Some(entry) = viewport_entry(viewport, menu.selected()) {
                 reader_state.selected_filename_hash = entry.filename_hash;
             }
+            emit_catalog_cursor_and_viewport(viewport).await;
+            emit_catalog_selection(viewport, menu.selected()).await;
             activated
         }
         request @ DisplayRequest::MenuSelect { .. } => {
@@ -1397,6 +1451,7 @@ async fn request_refresh(viewport: &LibraryViewport) {
             let _ = prefetch.push(name);
         }
     }
+    LIBRARY_REFRESH_BARRIER.mark_pending();
     LIBRARY_REFRESH_TRIGGER_CHANNEL
         .send(LibraryRefreshTrigger {
             trace_id: None,

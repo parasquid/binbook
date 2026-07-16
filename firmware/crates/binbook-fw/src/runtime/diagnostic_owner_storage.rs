@@ -19,8 +19,8 @@ use binbook_fw::{
 };
 
 use super::{
-    LibraryRefreshTrigger, LIBRARY_REFRESH_TRIGGER_CHANNEL, STORAGE_DIAGNOSTIC_RESPONSE_CHANNEL,
-    STORAGE_REQUEST_CHANNEL,
+    LibraryRefreshTrigger, LIBRARY_REFRESH_BARRIER, LIBRARY_REFRESH_TRIGGER_CHANNEL,
+    STORAGE_DIAGNOSTIC_RESPONSE_CHANNEL, STORAGE_REQUEST_CHANNEL,
 };
 
 pub(super) struct DiagnosticOwnerRuntime {
@@ -59,9 +59,13 @@ pub(super) async fn handle_owner_storage_command(
     response_payload.fill(0);
     let (status, payload_len) = match command {
         OwnerStorageCommand::List { start_index } => {
-            let result = list_index(runtime, start_index, transfer, response_payload).await;
-            transfer = result.2;
-            (result.0, result.1)
+            if LIBRARY_REFRESH_BARRIER.is_pending() {
+                (Status::Error, 0)
+            } else {
+                let result = list_index(runtime, start_index, transfer, response_payload).await;
+                transfer = result.2;
+                (result.0, result.1)
+            }
         }
         OwnerStorageCommand::Read {
             name,
@@ -755,6 +759,7 @@ fn take_transfer(
 }
 
 pub(super) async fn request_library_refresh(trace_id: Option<u32>) {
+    LIBRARY_REFRESH_BARRIER.mark_pending();
     LIBRARY_REFRESH_TRIGGER_CHANNEL
         .send(LibraryRefreshTrigger {
             trace_id,

@@ -7,7 +7,8 @@ use binbook_fw::{
     },
     library_external_sort::{LibraryRefreshWorkspace, MAX_RUN_BYTES},
     library_publication::{
-        LibraryPublicationClient, LibraryPublicationError, LibraryPublicationUpdate,
+        LibraryPublicationClient, LibraryPublicationError, LibraryPublicationPhase,
+        LibraryPublicationUpdate,
     },
     reader_state::filename_hash,
     storage_owner::{Request, Response, ResponseEnvelope, StorageClient},
@@ -173,6 +174,28 @@ fn corrupt_committed_candidate_is_not_published_or_cleaned_up_as_success() {
     assert!(matches!(
         drive(21, true),
         Err(LibraryPublicationError::Codec(_))
+    ));
+}
+
+#[test]
+fn publication_exposes_the_exact_failed_phase_before_cleanup() {
+    let (mut workspace, _, _) = fixture(1);
+    let (mut client, request) =
+        LibraryPublicationClient::begin(&mut workspace, LibraryIndexSlot::B, 17, 100).unwrap();
+    assert!(LibraryPublicationClient::request_needs_buffer(
+        &request.request
+    ));
+    assert_eq!(client.phase(), LibraryPublicationPhase::Begin);
+
+    let error = client
+        .accept(response(100, Response::UploadStarted(9)), None)
+        .unwrap_err();
+    assert_eq!(error, LibraryPublicationError::MissingBuffer);
+    assert_eq!(error.code(), 3);
+    assert_eq!(client.phase(), LibraryPublicationPhase::ProvisionalHeader);
+    assert!(matches!(
+        client.cleanup().unwrap().request,
+        Request::UploadAbort { .. }
     ));
 }
 

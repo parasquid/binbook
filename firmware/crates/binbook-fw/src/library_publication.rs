@@ -41,10 +41,64 @@ pub enum LibraryPublicationError {
     AlreadyComplete,
 }
 
+impl LibraryPublicationError {
+    pub const fn code(&self) -> u32 {
+        match self {
+            Self::Correlation => 1,
+            Self::Completion => 2,
+            Self::MissingBuffer => 3,
+            Self::Codec(_) => 4,
+            Self::Sort(_) => 5,
+            Self::PreparedOverflow => 6,
+            Self::InjectedFault => 7,
+            Self::AlreadyComplete => 8,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LibraryPublicationUpdate {
     Request(RequestEnvelope),
     Complete(LibraryPublication),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibraryPublicationPhase {
+    Begin,
+    ProvisionalHeader,
+    InitialHead,
+    Replacement,
+    RecordWrite,
+    FinalHeader,
+    Commit,
+    ValidateSize,
+    ValidateHeader,
+    ValidateRecords,
+    ScratchDelete,
+    AbortThenDelete,
+    CleanupDelete,
+    Complete,
+}
+
+impl LibraryPublicationPhase {
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Begin => 1,
+            Self::ProvisionalHeader => 2,
+            Self::InitialHead => 3,
+            Self::Replacement => 4,
+            Self::RecordWrite => 5,
+            Self::FinalHeader => 6,
+            Self::Commit => 7,
+            Self::ValidateSize => 8,
+            Self::ValidateHeader => 9,
+            Self::ValidateRecords => 10,
+            Self::ScratchDelete => 11,
+            Self::AbortThenDelete => 12,
+            Self::CleanupDelete => 13,
+            Self::Complete => 14,
+        }
+    }
 }
 
 enum Phase {
@@ -100,6 +154,35 @@ pub struct LibraryPublicationClient<'a> {
 }
 
 impl<'a> LibraryPublicationClient<'a> {
+    pub const fn request_needs_buffer(request: &Request) -> bool {
+        matches!(
+            request,
+            Request::UploadBegin { .. }
+                | Request::UploadWrite { .. }
+                | Request::LibraryScratchRead { .. }
+                | Request::Read { .. }
+        )
+    }
+
+    pub const fn phase(&self) -> LibraryPublicationPhase {
+        match &self.phase {
+            Phase::Begin => LibraryPublicationPhase::Begin,
+            Phase::ProvisionalHeader { .. } => LibraryPublicationPhase::ProvisionalHeader,
+            Phase::InitialHead { .. } => LibraryPublicationPhase::InitialHead,
+            Phase::Replacement { .. } => LibraryPublicationPhase::Replacement,
+            Phase::RecordWrite { .. } => LibraryPublicationPhase::RecordWrite,
+            Phase::FinalHeader { .. } => LibraryPublicationPhase::FinalHeader,
+            Phase::Commit { .. } => LibraryPublicationPhase::Commit,
+            Phase::ValidateSize => LibraryPublicationPhase::ValidateSize,
+            Phase::ValidateHeader { .. } => LibraryPublicationPhase::ValidateHeader,
+            Phase::ValidateRecords { .. } => LibraryPublicationPhase::ValidateRecords,
+            Phase::ScratchDelete { .. } => LibraryPublicationPhase::ScratchDelete,
+            Phase::AbortThenDelete => LibraryPublicationPhase::AbortThenDelete,
+            Phase::CleanupDelete => LibraryPublicationPhase::CleanupDelete,
+            Phase::Complete => LibraryPublicationPhase::Complete,
+        }
+    }
+
     pub fn begin(
         workspace: &'a mut LibraryRefreshWorkspace,
         slot: LibraryIndexSlot,
@@ -156,6 +239,7 @@ impl<'a> LibraryPublicationClient<'a> {
             response,
         ) {
             (Phase::Begin, Response::UploadStarted(upload_id)) => {
+                self.phase = Phase::ProvisionalHeader { upload_id };
                 let buffer = required_buffer(buffer, INDEX_V2_HEADER_SIZE)?;
                 let header: &mut [u8; INDEX_V2_HEADER_SIZE] =
                     (&mut buffer[..INDEX_V2_HEADER_SIZE]).try_into().unwrap();

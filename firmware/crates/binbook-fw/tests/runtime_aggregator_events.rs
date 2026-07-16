@@ -709,6 +709,101 @@ fn reader_lifecycle_events_preserve_the_locked_argument_layouts() {
 }
 
 #[test]
+fn catalog_cursor_viewport_selection_and_publication_events_keep_exact_fields() {
+    use binbook_diagnostic_protocol::{
+        EVT_LIBRARY_INDEX_SELECTED, EVT_LIBRARY_PUBLICATION, EVT_LIBRARY_SELECTION,
+        EVT_LIBRARY_VIEWPORT_LOADED,
+    };
+
+    let mut aggregator = aggregator::<8>();
+    for (tick, kind) in [
+        (
+            1,
+            RuntimeEventKind::LibraryIndexSelected {
+                slot: 2,
+                generation: 17,
+                total: 21,
+            },
+        ),
+        (
+            2,
+            RuntimeEventKind::LibraryViewportLoaded {
+                start: 15,
+                count: 6,
+                total: 21,
+            },
+        ),
+        (
+            3,
+            RuntimeEventKind::LibrarySelection {
+                ordinal: 15,
+                filename_hash: 0x1122_3344_5566_7788,
+            },
+        ),
+        (
+            4,
+            RuntimeEventKind::LibraryPublication {
+                outcome: 1,
+                phase: 5,
+                generation: 17,
+            },
+        ),
+    ] {
+        aggregator.commit(event(tick, kind));
+    }
+
+    let mut records = [DiagLogRecord::default(); 4];
+    assert_eq!(
+        aggregator
+            .log()
+            .read_from_sequence(0, &mut records)
+            .record_count,
+        4
+    );
+    assert_eq!(
+        (
+            records[0].event,
+            records[0].arg0,
+            records[0].arg1,
+            records[0].arg2
+        ),
+        (EVT_LIBRARY_INDEX_SELECTED, 2, 17, 21)
+    );
+    assert_eq!(
+        (
+            records[1].event,
+            records[1].arg0,
+            records[1].arg1,
+            records[1].arg2
+        ),
+        (EVT_LIBRARY_VIEWPORT_LOADED, 15, 6, 21)
+    );
+    assert_eq!(
+        (
+            records[2].event,
+            records[2].arg0,
+            records[2].arg1,
+            records[2].arg2
+        ),
+        (
+            EVT_LIBRARY_SELECTION,
+            15,
+            0x5566_7788u32 as i32,
+            0x1122_3344u32 as i32,
+        )
+    );
+    assert_eq!(
+        (
+            records[3].event,
+            records[3].arg0,
+            records[3].arg1,
+            records[3].arg2
+        ),
+        (EVT_LIBRARY_PUBLICATION, 1, 5, 17)
+    );
+}
+
+#[test]
 fn reader_return_stage_events_preserve_stage_phase_and_elapsed_time() {
     use binbook_diagnostic_protocol::EVT_READER_RETURN_STAGE;
 

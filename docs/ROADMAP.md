@@ -28,16 +28,6 @@ Supporting work: row fill/decode optimization is not currently a primary target.
 
 Do not optimize against `display_dequeue_after_bw_busy_asserted`; it measures queued work being processed later. Optimize against `serial_accept_after_bw_busy_asserted`, `dequeue_to_bw_start`, `PLANE_SPI_WRITE_SUMMARY`, `PLANE_ROW_FILL_SUMMARY`, `BW_BUSY_READY`, and webcam verification.
 
-## Cursor-backed library catalog live qualification
-
-Complete the evidence gate in
-`docs/plans/2026-07-16-cursor-backed-library-catalog-ram-reduction.md` when the
-X4 can acquire its SD card. Capture the exact starting catalog, navigate at
-least 21 entries across multiple viewport boundaries, prove filename-hash
-selection preservation across insertion and reboot, and verify that the
-post-first-record fault image leaves the prior A/B slot authoritative. Restore
-the exact starting catalog and leave the normal diagnostic image flashed.
-
 ## Strip-streamed display composition
 
 Replace the persistent 96,000-byte `Gray2Framebuffer` with deterministic,

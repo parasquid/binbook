@@ -25,6 +25,7 @@ pub mod library_index_select;
 pub mod library_publication;
 #[cfg(feature = "sd-storage")]
 pub mod library_refresh;
+pub mod library_refresh_barrier;
 #[cfg(feature = "sd-storage")]
 pub mod library_run_generation;
 pub mod menu;

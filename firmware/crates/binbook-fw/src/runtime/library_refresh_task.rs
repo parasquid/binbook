@@ -21,6 +21,10 @@ use super::{
     LIBRARY_REFRESH_COMPLETION_CHANNEL, LIBRARY_REFRESH_TRIGGER_CHANNEL, RUNTIME_EVENT_CHANNEL,
 };
 
+const PROBE_PUBLICATION_REQUEST: u8 = 44;
+const PROBE_PUBLICATION_FAILURE: u8 = 45;
+const PROBE_PUBLICATION_COMPLETE: u8 = 46;
+
 #[embassy_executor::task]
 pub(super) async fn library_refresh_task(
     workspace: &'static mut LibraryRefreshWorkspace,
@@ -96,6 +100,7 @@ pub(super) async fn library_refresh_task(
                 }
             };
             drop(selector);
+            let retained_generation = selected.map_or(0, |cursor| cursor.generation());
             let (slot, generation_number) = match selected {
                 Some(cursor) => {
                     let slot = if cursor.slot() == LibraryIndexSlot::A {
@@ -107,13 +112,19 @@ pub(super) async fn library_refresh_task(
                 }
                 None => (LibraryIndexSlot::A, 1),
             };
-            if let Ok((mut publisher, mut request)) = LibraryPublicationClient::begin(
+            match LibraryPublicationClient::begin(
                 workspace,
                 slot,
                 generation_number,
                 sequence.wrapping_add(2_000),
             ) {
-                loop {
+                Ok((mut publisher, mut request)) => loop {
+                    let phase = publisher.phase();
+                    probe_refresh_phase(
+                        PROBE_PUBLICATION_REQUEST,
+                        phase.code(),
+                        u32::from(refresh_request_code(&request.request)),
+                    );
                     let needs_buffer = request_needs_buffer(&request.request);
                     let response =
                         execute_library_request(request, needs_buffer, &mut buffer).await;
@@ -132,10 +143,26 @@ pub(super) async fn library_refresh_task(
                             }
                         }
                         Ok(LibraryPublicationUpdate::Complete(value)) => {
+                            probe_refresh_phase(
+                                PROBE_PUBLICATION_COMPLETE,
+                                value.status.code(),
+                                u32::from(value.book_count),
+                            );
+                            catalog_publication_event(
+                                0,
+                                publisher.phase().code(),
+                                value.cursor.map_or(0, |cursor| cursor.generation()),
+                            );
                             publication = Some(value);
                             break;
                         }
-                        Err(_) => {
+                        Err(error) => {
+                            probe_refresh_phase(
+                                PROBE_PUBLICATION_FAILURE,
+                                phase.code(),
+                                error.code(),
+                            );
+                            catalog_publication_event(1, phase.code(), retained_generation);
                             let mut cleanup = publisher.cleanup();
                             while let Some(cleanup_request) = cleanup {
                                 let needs_buffer = request_needs_buffer(&cleanup_request.request);
@@ -154,6 +181,10 @@ pub(super) async fn library_refresh_task(
                             break;
                         }
                     }
+                },
+                Err(error) => {
+                    probe_refresh_phase(PROBE_PUBLICATION_FAILURE, 0, error.code());
+                    catalog_publication_event(1, 0, retained_generation);
                 }
             }
         }
@@ -214,15 +245,29 @@ fn probe_refresh_phase(phase: u8, status: u8, detail: u32) {
 #[cfg(not(feature = "diagnostic-console"))]
 fn probe_refresh_phase(_phase: u8, _status: u8, _detail: u32) {}
 
+#[cfg(feature = "diagnostic-console")]
+fn catalog_publication_event(outcome: u8, phase: u8, generation: u32) {
+    use binbook_fw::runtime_engine::{RuntimeEvent, RuntimeEventKind};
+
+    let _ = RUNTIME_EVENT_CHANNEL.try_send(RuntimeEvent {
+        timestamp_ms: embassy_time::Instant::now().as_millis(),
+        kind: RuntimeEventKind::LibraryPublication {
+            outcome,
+            phase,
+            generation,
+        },
+    });
+}
+
+#[cfg(not(feature = "diagnostic-console"))]
+fn catalog_publication_event(_outcome: u8, _phase: u8, _generation: u32) {}
+
 fn request_needs_buffer(request: &Request) -> bool {
-    matches!(
-        request,
-        Request::ScanStep { .. }
-            | Request::LibraryScratchWrite { .. }
-            | Request::LibraryScratchRead { .. }
-            | Request::UploadWrite { .. }
-            | Request::Read { .. }
-    )
+    LibraryPublicationClient::request_needs_buffer(request)
+        || matches!(
+            request,
+            Request::ScanStep { .. } | Request::LibraryScratchWrite { .. }
+        )
 }
 
 async fn execute_library_request(

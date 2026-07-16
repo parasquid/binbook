@@ -818,6 +818,65 @@ impl<const PENDING: usize, const LOG: usize> RuntimeAggregator<PENDING, LOG> {
                     0,
                 );
             }
+            RuntimeEventKind::LibraryIndexSelected {
+                slot,
+                generation,
+                total,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    binbook_diagnostic_protocol::EVT_LIBRARY_INDEX_SELECTED,
+                    i32::from(slot),
+                    generation as i32,
+                    i32::from(total),
+                );
+            }
+            RuntimeEventKind::LibraryViewportLoaded {
+                start,
+                count,
+                total,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    binbook_diagnostic_protocol::EVT_LIBRARY_VIEWPORT_LOADED,
+                    i32::from(start),
+                    i32::from(count),
+                    i32::from(total),
+                );
+            }
+            RuntimeEventKind::LibrarySelection {
+                ordinal,
+                filename_hash,
+            } => {
+                self.push(
+                    tick_ms,
+                    LEVEL_INFO,
+                    binbook_diagnostic_protocol::EVT_LIBRARY_SELECTION,
+                    i32::from(ordinal),
+                    filename_hash as u32 as i32,
+                    (filename_hash >> 32) as u32 as i32,
+                );
+            }
+            RuntimeEventKind::LibraryPublication {
+                outcome,
+                phase,
+                generation,
+            } => {
+                self.push(
+                    tick_ms,
+                    if outcome == 0 {
+                        LEVEL_INFO
+                    } else {
+                        LEVEL_ERROR
+                    },
+                    binbook_diagnostic_protocol::EVT_LIBRARY_PUBLICATION,
+                    i32::from(outcome),
+                    i32::from(phase),
+                    generation as i32,
+                );
+            }
             RuntimeEventKind::ReaderStateSaved {
                 generation,
                 record_count,

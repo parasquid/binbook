@@ -35,8 +35,16 @@ pub(crate) fn wait_for_library<T: UploadTransport>(
                 }
                 Err(error) => return Err(UploadError::LibraryWait(error.to_string())),
             };
-            let payload = checked_payload(&response, Opcode::StoreList, list_sequence)
-                .map_err(|error| UploadError::LibraryWait(error.to_string()))?;
+            let payload = match checked_payload(&response, Opcode::StoreList, list_sequence) {
+                Ok(payload) => payload,
+                Err(error) if is_transient_library_scan_error(&error) => {
+                    if poll != 9 {
+                        transport.wait_library_poll();
+                    }
+                    continue 'polls;
+                }
+                Err(error) => return Err(UploadError::LibraryWait(error.to_string())),
+            };
             let count = decode_store_list_count(&payload)?;
             if count == 0 {
                 break;
