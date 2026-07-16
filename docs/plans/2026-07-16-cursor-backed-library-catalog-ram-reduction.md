@@ -16,6 +16,83 @@ implementation. Start each task with the stated failing test, make the minimum
 implementation needed to pass it, and run the task gate before moving on. Do
 not delegate tasks to subagents.
 
+## Committed resume state
+
+Resume this work from branch `wip/cursor-backed-library-catalog`. Commit
+`8611b9d` is the complete implementation checkpoint built on top of the
+pre-existing serial-transfer work. Do not restart the catalog implementation
+or separate those dependent changes when resuming.
+
+Implemented and host-verified state:
+
+- The mounted production runtime no longer retains `Library<200>` and does not
+  introduce a heap or allocator.
+- The v2 on-SD format uses a 20-byte header, deterministic transactional A/B
+  selection, complete-slot validation, version-1 fallback, and exact-slot
+  cursor reads.
+- Refresh uses a 15-entry bounded run-generation workspace, an SD-backed
+  scratch spool, streaming merge, full readback validation, and publication
+  only after validation succeeds.
+- Selection restoration uses the selected filename hash and preserves the
+  specified insertion/removal/clamping behavior in host tests.
+- The exact-feature linked-RAM measurement is 242,540 bytes (`.data=12,588`,
+  `.bss=229,952`) versus the 275,732-byte baseline, a 33,192-byte reduction.
+- Workspace tests, explicitly feature-gated firmware tests, fault-feature
+  tests, clippy, Python tests, and target builds passed at the checkpoint. Rerun
+  them before final completion because later resume work may change sources.
+- A diagnostic SPI wrapper defect discovered during device diagnosis is fixed:
+  multiple caller operations are forwarded as one inner transaction, so chip
+  select remains asserted. A regression test verifies the boundary.
+- Full framebuffer and mounted reader state use in-place static construction;
+  the normal device image boots without the earlier stack-guard panic.
+
+Current live-device state:
+
+- The X4 is flashed with the `sd-probe` binary, not the normal reader image.
+- The minimal image bypasses display, FAT, the mounted owner, catalog code, and
+  the Embassy application tasks. It drives SPI2 mode 0 at 100 kHz on SCK
+  GPIO8, MOSI GPIO10, MISO GPIO7, and SD CS GPIO12.
+- The first probe found MISO floating: it followed both the ESP32-C3 internal
+  pull-down and pull-up. A later retry found MISO externally held high against
+  the internal pull-down, so the card-side pull-up became electrically visible.
+- Despite that changed electrical state, eight raw CMD0 attempts received only
+  `0xFF`, and `embedded_sdmmc::SdCard::num_bytes()` ended in `CardNotFound`.
+  This does not prove that the card is absent. It leaves CS delivery, card
+  command acceptance, power/contact stability, or a physical card fault
+  unresolved.
+- The host USB hub cannot switch VBUS per port. USB-UART reset, sysfs unbind,
+  and USB authorization changes are logical resets and must not be reported as
+  a full device/card power cycle.
+- An independent SquidScript build was attempted but did not flash: its local
+  RISC-V C toolchain could not find `string.h` while compiling
+  `littlefs2-sys`. This is host-toolchain evidence only and says nothing about
+  SD behavior.
+- No disposable SD files were created or deleted during this attempt. Card
+  contents could not be queried and therefore remain unverified.
+
+Resume sequence:
+
+1. Confirm the branch and checkpoint with `git branch --show-current` and
+   `git log -1 --oneline`.
+2. Read this plan, `docs/specs/library-index-v2.md`, `AGENTS.md`, and the local
+   ignored `HANDOFF.md` when it is available.
+3. With physical access, fully remove device power, inspect/reseat the SD card,
+   reconnect power, and capture the already-flashed minimal probe before
+   flashing another image. A valid CMD0 idle response is `0x01`; repeated
+   `0xFF` is not success.
+4. If the raw probe responds, build and flash the normal exact-feature image.
+   Capture serial for at least 15 seconds and independently confirm successful
+   mount and catalog enumeration.
+5. Execute Task 9 without narrowing it: verify at least 21 entries, two
+   viewport crossings in both directions, exact selection preservation across
+   insertions and reboot, old-slot retention under the fault image, recovery
+   under the normal image, exact inventory restoration, and fresh webcam
+   evidence.
+6. Rerun every host/build gate, update the acceptance matrix with exact
+   observed evidence, perform the adversarial completion review, remove the
+   completed roadmap item, and leave the device on the normal image. Do not
+   claim completion while any live row remains unverified.
+
 ## Goal and completion definition
 
 Remove the full-capacity 200-entry library catalog from the production Xteink
