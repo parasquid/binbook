@@ -44,33 +44,40 @@ pub fn decode_scan_records(
     }
     let mut records = Vec::new();
     for index in 0..usize::from(count) {
-        let start = index * SCAN_RECORD_BYTES;
-        let name_len = usize::from(bytes[start]);
-        if name_len == 0 || name_len > binbook_storage::MAX_BINBOOK_NAME_BYTES {
-            return Err(RequestError::NameTooLong);
-        }
-        let name = core::str::from_utf8(&bytes[start + 1..start + 1 + name_len])
-            .map_err(|_| RequestError::NameTooLong)?;
-        let size_offset = start + 1 + binbook_storage::MAX_BINBOOK_NAME_BYTES;
-        let size = u64::from_le_bytes(
-            bytes[size_offset..size_offset + 8]
-                .try_into()
-                .map_err(|_| RequestError::TooLarge)?,
-        );
-        let token = u16::from_le_bytes(
-            bytes[size_offset + 8..size_offset + 10]
-                .try_into()
-                .map_err(|_| RequestError::TooLarge)?,
-        );
         records
-            .push(ScanRecord {
-                name: StorageName::new(name)?,
-                size,
-                mount_token: crate::library::MountFileToken::new(token),
-            })
+            .push(decode_scan_record(index, bytes)?)
             .map_err(|_| RequestError::TooLarge)?;
     }
     Ok(records)
+}
+
+pub fn decode_scan_record(index: usize, bytes: &[u8]) -> Result<ScanRecord, RequestError> {
+    if index >= SCAN_ENTRY_BUDGET as usize || bytes.len() < SCAN_BATCH_BYTES {
+        return Err(RequestError::TooLarge);
+    }
+    let start = index * SCAN_RECORD_BYTES;
+    let name_len = usize::from(bytes[start]);
+    if name_len == 0 || name_len > binbook_storage::MAX_BINBOOK_NAME_BYTES {
+        return Err(RequestError::NameTooLong);
+    }
+    let name = core::str::from_utf8(&bytes[start + 1..start + 1 + name_len])
+        .map_err(|_| RequestError::NameTooLong)?;
+    let size_offset = start + 1 + binbook_storage::MAX_BINBOOK_NAME_BYTES;
+    let size = u64::from_le_bytes(
+        bytes[size_offset..size_offset + 8]
+            .try_into()
+            .map_err(|_| RequestError::TooLarge)?,
+    );
+    let token = u16::from_le_bytes(
+        bytes[size_offset + 8..size_offset + 10]
+            .try_into()
+            .map_err(|_| RequestError::TooLarge)?,
+    );
+    Ok(ScanRecord {
+        name: StorageName::new(name)?,
+        size,
+        mount_token: crate::library::MountFileToken::new(token),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +102,32 @@ pub enum BufferSlot {
     State,
     Diagnostic,
     LibraryIndex,
+    Bulk0,
+    Bulk1,
+    Bulk2,
+    Bulk3,
+}
+
+impl BufferSlot {
+    pub const fn bulk(index: u8) -> Option<Self> {
+        match index {
+            0 => Some(Self::Bulk0),
+            1 => Some(Self::Bulk1),
+            2 => Some(Self::Bulk2),
+            3 => Some(Self::Bulk3),
+            _ => None,
+        }
+    }
+
+    pub const fn bulk_index(self) -> Option<u8> {
+        match self {
+            Self::Bulk0 => Some(0),
+            Self::Bulk1 => Some(1),
+            Self::Bulk2 => Some(2),
+            Self::Bulk3 => Some(3),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -102,6 +135,7 @@ pub enum RequestPriority {
     Background,
     Foreground,
     PowerSave,
+    Control,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,6 +167,7 @@ pub enum Request {
     UploadBegin {
         name: StorageName,
         expected_size: u64,
+        expected_crc32: u32,
         power_save: bool,
     },
     UploadWrite {
@@ -168,6 +203,21 @@ pub enum Request {
     ScanCancel {
         token: ScanToken,
     },
+    LibraryScratchCreate,
+    LibraryScratchWrite {
+        offset: u64,
+        buffer_offset: u16,
+        len: u16,
+        buffer: BufferSlot,
+    },
+    LibraryScratchRead {
+        offset: u64,
+        buffer_offset: u16,
+        len: u16,
+        buffer: BufferSlot,
+    },
+    LibraryScratchFlush,
+    LibraryScratchDelete,
 }
 
 impl Request {
@@ -227,7 +277,13 @@ impl Request {
             | Self::ScanPrefetch { .. }
             | Self::ScanStep { .. }
             | Self::ScanFinish { .. }
-            | Self::ScanCancel { .. } => RequestPriority::Background,
+            | Self::ScanCancel { .. }
+            | Self::LibraryScratchCreate
+            | Self::LibraryScratchWrite { .. }
+            | Self::LibraryScratchRead { .. }
+            | Self::LibraryScratchFlush
+            | Self::LibraryScratchDelete => RequestPriority::Background,
+            Self::UploadAbort { .. } => RequestPriority::Control,
             Self::UploadBegin {
                 power_save: true, ..
             }
@@ -601,6 +657,7 @@ impl BufferPool for LeasePool<'_> {
 pub struct ScanProgress {
     pub entries: u8,
     pub complete: bool,
+    pub unsupported_name: bool,
 }
 
 pub trait BufferPool {
@@ -618,7 +675,12 @@ pub trait OwnerBackend {
     }
     fn file_size(&mut self, name: &str) -> Result<u64, Self::Error>;
     fn read_at(&mut self, name: &str, offset: u64, out: &mut [u8]) -> Result<(), Self::Error>;
-    fn upload_begin(&mut self, name: &str, expected_size: u64) -> Result<(), Self::Error>;
+    fn upload_begin(
+        &mut self,
+        name: &str,
+        expected_size: u64,
+        expected_crc32: u32,
+    ) -> Result<(), Self::Error>;
     fn upload_write(&mut self, name: &str, offset: u64, data: &[u8]) -> Result<(), Self::Error>;
     fn upload_commit(&mut self, name: &str) -> Result<(), Self::Error>;
     fn upload_abort(&mut self, name: &str) -> Result<(), Self::Error>;
@@ -628,6 +690,11 @@ pub trait OwnerBackend {
     fn scan_step(&mut self, budget: u8, out: &mut [u8]) -> Result<ScanProgress, Self::Error>;
     fn scan_finish(&mut self) -> Result<(), Self::Error>;
     fn scan_cancel(&mut self) -> Result<(), Self::Error>;
+    fn library_scratch_create(&mut self) -> Result<(), Self::Error>;
+    fn library_scratch_write(&mut self, offset: u64, data: &[u8]) -> Result<(), Self::Error>;
+    fn library_scratch_read(&mut self, offset: u64, out: &mut [u8]) -> Result<(), Self::Error>;
+    fn library_scratch_flush(&mut self) -> Result<(), Self::Error>;
+    fn library_scratch_delete(&mut self) -> Result<(), Self::Error>;
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -673,7 +740,12 @@ impl<F: binbook_storage::WritableFilesystem> OwnerBackend for FilesystemOwnerBac
             .map_err(FilesystemOwnerError::Backend)
     }
 
-    fn upload_begin(&mut self, name: &str, expected_size: u64) -> Result<(), Self::Error> {
+    fn upload_begin(
+        &mut self,
+        name: &str,
+        expected_size: u64,
+        _expected_crc32: u32,
+    ) -> Result<(), Self::Error> {
         self.filesystem
             .begin_upload(name, expected_size)
             .map_err(FilesystemOwnerError::Backend)
@@ -722,6 +794,26 @@ impl<F: binbook_storage::WritableFilesystem> OwnerBackend for FilesystemOwnerBac
     fn scan_cancel(&mut self) -> Result<(), Self::Error> {
         Err(FilesystemOwnerError::IncrementalScanUnavailable)
     }
+
+    fn library_scratch_create(&mut self) -> Result<(), Self::Error> {
+        Err(FilesystemOwnerError::IncrementalScanUnavailable)
+    }
+
+    fn library_scratch_write(&mut self, _offset: u64, _data: &[u8]) -> Result<(), Self::Error> {
+        Err(FilesystemOwnerError::IncrementalScanUnavailable)
+    }
+
+    fn library_scratch_read(&mut self, _offset: u64, _out: &mut [u8]) -> Result<(), Self::Error> {
+        Err(FilesystemOwnerError::IncrementalScanUnavailable)
+    }
+
+    fn library_scratch_flush(&mut self) -> Result<(), Self::Error> {
+        Err(FilesystemOwnerError::IncrementalScanUnavailable)
+    }
+
+    fn library_scratch_delete(&mut self) -> Result<(), Self::Error> {
+        Err(FilesystemOwnerError::IncrementalScanUnavailable)
+    }
 }
 
 #[cfg(feature = "sd-storage")]
@@ -760,11 +852,16 @@ where
     mount_generation: u8,
     pending_mount_generation: u8,
     mounted_files_ready: bool,
+    upload_recovered: bool,
+    next_upload_generation: u32,
     active_upload: Option<(
         StorageName,
         embedded_sd_storage::MountedWriteSession<'a, D>,
         u64,
+        Option<embedded_sd_storage::UploadJournalRecord>,
     )>,
+    library_scratch_write: Option<embedded_sd_storage::MountedWriteSession<'a, D>>,
+    library_scratch_read: Option<embedded_sd_storage::MountedFileSession<'a, D>>,
 }
 
 #[cfg(feature = "sd-storage")]
@@ -785,7 +882,11 @@ where
             mount_generation: 0,
             pending_mount_generation: 0,
             mounted_files_ready: false,
+            upload_recovered: false,
+            next_upload_generation: 1,
             active_upload: None,
+            library_scratch_write: None,
+            library_scratch_read: None,
         }
     }
 
@@ -793,6 +894,8 @@ where
         matches!(
             name,
             crate::storage_access::LIBRARY_INDEX_FILE
+                | crate::storage_access::LIBRARY_INDEX_SLOT_A
+                | crate::storage_access::LIBRARY_INDEX_SLOT_B
                 | crate::storage_access::STATE_SLOT_A
                 | crate::storage_access::STATE_SLOT_B
         )
@@ -808,17 +911,30 @@ where
         }
     }
 
+    fn recover_upload_if_needed(&mut self) -> Result<(), MountedStorageOwnerError<D>> {
+        if self.upload_recovered {
+            return Ok(());
+        }
+        self.storage
+            .recover_book_upload()
+            .map_err(MountedStorageOwnerError::Storage)?;
+        self.next_upload_generation = self
+            .storage
+            .next_upload_generation()
+            .map_err(MountedStorageOwnerError::Storage)?;
+        self.storage
+            .discard_book_upload_stage(self.next_upload_generation)
+            .map_err(MountedStorageOwnerError::Storage)?;
+        self.upload_recovered = true;
+        Ok(())
+    }
+
     fn read_session(
         &mut self,
         name: &str,
     ) -> Result<&mut embedded_sd_storage::MountedFileSession<'a, D>, MountedStorageOwnerError<D>>
     {
-        let dedicated_metadata = matches!(
-            name,
-            crate::storage_access::LIBRARY_INDEX_FILE
-                | crate::storage_access::STATE_SLOT_A
-                | crate::storage_access::STATE_SLOT_B
-        );
+        let dedicated_metadata = Self::is_metadata(name);
         if dedicated_metadata {
             if let Some(index) = self
                 .metadata_reads
@@ -852,38 +968,13 @@ where
                     Err(error) => return Err(MountedStorageOwnerError::Storage(error)),
                 }
             }
-            if self.metadata_reads.is_empty() {
-                let files = self
-                    .metadata_dir
-                    .as_ref()
-                    .unwrap()
-                    .open_matching_files::<3>(&[
-                        crate::storage_access::LIBRARY_INDEX_FILE,
-                        crate::storage_access::STATE_SLOT_A,
-                        crate::storage_access::STATE_SLOT_B,
-                    ])
-                    .map_err(MountedStorageOwnerError::Storage)?;
-                for file in files {
-                    self.metadata_reads
-                        .push((
-                            StorageName::new(file.name.as_str())
-                                .map_err(MountedStorageOwnerError::ScanEncoding)?,
-                            file.file,
-                        ))
-                        .map_err(|_| MountedStorageOwnerError::ScanEncoding(RequestError::Busy))?;
-                }
-            }
-            if let Some(index) = self
-                .metadata_reads
-                .iter()
-                .position(|(active, _)| active.as_str() == name)
-            {
-                return Ok(&mut self.metadata_reads[index].1);
-            }
             match self.metadata_dir.as_ref().unwrap().open_file(name) {
                 Ok(file) => {
                     let stored =
                         StorageName::new(name).map_err(MountedStorageOwnerError::ScanEncoding)?;
+                    if self.metadata_reads.is_full() {
+                        self.metadata_reads.remove(0);
+                    }
                     self.metadata_reads
                         .push((stored, file))
                         .map_err(|_| MountedStorageOwnerError::ScanEncoding(RequestError::Busy))?;
@@ -899,6 +990,9 @@ where
                     .storage
                     .open_file(name)
                     .map_err(MountedStorageOwnerError::Storage)?;
+                if self.metadata_reads.is_full() {
+                    self.metadata_reads.remove(0);
+                }
                 self.metadata_reads
                     .push((stored, file))
                     .map_err(|_| MountedStorageOwnerError::ScanEncoding(RequestError::Busy))?;
@@ -999,13 +1093,18 @@ where
             .map_err(MountedStorageOwnerError::Storage)
     }
 
-    fn upload_begin(&mut self, name: &str, expected_size: u64) -> Result<(), Self::Error> {
+    fn upload_begin(
+        &mut self,
+        name: &str,
+        expected_size: u64,
+        expected_crc32: u32,
+    ) -> Result<(), Self::Error> {
         if Self::is_metadata(name) {
             self.metadata_reads.clear();
         } else {
             self.active_read = None;
         }
-        let session = if Self::is_metadata(name) {
+        let (session, journal) = if Self::is_metadata(name) {
             if self.metadata_dir.is_none() {
                 self.metadata_dir = Some(
                     self.storage
@@ -1013,24 +1112,43 @@ where
                         .map_err(MountedStorageOwnerError::Storage)?,
                 );
             }
-            self.metadata_dir
+            let session = self
+                .metadata_dir
                 .as_ref()
                 .unwrap()
                 .create_file_session(name)
+                .map_err(MountedStorageOwnerError::Storage)?;
+            (session, None)
         } else {
-            self.storage.create_file_session(name)
-        }
-        .map_err(MountedStorageOwnerError::Storage)?;
+            self.recover_upload_if_needed()?;
+            let generation = self.next_upload_generation;
+            self.next_upload_generation = generation.wrapping_add(2).max(1);
+            let record = embedded_sd_storage::UploadJournalRecord::new(
+                embedded_sd_storage::UploadJournalPhase::Receiving,
+                generation,
+                u32::try_from(expected_size)
+                    .map_err(|_| MountedStorageOwnerError::UploadSizeMismatch)?,
+                expected_crc32,
+                name,
+            )
+            .map_err(|_| MountedStorageOwnerError::UploadSizeMismatch)?;
+            let session = self
+                .storage
+                .begin_book_upload(&record)
+                .map_err(MountedStorageOwnerError::Storage)?;
+            (session, Some(record))
+        };
         self.active_upload = Some((
             StorageName::new(name).map_err(MountedStorageOwnerError::ScanEncoding)?,
             session,
             expected_size,
+            journal,
         ));
         Ok(())
     }
 
     fn upload_write(&mut self, name: &str, offset: u64, data: &[u8]) -> Result<(), Self::Error> {
-        let (active_name, session, _) = self
+        let (active_name, session, _, _) = self
             .active_upload
             .as_mut()
             .ok_or(MountedStorageOwnerError::UploadSizeMismatch)?;
@@ -1043,7 +1161,7 @@ where
     }
 
     fn upload_commit(&mut self, name: &str) -> Result<(), Self::Error> {
-        let (active_name, mut session, expected) = self
+        let (active_name, mut session, expected, journal) = self
             .active_upload
             .take()
             .ok_or(MountedStorageOwnerError::UploadSizeMismatch)?;
@@ -1060,6 +1178,15 @@ where
             self.metadata_reads
                 .push((active_name, session.into_read_session()))
                 .map_err(|_| MountedStorageOwnerError::ScanEncoding(RequestError::Busy))?;
+        } else {
+            drop(session);
+            self.storage
+                .publish_book_upload(
+                    journal
+                        .as_ref()
+                        .ok_or(MountedStorageOwnerError::UploadSizeMismatch)?,
+                )
+                .map_err(MountedStorageOwnerError::Storage)?;
         }
         Ok(())
     }
@@ -1070,12 +1197,23 @@ where
         } else {
             self.active_read = None;
         }
-        self.active_upload = None;
+        let (active_name, session, _, journal) = self
+            .active_upload
+            .take()
+            .ok_or(MountedStorageOwnerError::UploadSizeMismatch)?;
+        if active_name.as_str() != name {
+            return Err(MountedStorageOwnerError::UploadSizeMismatch);
+        }
+        drop(session);
         if Self::is_metadata(name) {
             self.storage
                 .delete_file_in_dir(crate::storage_access::METADATA_DIR, name)
         } else {
-            self.storage.delete_file(name)
+            self.storage.abort_book_upload(
+                journal
+                    .as_ref()
+                    .ok_or(MountedStorageOwnerError::UploadSizeMismatch)?,
+            )
         }
         .map_err(MountedStorageOwnerError::Storage)
     }
@@ -1096,6 +1234,7 @@ where
     }
 
     fn scan_start(&mut self) -> Result<(), Self::Error> {
+        self.recover_upload_if_needed()?;
         self.active_read = None;
         self.mounted_files.clear();
         self.prefetch_names.clear();
@@ -1159,6 +1298,7 @@ where
         Ok(ScanProgress {
             entries: records.len() as u8,
             complete: batch.complete,
+            unsupported_name: batch.unsupported_name,
         })
     }
 
@@ -1174,6 +1314,52 @@ where
         self.mounted_files.clear();
         self.mounted_files_ready = false;
         Ok(())
+    }
+
+    fn library_scratch_create(&mut self) -> Result<(), Self::Error> {
+        self.library_scratch_write = None;
+        self.library_scratch_read = None;
+        self.library_scratch_write = Some(
+            self.storage
+                .create_file_session_in_dir("TMP", "BBLIBRUN.TMP")
+                .map_err(MountedStorageOwnerError::Storage)?,
+        );
+        Ok(())
+    }
+
+    fn library_scratch_write(&mut self, offset: u64, data: &[u8]) -> Result<(), Self::Error> {
+        self.library_scratch_write
+            .as_mut()
+            .ok_or(MountedStorageOwnerError::NoScan)?
+            .write_at(offset, data)
+            .map_err(MountedStorageOwnerError::Storage)
+    }
+
+    fn library_scratch_read(&mut self, offset: u64, out: &mut [u8]) -> Result<(), Self::Error> {
+        self.library_scratch_read
+            .as_mut()
+            .ok_or(MountedStorageOwnerError::NoScan)?
+            .read_at(offset, out)
+            .map_err(MountedStorageOwnerError::Storage)
+    }
+
+    fn library_scratch_flush(&mut self) -> Result<(), Self::Error> {
+        let mut write = self
+            .library_scratch_write
+            .take()
+            .ok_or(MountedStorageOwnerError::NoScan)?;
+        write.flush().map_err(MountedStorageOwnerError::Storage)?;
+        self.library_scratch_read = Some(write.into_read_session());
+        Ok(())
+    }
+
+    fn library_scratch_delete(&mut self) -> Result<(), Self::Error> {
+        self.library_scratch_write = None;
+        self.library_scratch_read = None;
+        match self.storage.delete_file_in_dir("TMP", "BBLIBRUN.TMP") {
+            Ok(()) | Err(embedded_sd_storage::sd_filesystem::StorageError::NotFound) => Ok(()),
+            Err(error) => Err(MountedStorageOwnerError::Storage(error)),
+        }
     }
 }
 
@@ -1245,13 +1431,14 @@ impl<B: OwnerBackend> StorageOwner<B> {
             Request::UploadBegin {
                 name,
                 expected_size,
+                expected_crc32,
                 ..
             } => {
                 if self.protocol.upload_id().is_some() {
                     return Err(OwnerError::Request(RequestError::Busy));
                 }
                 self.backend
-                    .upload_begin(name.as_str(), expected_size)
+                    .upload_begin(name.as_str(), expected_size, expected_crc32)
                     .map_err(OwnerError::Backend)?;
                 let id = self.protocol.begin_upload().map_err(OwnerError::Request)?;
                 self.upload_name = Some(name);
@@ -1367,12 +1554,70 @@ impl<B: OwnerBackend> StorageOwner<B> {
                     .map_err(OwnerError::Request)?;
                 Ok(Response::Ack)
             }
+            Request::LibraryScratchCreate => {
+                self.backend
+                    .library_scratch_create()
+                    .map_err(OwnerError::Backend)?;
+                Ok(Response::Ack)
+            }
+            Request::LibraryScratchWrite {
+                offset,
+                buffer_offset,
+                len,
+                buffer,
+            } => {
+                if buffer != BufferSlot::LibraryIndex {
+                    return Err(OwnerError::Request(RequestError::Stale));
+                }
+                validate_len(len).map_err(OwnerError::Request)?;
+                let data = buffer_range(buffers, buffer, buffer_offset, len)?;
+                self.backend
+                    .library_scratch_write(offset, data)
+                    .map_err(OwnerError::Backend)?;
+                Ok(Response::Written(len))
+            }
+            Request::LibraryScratchRead {
+                offset,
+                buffer_offset,
+                len,
+                buffer,
+            } => {
+                if buffer != BufferSlot::LibraryIndex {
+                    return Err(OwnerError::Request(RequestError::Stale));
+                }
+                validate_len(len).map_err(OwnerError::Request)?;
+                let out = buffer_range(buffers, buffer, buffer_offset, len)?;
+                self.backend
+                    .library_scratch_read(offset, out)
+                    .map_err(OwnerError::Backend)?;
+                Ok(Response::Read(len))
+            }
+            Request::LibraryScratchFlush => {
+                self.backend
+                    .library_scratch_flush()
+                    .map_err(OwnerError::Backend)?;
+                Ok(Response::Ack)
+            }
+            Request::LibraryScratchDelete => {
+                self.backend
+                    .library_scratch_delete()
+                    .map_err(OwnerError::Backend)?;
+                Ok(Response::Ack)
+            }
         }
     }
 
     pub fn execute_owned<'a>(&mut self, request: OwnedRequest<'a>) -> OwnedResponse<'a> {
         let client = request.envelope.client;
         let sequence = request.envelope.sequence;
+        let library_scratch = matches!(
+            request.envelope.request,
+            Request::LibraryScratchCreate
+                | Request::LibraryScratchWrite { .. }
+                | Request::LibraryScratchRead { .. }
+                | Request::LibraryScratchFlush
+                | Request::LibraryScratchDelete
+        );
         let begins_upload = matches!(request.envelope.request, Request::UploadBegin { .. });
         let ends_upload = matches!(
             request.envelope.request,
@@ -1381,13 +1626,16 @@ impl<B: OwnerBackend> StorageOwner<B> {
         let mut pool = LeasePool {
             lease: request.buffer,
         };
-        let response =
+        let response = if library_scratch && client != StorageClient::Library {
+            Err(CompletionError::Request(RequestError::Stale))
+        } else {
             self.execute(request.envelope.request, &mut pool)
                 .map_err(|error| match error {
                     OwnerError::Request(error) => CompletionError::Request(error),
                     OwnerError::Backend(_) => CompletionError::Backend,
                     OwnerError::BufferUnavailable => CompletionError::BufferUnavailable,
-                });
+                })
+        };
         if response.is_ok() {
             if begins_upload {
                 self.upload_client = Some(client);

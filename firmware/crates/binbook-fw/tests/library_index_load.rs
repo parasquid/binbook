@@ -145,6 +145,119 @@ fn viewport_client_validates_200_records_but_retains_only_15_requested_entries()
 }
 
 #[test]
+fn viewport_window_uses_the_cursor_exact_slot_without_resolving_latest_again() {
+    use binbook_fw::{
+        library::{LibraryIndexCursor, LibraryIndexSlot, INDEX_V2_HEADER_SIZE},
+        storage_access::LIBRARY_INDEX_SLOT_A,
+    };
+
+    let (library, _) = maximum_index();
+    let mut encoded = vec![0; library.index_v2_encoded_len()];
+    library.encode_index_v2(4, &mut encoded).unwrap();
+    let cursor = LibraryIndexCursor::from_v2_header(
+        LibraryIndexSlot::A,
+        encoded[..INDEX_V2_HEADER_SIZE].try_into().unwrap(),
+        encoded.len(),
+    )
+    .unwrap();
+    let mut viewport = LibraryViewport::empty();
+    let (mut client, request) =
+        LibraryViewportWindowClient::begin(&mut viewport, cursor, 30, 777).unwrap();
+    let Request::Read {
+        name, offset, len, ..
+    } = request.request
+    else {
+        panic!("window read required")
+    };
+    assert_eq!(name.as_str(), LIBRARY_INDEX_SLOT_A);
+    let mut scratch = vec![0; usize::from(len)];
+    scratch.copy_from_slice(&encoded[offset as usize..offset as usize + usize::from(len)]);
+    client
+        .accept(response(777, Response::Read(len)), &scratch)
+        .unwrap();
+    drop(client);
+    assert_eq!(viewport.start(), 30);
+    assert_eq!(viewport.cursor(), Some(cursor));
+}
+
+#[test]
+fn exact_cursor_navigation_reaches_every_record_forward_and_backward() {
+    use binbook_fw::library::{
+        LibraryIndexCursor, LibraryIndexSlot, INDEX_V2_HEADER_SIZE, LIBRARY_VIEWPORT_CAPACITY,
+    };
+
+    for total in [20usize, 21, 200] {
+        let mut library = Library::empty();
+        let mut scan = IncrementalLibraryScan::begin(&mut library);
+        for index in 0..total {
+            scan.push(&format!("nav-{index:03}.binbook"), index as u64);
+        }
+        scan.finish();
+        let mut encoded = vec![0; library.index_v2_encoded_len()];
+        library.encode_index_v2(3, &mut encoded).unwrap();
+        let cursor = LibraryIndexCursor::from_v2_header(
+            LibraryIndexSlot::B,
+            encoded[..INDEX_V2_HEADER_SIZE].try_into().unwrap(),
+            encoded.len(),
+        )
+        .unwrap();
+        let mut viewport = LibraryViewport::empty();
+        let mut sequence = 1u32;
+        let mut visited_forward = Vec::new();
+        for start in (0..total).step_by(LIBRARY_VIEWPORT_CAPACITY) {
+            load_exact_window(&mut viewport, cursor, start, sequence, &encoded);
+            sequence += 1;
+            visited_forward.extend(
+                viewport
+                    .entries()
+                    .iter()
+                    .map(|entry| entry.name.as_str().to_owned()),
+            );
+        }
+        let expected: Vec<_> = (0..total)
+            .map(|index| format!("nav-{index:03}.binbook"))
+            .collect();
+        assert_eq!(visited_forward, expected);
+
+        let mut visited_backward = Vec::new();
+        let mut starts: Vec<_> = (0..total).step_by(LIBRARY_VIEWPORT_CAPACITY).collect();
+        starts.reverse();
+        for start in starts {
+            load_exact_window(&mut viewport, cursor, start, sequence, &encoded);
+            sequence += 1;
+            visited_backward.extend(
+                viewport
+                    .entries()
+                    .iter()
+                    .rev()
+                    .map(|entry| entry.name.as_str().to_owned()),
+            );
+        }
+        let mut reversed = expected;
+        reversed.reverse();
+        assert_eq!(visited_backward, reversed);
+    }
+}
+
+fn load_exact_window(
+    viewport: &mut LibraryViewport,
+    cursor: binbook_fw::library::LibraryIndexCursor,
+    start: usize,
+    sequence: u32,
+    encoded: &[u8],
+) {
+    let (mut client, request) =
+        LibraryViewportWindowClient::begin(viewport, cursor, start, sequence).unwrap();
+    let Request::Read { offset, len, .. } = request.request else {
+        panic!("window read required")
+    };
+    let bytes = &encoded[offset as usize..offset as usize + usize::from(len)];
+    client
+        .accept(response(sequence, Response::Read(len)), bytes)
+        .unwrap();
+}
+
+#[test]
 fn missing_or_wrong_sequence_index_is_non_adoptable() {
     let mut loaded = Library::empty();
     let (mut client, _) = LibraryIndexLoadClient::begin(&mut loaded, 7);
@@ -306,4 +419,68 @@ fn prune_client_does_not_mutate_state_when_index_validation_fails() {
         .records()
         .iter()
         .any(|record| record.filename_hash == 0xdead_beef));
+}
+
+#[test]
+fn prune_uses_the_exact_version_two_cursor_slot() {
+    use binbook_fw::{
+        library::{LibraryIndexCursor, LibraryIndexSlot, INDEX_V2_HEADER_SIZE},
+        storage_access::LIBRARY_INDEX_SLOT_B,
+    };
+
+    let (library, _) = maximum_index();
+    let mut encoded = vec![0; library.index_v2_encoded_len()];
+    library.encode_index_v2(44, &mut encoded).unwrap();
+    let cursor = LibraryIndexCursor::from_v2_header(
+        LibraryIndexSlot::B,
+        encoded[..INDEX_V2_HEADER_SIZE].try_into().unwrap(),
+        encoded.len(),
+    )
+    .unwrap();
+    let mut state = ReaderState::empty();
+    for hash in [library.entries()[9].filename_hash, 0xfeed_face] {
+        state
+            .set_progress(ProgressRecord {
+                filename_hash: hash,
+                rendition_hash: [9; 32],
+                page: 1,
+            })
+            .unwrap();
+    }
+    let (mut client, mut request) = LibraryIndexPruneClient::begin_cursor(&mut state, cursor, 80);
+    let mut scratch = vec![0; 4096];
+    loop {
+        let Request::Read {
+            ref name,
+            offset,
+            len,
+            ..
+        } = request.request
+        else {
+            panic!("cursor prune only reads its selected slot")
+        };
+        assert_eq!(name.as_str(), LIBRARY_INDEX_SLOT_B);
+        let offset = offset as usize;
+        let len = usize::from(len);
+        scratch[..len].copy_from_slice(&encoded[offset..offset + len]);
+        match client
+            .accept(
+                response(request.sequence, Response::Read(len as u16)),
+                Some(&scratch),
+            )
+            .unwrap()
+        {
+            LibraryIndexPruneUpdate::Request(next) => request = next,
+            LibraryIndexPruneUpdate::Complete { removed } => {
+                assert_eq!(removed, 1);
+                break;
+            }
+        }
+    }
+    drop(client);
+    assert_eq!(state.records().len(), 1);
+    assert_eq!(
+        state.records()[0].filename_hash,
+        library.entries()[9].filename_hash
+    );
 }

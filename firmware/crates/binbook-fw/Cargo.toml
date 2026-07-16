@@ -61,7 +61,10 @@ sd-storage = [
     "mounted-storage-owner",
 ]
 debug-log = []
+bulk-transfer-runtime = []
+usb-rx-isr-buffer = []
 storage-owner-probe = []
+library-index-fault-after-first-record = []
 # Compatibility alias for scripts created while the mounted owner was gated.
 # `sd-storage` now selects this path unconditionally.
 mounted-storage-owner = []
@@ -80,6 +83,14 @@ test = false
 doctest = false
 bench = false
 required-features = ["firmware-bin"]
+
+[[bin]]
+name = "sd-probe"
+path = "src/bin/sd_probe.rs"
+test = false
+doctest = false
+bench = false
+required-features = ["firmware-bin", "sd-storage", "debug-log"]
 
 [lints]
 workspace = true

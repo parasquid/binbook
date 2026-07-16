@@ -4,7 +4,9 @@
 use std::vec::Vec;
 use std::{cell::RefCell, rc::Rc, string::String};
 
-use embedded_sd_storage::{MountedDirectoryScan, MountedFileAccess, SdStorage};
+use embedded_sd_storage::{
+    MountedDirectoryScan, MountedFileAccess, SdStorage, UploadJournalPhase, UploadJournalRecord,
+};
 use embedded_sdmmc::TimeSource;
 use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx};
 
@@ -17,6 +19,7 @@ struct SharedBlockState {
     read_count: usize,
     read_calls: usize,
     write_count: usize,
+    write_calls: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -37,6 +40,7 @@ impl SharedBlocks {
             read_count: 0,
             read_calls: 0,
             write_count: 0,
+            write_calls: 0,
         })))
     }
 
@@ -54,6 +58,20 @@ impl SharedBlocks {
 
     fn read_calls(&self) -> usize {
         self.0.borrow().read_calls
+    }
+
+    fn reset_write_counts(&self) {
+        let mut state = self.0.borrow_mut();
+        state.write_count = 0;
+        state.write_calls = 0;
+    }
+
+    fn write_count(&self) -> usize {
+        self.0.borrow().write_count
+    }
+
+    fn write_calls(&self) -> usize {
+        self.0.borrow().write_calls
     }
 }
 
@@ -73,6 +91,7 @@ impl BlockDevice for SharedBlocks {
 
     fn write(&self, blocks: &[Block], start: BlockIdx) -> Result<(), Self::Error> {
         let mut target = self.0.borrow_mut();
+        target.write_calls += 1;
         target.write_count += blocks.len();
         for (i, block) in blocks.iter().enumerate() {
             let idx = (start.0 as usize) + i;
@@ -86,6 +105,33 @@ impl BlockDevice for SharedBlocks {
     }
 }
 
+#[test]
+fn squidscript_style_begin_upload_writes_a_full_file_before_payload_overwrite() {
+    const NAME: &str = "ACCOUNT.BIN";
+    const SIZE: usize = 3_584;
+    const FILE_BLOCKS: usize = SIZE / 512;
+
+    let (mut storage, blocks) = storage_from_fixture();
+    blocks.reset_write_counts();
+    storage.begin_upload(NAME, SIZE as u64).unwrap();
+    let preparation_blocks = blocks.write_count();
+    let preparation_calls = blocks.write_calls();
+    assert!(
+        preparation_blocks >= FILE_BLOCKS,
+        "zero-fill preparation wrote {preparation_blocks} blocks, below the {FILE_BLOCKS}-block file payload"
+    );
+    assert!(preparation_calls > 0);
+
+    blocks.reset_write_counts();
+    storage.write_upload_chunk(NAME, 0, &[0xA5; SIZE]).unwrap();
+    assert_eq!(blocks.write_count(), FILE_BLOCKS);
+    assert_eq!(blocks.write_calls(), FILE_BLOCKS);
+    assert!(
+        preparation_blocks + blocks.write_count() >= FILE_BLOCKS * 2,
+        "preparation plus payload must write the complete file at least twice"
+    );
+}
+
 fn storage_from_fixture() -> (SdStorage<SharedBlocks, FixedTime>, SharedBlocks) {
     let blocks = SharedBlocks::from_fixture();
     (
@@ -94,10 +140,97 @@ fn storage_from_fixture() -> (SdStorage<SharedBlocks, FixedTime>, SharedBlocks) 
     )
 }
 
+fn mounted_scratch() -> &'static mut embedded_sd_storage::MountedScratch {
+    Box::leak(Box::new(core::array::from_fn(|_| Block::new())))
+}
+
+#[test]
+fn mounted_book_upload_is_hidden_until_publish_and_recovery_discards_receiving_stage() {
+    let (storage, _blocks) = storage_from_fixture();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
+    let record = UploadJournalRecord::new(
+        UploadJournalPhase::Receiving,
+        mounted.next_upload_generation().unwrap(),
+        7,
+        0x1234_5678,
+        "recover.binbook",
+    )
+    .unwrap();
+    let mut upload = mounted.begin_book_upload(&record).unwrap();
+    upload.write_at(0, b"partial").unwrap();
+    upload.flush().unwrap();
+    drop(upload);
+
+    assert!(mounted.file_size("recover.binbook").is_err());
+    mounted
+        .discard_book_upload_stage(record.generation)
+        .unwrap();
+    mounted.recover_book_upload().unwrap();
+    assert!(mounted.file_size("recover.binbook").is_err());
+
+    let next = UploadJournalRecord::new(
+        UploadJournalPhase::Receiving,
+        mounted.next_upload_generation().unwrap(),
+        3,
+        0x0102_0304,
+        "recover.binbook",
+    )
+    .unwrap();
+    let mut replacement = mounted.begin_book_upload(&next).unwrap();
+    replacement.write_at(0, b"new").unwrap();
+    replacement.flush().unwrap();
+    drop(replacement);
+    mounted.publish_book_upload(&next).unwrap();
+    let mut bytes = [0; 3];
+    mounted.read_at("recover.binbook", 0, &mut bytes).unwrap();
+    assert_eq!(&bytes, b"new");
+}
+
+#[test]
+fn mounted_book_publish_replaces_only_after_complete_stage_and_removes_abort_stage() {
+    let (mut storage, _blocks) = storage_from_fixture();
+    storage.create_or_truncate("replace.binbook").unwrap();
+    storage.write_at("replace.binbook", 0, b"old").unwrap();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
+    let record = UploadJournalRecord::new(
+        UploadJournalPhase::Receiving,
+        mounted.next_upload_generation().unwrap(),
+        3,
+        0xaabb_ccdd,
+        "replace.binbook",
+    )
+    .unwrap();
+    let mut upload = mounted.begin_book_upload(&record).unwrap();
+    upload.write_at(0, b"new").unwrap();
+    upload.flush().unwrap();
+
+    let mut old = [0; 3];
+    mounted.read_at("replace.binbook", 0, &mut old).unwrap();
+    assert_eq!(&old, b"old");
+    drop(upload);
+    mounted.publish_book_upload(&record).unwrap();
+    mounted.read_at("replace.binbook", 0, &mut old).unwrap();
+    assert_eq!(&old, b"new");
+
+    let aborted = UploadJournalRecord::new(
+        UploadJournalPhase::Receiving,
+        mounted.next_upload_generation().unwrap(),
+        4,
+        1,
+        "aborted.binbook",
+    )
+    .unwrap();
+    let mut upload = mounted.begin_book_upload(&aborted).unwrap();
+    upload.write_at(0, b"nope").unwrap();
+    drop(upload);
+    mounted.abort_book_upload(&aborted).unwrap();
+    assert!(mounted.file_size("aborted.binbook").is_err());
+}
+
 #[test]
 fn mounted_storage_opens_metadata_from_a_dedicated_directory() {
     let (storage, _blocks) = storage_from_fixture();
-    let mounted = storage.into_owned_mount().unwrap();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
 
     mounted
         .create_or_truncate_in_dir("BINBOOK", "LIBRARY.IDX")
@@ -116,7 +249,7 @@ fn mounted_storage_opens_metadata_from_a_dedicated_directory() {
 #[test]
 fn mounted_write_session_keeps_one_file_open_across_bounded_chunks() {
     let (storage, _blocks) = storage_from_fixture();
-    let mounted = storage.into_owned_mount().unwrap();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
     let mut upload = mounted
         .create_file_session_in_dir("BINBOOK", "LIBRARY.IDX")
         .unwrap();
@@ -130,6 +263,40 @@ fn mounted_write_session_keeps_one_file_open_across_bounded_chunks() {
     let mut bytes = [0; 13];
     read.read_at(0, &mut bytes).unwrap();
     assert_eq!(&bytes, b"headerrecords");
+}
+
+#[test]
+fn mounted_incremental_growth_coalesces_repeated_fat_sector_updates() {
+    const SIZE: usize = 1024 * 1024;
+    const CHUNK: usize = 3_584;
+    const PAYLOAD_SECTORS: usize = SIZE / 512;
+
+    let (storage, blocks) = storage_from_fixture();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
+    let record = UploadJournalRecord::new(
+        UploadJournalPhase::Receiving,
+        mounted.next_upload_generation().unwrap(),
+        SIZE as u32,
+        1,
+        "fat-cache.binbook",
+    )
+    .unwrap();
+    let mut upload = mounted.begin_book_upload(&record).unwrap();
+    blocks.reset_write_counts();
+    let bytes = [0xa5; CHUNK];
+    let mut offset = 0;
+    while offset != SIZE {
+        let len = (SIZE - offset).min(CHUNK);
+        upload.write_at(offset as u64, &bytes[..len]).unwrap();
+        offset += len;
+    }
+    upload.flush().unwrap();
+
+    let calls = blocks.write_calls();
+    assert!(
+        calls < PAYLOAD_SECTORS,
+        "incremental growth used {calls} physical calls for {PAYLOAD_SECTORS} payload sectors"
+    );
 }
 
 struct FixedTime;
@@ -303,6 +470,30 @@ fn binbook_enumeration_excludes_names_beyond_portable_limit() {
         .for_each_binbook_entry(&mut |name, _, _| names.push(name.to_string()))
         .unwrap();
     assert!(names.is_empty());
+}
+
+#[test]
+fn mounted_scan_reports_a_portability_unsupported_binbook_name() {
+    let (mut storage, _blocks) = storage_from_fixture();
+    let name = format!("{}.binbook", "u".repeat(114));
+    storage.create_or_truncate(&name).unwrap();
+    storage.write_at(&name, 0, BOOK_A).unwrap();
+    storage.flush(&name).unwrap();
+    let fs = storage.into_mounted_filesystem(mounted_scratch()).unwrap();
+    let mut scan = MountedDirectoryScan::start(&fs).unwrap();
+    let mut unsupported = false;
+    loop {
+        let batch = scan.step(8).unwrap();
+        unsupported |= batch.unsupported_name;
+        assert!(batch
+            .entries
+            .iter()
+            .all(|entry| entry.name.as_str() != name));
+        if batch.complete {
+            break;
+        }
+    }
+    assert!(unsupported);
 }
 
 #[test]
@@ -509,7 +700,7 @@ fn consuming_mount_keeps_one_directory_iterator_position_across_batches() {
     let (mut storage, _blocks) = storage_from_fixture();
     storage.create_or_truncate("A.binbook").unwrap();
     storage.create_or_truncate("B.binbook").unwrap();
-    let fs = storage.into_mounted_filesystem().unwrap();
+    let fs = storage.into_mounted_filesystem(mounted_scratch()).unwrap();
     let root = fs.root_dir();
     let dir = root.open_dir("BOOKS").unwrap();
     let mut entries = dir.iter();
@@ -547,7 +738,7 @@ fn mounted_scan_batches_eight_entries_and_allows_foreground_read_between_steps()
         storage.create_or_truncate(&name).unwrap();
         storage.write_at(&name, 0, &[index as u8]).unwrap();
     }
-    let fs = storage.into_mounted_filesystem().unwrap();
+    let fs = storage.into_mounted_filesystem(mounted_scratch()).unwrap();
     let mut scan = MountedDirectoryScan::start(&fs).unwrap();
 
     let first = scan.step(8).unwrap();
@@ -606,7 +797,7 @@ fn owned_mounted_storage_serves_foreground_io_and_borrowed_scan_from_one_mount()
     let (mut storage, _blocks) = storage_from_fixture();
     storage.create_or_truncate("before.binbook").unwrap();
     storage.write_at("before.binbook", 0, b"before").unwrap();
-    let mounted = storage.into_owned_mount().unwrap();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
 
     assert_eq!(mounted.file_size("before.binbook").unwrap(), 6);
     let mut before = [0u8; 6];

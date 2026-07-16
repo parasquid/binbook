@@ -45,6 +45,7 @@ fn refresh_client_builds_200_entries_from_correlated_owner_batches() {
                     Response::ScanProgress(ScanProgress {
                         entries: records.len() as u8,
                         complete: batch_start + records.len() == 200,
+                        unsupported_name: false,
                     }),
                 ),
                 Some(&bytes),

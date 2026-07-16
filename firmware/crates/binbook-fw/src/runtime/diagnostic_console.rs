@@ -19,11 +19,15 @@ pub(super) async fn diagnostic_task(
     usb_device: esp_hal::peripherals::USB_DEVICE<'static>,
     flash: esp_hal::peripherals::FLASH<'static>,
 ) {
-    use embassy_futures::select::{select, Either};
-    use esp_hal::usb_serial_jtag::UsbSerialJtag;
-
-    let usb = UsbSerialJtag::new(usb_device).into_async();
-    let (mut usb_rx, mut usb_tx) = usb.split();
+    use embassy_futures::select::{select3, Either3};
+    #[cfg(all(feature = "sd-storage", feature = "bulk-transfer-runtime"))]
+    use embassy_futures::select::{select4, Either4};
+    #[cfg(not(feature = "usb-rx-isr-buffer"))]
+    let (mut usb_rx, mut usb_tx) = esp_hal::usb_serial_jtag::UsbSerialJtag::new(usb_device)
+        .into_async()
+        .split();
+    #[cfg(feature = "usb-rx-isr-buffer")]
+    let (mut usb_rx, mut usb_tx) = super::usb_rx_isr::install(usb_device);
     let mut serial = SerialState::new();
     let mut crash_store = CrashStore::new(esp_storage::FlashStorage::new(flash));
     let mut storage = binbook_fw::diag_storage::UnavailableStorage;
@@ -42,43 +46,143 @@ pub(super) async fn diagnostic_task(
     let owner_response = OWNER_RESPONSE.init([0; binbook_diagnostic_protocol::MAX_PAYLOAD_BYTES]);
     #[cfg(feature = "sd-storage")]
     let mut owner_runtime = super::diagnostic_owner_storage::DiagnosticOwnerRuntime::new();
+    #[cfg(all(feature = "sd-storage", feature = "bulk-transfer-runtime"))]
+    static BULK_BUFFERS: static_cell::StaticCell<
+        [[u8; binbook_fw::bulk_slots::TRANSFER_DATA_BYTES];
+            binbook_fw::bulk_slots::TRANSFER_SLOT_COUNT],
+    > = static_cell::StaticCell::new();
+    #[cfg(all(feature = "sd-storage", feature = "bulk-transfer-runtime"))]
+    let mut bulk_runtime = super::diagnostic_bulk::DiagnosticBulkRuntime::new(
+        BULK_BUFFERS
+            .init(
+                [[0; binbook_fw::bulk_slots::TRANSFER_DATA_BYTES];
+                    binbook_fw::bulk_slots::TRANSFER_SLOT_COUNT],
+            )
+            .each_mut(),
+    );
     let completion_rx = AGGREGATOR_COMPLETION_CHANNEL.receiver();
     let mut published_protocol_errors = 0;
+    let mut transfer_trace = binbook_fw::transfer_trace_command::TransferTraceCommand::new();
 
     loop {
         let mut usb_read_buf = [0u8; 64];
+        #[cfg(feature = "usb-rx-isr-buffer")]
+        if usb_rx.take_overflowed() {
+            serial.note_rx_overflow();
+        }
         if !serial.needs_service(false) {
-            match select(
-                embedded_io_async::Read::read(&mut usb_rx, &mut usb_read_buf),
-                completion_rx.receive(),
-            )
-            .await
-            {
-                Either::First(Ok(received)) => {
-                    serial.feed_rx(&usb_read_buf[..received]);
+            #[cfg(all(feature = "sd-storage", feature = "bulk-transfer-runtime"))]
+            let mut bulk_wait_serviced = false;
+            #[cfg(all(feature = "sd-storage", feature = "bulk-transfer-runtime"))]
+            if bulk_runtime.pending_owner() != 0 {
+                let timeout_wait =
+                    bulk_runtime.timeout_wait_ms(embassy_time::Instant::now().as_millis());
+                match select4(
+                    embedded_io_async::Read::read(&mut usb_rx, &mut usb_read_buf),
+                    completion_rx.receive(),
+                    super::STORAGE_DIAGNOSTIC_RESPONSE_CHANNEL.receive(),
+                    embassy_time::Timer::after_millis(timeout_wait),
+                )
+                .await
+                {
+                    Either4::First(Ok(received)) => {
+                        if received == 0 {
+                            embassy_time::Timer::after_millis(1).await;
+                        } else {
+                            feed_profiled(
+                                &mut serial,
+                                &mut transfer_trace,
+                                &usb_read_buf[..received],
+                            );
+                        }
+                    }
+                    Either4::First(Err(error)) => match error {},
+                    Either4::Second(committed) => {
+                        let status = match committed.completion.status {
+                            RuntimeCompletionStatus::Ok => Status::Ok,
+                            RuntimeCompletionStatus::Error => Status::Error,
+                        };
+                        let _ = complete_pending_command(
+                            &mut serial,
+                            committed.pending,
+                            status,
+                            committed.completion.page,
+                            &[],
+                        );
+                    }
+                    Either4::Third(response) => {
+                        bulk_runtime
+                            .mark_commit_timing(response.envelope.sequence, &mut transfer_trace);
+                        drain_transfer_timings(&mut transfer_trace);
+                        bulk_runtime
+                            .handle_owner(
+                                &mut serial,
+                                response,
+                                embassy_time::Instant::now().as_millis(),
+                                &mut transfer_trace,
+                            )
+                            .await;
+                    }
+                    Either4::Fourth(_) => {}
                 }
-                Either::First(Err(error)) => match error {},
-                Either::Second(committed) => {
-                    let status = match committed.completion.status {
-                        RuntimeCompletionStatus::Ok => Status::Ok,
-                        RuntimeCompletionStatus::Error => Status::Error,
-                    };
-                    let _ = complete_pending_command(
-                        &mut serial,
-                        committed.pending,
-                        status,
-                        committed.completion.page,
-                        &[],
-                    );
+                bulk_wait_serviced = true;
+            }
+            #[cfg(not(all(feature = "sd-storage", feature = "bulk-transfer-runtime")))]
+            let bulk_wait_serviced = false;
+            if !bulk_wait_serviced {
+                #[cfg(all(feature = "sd-storage", feature = "bulk-transfer-runtime"))]
+                let timeout_wait =
+                    bulk_runtime.timeout_wait_ms(embassy_time::Instant::now().as_millis());
+                #[cfg(not(all(feature = "sd-storage", feature = "bulk-transfer-runtime")))]
+                let timeout_wait = 60_000;
+                match select3(
+                    embedded_io_async::Read::read(&mut usb_rx, &mut usb_read_buf),
+                    completion_rx.receive(),
+                    embassy_time::Timer::after_millis(timeout_wait),
+                )
+                .await
+                {
+                    Either3::First(Ok(received)) => {
+                        if received == 0 {
+                            embassy_time::Timer::after_millis(1).await;
+                        } else {
+                            feed_profiled(
+                                &mut serial,
+                                &mut transfer_trace,
+                                &usb_read_buf[..received],
+                            );
+                        }
+                    }
+                    Either3::First(Err(error)) => match error {},
+                    Either3::Second(committed) => {
+                        let status = match committed.completion.status {
+                            RuntimeCompletionStatus::Ok => Status::Ok,
+                            RuntimeCompletionStatus::Error => Status::Error,
+                        };
+                        let _ = complete_pending_command(
+                            &mut serial,
+                            committed.pending,
+                            status,
+                            committed.completion.page,
+                            &[],
+                        );
+                    }
+                    Either3::Third(_) => {}
                 }
             }
         }
-        loop {
+        #[cfg(all(feature = "sd-storage", feature = "bulk-transfer-runtime"))]
+        bulk_runtime
+            .handle_idle_timeout(embassy_time::Instant::now().as_millis())
+            .await;
+        #[cfg(feature = "sd-storage")]
+        drain_transfer_timings(&mut transfer_trace);
+        while !serial.frame_ready() {
             let received = usb_rx.drain_rx_fifo(&mut usb_read_buf);
             if received == 0 {
                 break;
             }
-            serial.feed_rx(&usb_read_buf[..received]);
+            feed_profiled(&mut serial, &mut transfer_trace, &usb_read_buf[..received]);
         }
 
         while let Ok(committed) = AGGREGATOR_COMPLETION_CHANNEL.receiver().try_receive() {
@@ -105,28 +209,71 @@ pub(super) async fn diagnostic_task(
                 }
             };
             #[cfg(feature = "sd-storage")]
-            let command = binbook_fw::diag::poll_runtime_command_owner_storage(
+            let mut observe_decode = |event| {
+                let now_us = embassy_time::Instant::now().as_micros();
+                match event {
+                    binbook_fw::diag::RuntimeProfileEvent::Frame(event) => {
+                        transfer_trace.observe_decode(event, now_us);
+                    }
+                    binbook_fw::diag::RuntimeProfileEvent::Bulk(
+                        binbook_fw::bulk_protocol_dispatch::BulkDispatchEvent::CrcStart,
+                    ) => transfer_trace
+                        .enter_phase(binbook_fw::transfer_metrics::TransferPhase::Crc, now_us),
+                    binbook_fw::diag::RuntimeProfileEvent::Bulk(
+                        binbook_fw::bulk_protocol_dispatch::BulkDispatchEvent::CrcEnd,
+                    ) => transfer_trace
+                        .exit_phase(binbook_fw::transfer_metrics::TransferPhase::Crc, now_us),
+                }
+            };
+            #[cfg(feature = "bulk-transfer-runtime")]
+            let command = binbook_fw::diag::poll_runtime_command_bulk_owner_storage_profiled(
                 &mut serial,
                 snapshot,
                 &mut storage,
                 owner_transfer,
+                bulk_runtime.coordinator(),
+                &mut observe_decode,
+            );
+            #[cfg(all(feature = "sd-storage", not(feature = "bulk-transfer-runtime")))]
+            let command = binbook_fw::diag::poll_runtime_command_owner_storage_profiled(
+                &mut serial,
+                snapshot,
+                &mut storage,
+                owner_transfer,
+                &mut observe_decode,
             );
             #[cfg(not(feature = "sd-storage"))]
             let command = poll_runtime_command(&mut serial, snapshot, &mut storage);
             if let Some(command) = command {
                 let header = command.header();
-                RUNTIME_EVENT_CHANNEL
-                    .sender()
-                    .send(RuntimeEvent {
-                        timestamp_ms: embassy_time::Instant::now().as_millis(),
-                        kind: RuntimeEventKind::ProtocolCommand {
-                            opcode: header.opcode as u8,
-                            sequence: header.sequence,
-                        },
-                    })
-                    .await;
+                if header.opcode != binbook_diagnostic_protocol::Opcode::StoreSdWriteTrace {
+                    RUNTIME_EVENT_CHANNEL
+                        .sender()
+                        .send(RuntimeEvent {
+                            timestamp_ms: embassy_time::Instant::now().as_millis(),
+                            kind: RuntimeEventKind::ProtocolCommand {
+                                opcode: header.opcode as u8,
+                                sequence: header.sequence,
+                            },
+                        })
+                        .await;
+                }
                 #[cfg(feature = "sd-storage")]
                 match command {
+                    #[cfg(feature = "bulk-transfer-runtime")]
+                    RuntimeCommand::Bulk { header, action } => {
+                        bulk_runtime
+                            .handle_action(
+                                &mut serial,
+                                header,
+                                action,
+                                embassy_time::Instant::now().as_millis(),
+                                &mut transfer_trace,
+                            )
+                            .await;
+                    }
+                    #[cfg(not(feature = "bulk-transfer-runtime"))]
+                    RuntimeCommand::Bulk { .. } => {}
                     RuntimeCommand::OwnerStorage { header, command } => {
                         owner_transfer =
                             super::diagnostic_owner_storage::handle_owner_storage_command(
@@ -136,25 +283,51 @@ pub(super) async fn diagnostic_task(
                                 command,
                                 owner_transfer,
                                 owner_response,
+                                &mut transfer_trace,
                             )
                             .await;
                     }
                     command => {
-                        handle_command(&mut serial, &mut crash_store, snapshot, command).await;
+                        handle_command(
+                            &mut serial,
+                            &mut crash_store,
+                            snapshot,
+                            command,
+                            &mut transfer_trace,
+                        )
+                        .await;
                     }
                 }
                 #[cfg(not(feature = "sd-storage"))]
-                handle_command(&mut serial, &mut crash_store, snapshot, command).await;
+                handle_command(
+                    &mut serial,
+                    &mut crash_store,
+                    snapshot,
+                    command,
+                    &mut transfer_trace,
+                )
+                .await;
             }
         }
 
         if !serial.pending_tx().is_empty() {
             let pending_len = serial.pending_tx().len();
-            if embedded_io_async::Write::write_all(&mut usb_tx, serial.pending_tx())
+            transfer_trace.enter_phase(
+                binbook_fw::transfer_metrics::TransferPhase::UsbTx,
+                embassy_time::Instant::now().as_micros(),
+            );
+            // ESP HAL's async write already waits for each 64-byte IN packet to
+            // empty. A subsequent flush can wait forever if the host closes the
+            // port immediately after reading the response.
+            let sent = embedded_io_async::Write::write_all(&mut usb_tx, serial.pending_tx())
                 .await
-                .is_ok()
-                && embedded_io_async::Write::flush(&mut usb_tx).await.is_ok()
-            {
+                .is_ok();
+            transfer_trace.exit_phase(
+                binbook_fw::transfer_metrics::TransferPhase::UsbTx,
+                embassy_time::Instant::now().as_micros(),
+            );
+            if sent {
+                transfer_trace.record_usb_tx(pending_len);
                 serial.consume_tx(pending_len);
             }
         }
@@ -165,6 +338,45 @@ pub(super) async fn diagnostic_task(
             published_protocol_errors = protocol_errors;
         }
     }
+}
+
+fn feed_profiled(
+    serial: &mut SerialState,
+    transfer_trace: &mut binbook_fw::transfer_trace_command::TransferTraceCommand,
+    bytes: &[u8],
+) {
+    transfer_trace.enter_phase(
+        binbook_fw::transfer_metrics::TransferPhase::UsbRx,
+        embassy_time::Instant::now().as_micros(),
+    );
+    serial.feed_rx(bytes);
+    transfer_trace.record_rx_buffered(serial.buffered_rx_bytes());
+    transfer_trace.exit_phase(
+        binbook_fw::transfer_metrics::TransferPhase::UsbRx,
+        embassy_time::Instant::now().as_micros(),
+    );
+}
+
+#[cfg(feature = "sd-storage")]
+fn drain_transfer_timings(
+    transfer_trace: &mut binbook_fw::transfer_trace_command::TransferTraceCommand,
+) {
+    while let Ok(event) = super::TRANSFER_OWNER_TIMING_CHANNEL
+        .receiver()
+        .try_receive()
+    {
+        transfer_trace.observe_owner_timing(event);
+    }
+    transfer_trace.observe_block_io_aggregate(super::TRANSFER_BLOCK_IO.take());
+    while let Ok(timing) = super::TRANSFER_LIBRARY_TIMING_CHANNEL
+        .receiver()
+        .try_receive()
+    {
+        transfer_trace.complete_library_refresh(timing.trace_id, timing.elapsed_us);
+    }
+    transfer_trace.record_instrumentation_drops(
+        super::TRANSFER_OWNER_TIMING_DROPS.swap(0, portable_atomic::Ordering::Relaxed),
+    );
 }
 
 #[cfg(all(feature = "sd-storage", target_arch = "riscv32"))]
@@ -191,6 +403,7 @@ pub(super) async fn diagnostic_task_with_sd(
     let mut storage = binbook_fw::diag_storage::FilesystemStorage::new(sd_fs);
     let completion_rx = AGGREGATOR_COMPLETION_CHANNEL.receiver();
     let mut published_protocol_errors = 0;
+    let mut transfer_trace = binbook_fw::transfer_trace_command::TransferTraceCommand::new();
 
     loop {
         let mut usb_read_buf = [0u8; 64];
@@ -202,7 +415,11 @@ pub(super) async fn diagnostic_task_with_sd(
             .await
             {
                 Either::First(Ok(received)) => {
-                    serial.feed_rx(&usb_read_buf[..received]);
+                    if received == 0 {
+                        embassy_time::Timer::after_millis(1).await;
+                    } else {
+                        serial.feed_rx(&usb_read_buf[..received]);
+                    }
                 }
                 Either::First(Err(error)) => match error {},
                 Either::Second(committed) => {
@@ -263,7 +480,14 @@ pub(super) async fn diagnostic_task_with_sd(
                         },
                     })
                     .await;
-                handle_command(&mut serial, &mut crash_store, snapshot, command).await;
+                handle_command(
+                    &mut serial,
+                    &mut crash_store,
+                    snapshot,
+                    command,
+                    &mut transfer_trace,
+                )
+                .await;
             }
         }
 
@@ -272,7 +496,6 @@ pub(super) async fn diagnostic_task_with_sd(
             if embedded_io_async::Write::write_all(&mut usb_tx, serial.pending_tx())
                 .await
                 .is_ok()
-                && embedded_io_async::Write::flush(&mut usb_tx).await.is_ok()
             {
                 serial.consume_tx(pending_len);
             }
@@ -291,11 +514,26 @@ async fn handle_command<F>(
     crash_store: &mut CrashStore<F>,
     snapshot: binbook_fw::diag::DiagnosticSnapshot,
     command: RuntimeCommand,
+    transfer_trace: &mut binbook_fw::transfer_trace_command::TransferTraceCommand,
 ) where
     F: embedded_storage::nor_flash::NorFlash,
 {
     match command {
         RuntimeCommand::Immediate { .. } => {}
+        RuntimeCommand::TransferTrace { header, request } => {
+            let now_us = embassy_time::Instant::now().as_micros();
+            match transfer_trace.handle(request, serial.protocol_error_count(), now_us) {
+                Ok(Some(payload)) => {
+                    queue_runtime_response(serial, header, Status::Ok, payload.as_slice());
+                }
+                Ok(None) => queue_runtime_response(serial, header, Status::Ok, &[]),
+                Err(status) => queue_runtime_response(serial, header, status, &[]),
+            }
+        }
+        #[cfg(feature = "sd-storage")]
+        RuntimeCommand::SdWriteTrace { header, request } => {
+            handle_sd_write_trace(serial, header, request);
+        }
         RuntimeCommand::LogGet {
             header,
             cursor,
@@ -326,7 +564,91 @@ async fn handle_command<F>(
         }
         #[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
         RuntimeCommand::OwnerStorage { .. } => {}
+        #[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+        RuntimeCommand::Bulk { .. } => {}
     }
+}
+
+#[cfg(feature = "sd-storage")]
+fn handle_sd_write_trace(
+    serial: &mut SerialState,
+    header: binbook_diagnostic_protocol::FrameHeader,
+    request: binbook_diagnostic_protocol::SdWriteTraceRequest,
+) {
+    use binbook_diagnostic_protocol::{
+        SdWriteTraceAction, SD_WRITE_TRACE_FLAG_OVERFLOW, SD_WRITE_TRACE_RECORD_BYTES,
+        SD_WRITE_TRACE_RESPONSE_HEADER_BYTES,
+    };
+
+    if matches!(
+        request.action,
+        SdWriteTraceAction::Clear | SdWriteTraceAction::Freeze
+    ) {
+        super::SD_WRITE_CAPTURE.lock(|capture| {
+            let mut capture = capture.borrow_mut();
+            if request.action == SdWriteTraceAction::Clear {
+                capture.clear();
+            } else {
+                capture.freeze();
+            }
+        });
+        queue_runtime_response(serial, header, Status::Ok, &[]);
+        return;
+    }
+
+    let (record_len, capacity, overflowed, anomalies, start, record) = super::SD_WRITE_CAPTURE
+        .lock(|capture| {
+            let capture = capture.borrow();
+            let record_len = capture.len();
+            let start = usize::from(request.start_index).min(record_len);
+            (
+                record_len,
+                capture.capacity(),
+                capture.overflowed(),
+                capture.anomalies(),
+                start,
+                capture.record(start),
+            )
+        });
+    let count = u16::from(record.is_some());
+    let mut payload = [0; SD_WRITE_TRACE_RESPONSE_HEADER_BYTES + SD_WRITE_TRACE_RECORD_BYTES];
+    payload[0] = 1;
+    payload[1] = if overflowed {
+        SD_WRITE_TRACE_FLAG_OVERFLOW
+    } else {
+        0
+    };
+    payload[2..4].copy_from_slice(&(record_len as u16).to_le_bytes());
+    payload[4..6].copy_from_slice(&(capacity as u16).to_le_bytes());
+    payload[6..8].copy_from_slice(&(start as u16).to_le_bytes());
+    payload[8..10].copy_from_slice(&count.to_le_bytes());
+    payload[10..14].copy_from_slice(&anomalies.to_le_bytes());
+    payload[14..16].fill(0);
+    if let Some(record) = record {
+        let bytes = &mut payload[16..48];
+        bytes[0..4].copy_from_slice(&record.start_block.to_le_bytes());
+        bytes[4..6].copy_from_slice(&record.blocks.to_le_bytes());
+        bytes[6] = record.command;
+        bytes[7] = u8::from(record.success) | (record.anomalies << 1);
+        for (index, field) in [
+            record.command_setup_us,
+            record.data_spi_us,
+            record.busy_wait_us,
+            record.total_us,
+            record.gap_us,
+        ]
+        .iter()
+        .enumerate()
+        {
+            let offset = 8 + index * 4;
+            bytes[offset..offset + 4].copy_from_slice(&field.to_le_bytes());
+        }
+        bytes[28] = record.purpose;
+        bytes[29..32].fill(0);
+    }
+    let len =
+        SD_WRITE_TRACE_RESPONSE_HEADER_BYTES + usize::from(count) * SD_WRITE_TRACE_RECORD_BYTES;
+    queue_runtime_response(serial, header, Status::Ok, &payload[..len]);
 }
 
 async fn handle_crash_command<F>(

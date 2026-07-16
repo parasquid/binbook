@@ -63,6 +63,7 @@ impl OwnerStateSlots {
             Request::UploadBegin {
                 name: slot_name(target_slot),
                 expected_size: used as u64,
+                expected_crc32: 0,
                 power_save: true,
             },
         );

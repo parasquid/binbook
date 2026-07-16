@@ -1,6 +1,11 @@
-use binbook_diagnostic_protocol::{FRAME_DELIMITER, MAX_FRAME_BYTES};
+use binbook_diagnostic_protocol::{
+    encode_frame, FrameHeader, FrameKind, Opcode, Status, FRAME_DELIMITER, MAX_FRAME_BYTES,
+};
 
+#[cfg(not(feature = "usb-rx-isr-buffer"))]
 const SERIAL_RX_BUF_SIZE: usize = MAX_FRAME_BYTES * 2;
+#[cfg(feature = "usb-rx-isr-buffer")]
+const SERIAL_RX_BUF_SIZE: usize = MAX_FRAME_BYTES;
 const SERIAL_TX_BUF_SIZE: usize = MAX_FRAME_BYTES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +104,16 @@ impl SerialState {
         self.rx_buf[..self.rx_pos].contains(&FRAME_DELIMITER)
     }
 
+    pub fn buffered_rx_bytes(&self) -> usize {
+        self.rx_pos
+    }
+
+    pub fn note_rx_overflow(&mut self) {
+        self.note_protocol_error();
+        self.rx_pos = 0;
+        self.discard_until_delimiter = true;
+    }
+
     pub fn needs_service(&self, completion_pending: bool) -> bool {
         completion_pending || self.frame_ready() || self.tx_pos != 0
     }
@@ -118,6 +133,41 @@ impl SerialState {
         }
         self.tx_buf[..frame.len()].copy_from_slice(frame);
         self.tx_pos = frame.len();
+        Ok(())
+    }
+
+    pub fn replace_tx_response(
+        &mut self,
+        request: FrameHeader,
+        status: Status,
+        payload: &[u8],
+    ) -> Result<(), TransportError> {
+        let response = FrameHeader {
+            kind: FrameKind::Response,
+            opcode: request.opcode,
+            status,
+            sequence: request.sequence,
+            payload_len: payload.len() as u16,
+        };
+        self.tx_pos = encode_frame(&response, payload, &mut self.tx_buf)
+            .map_err(|_| TransportError::BufferFull)?;
+        Ok(())
+    }
+
+    pub fn replace_tx_event(
+        &mut self,
+        opcode: Opcode,
+        payload: &[u8],
+    ) -> Result<(), TransportError> {
+        let event = FrameHeader {
+            kind: FrameKind::Event,
+            opcode,
+            status: Status::Ok,
+            sequence: 0,
+            payload_len: payload.len() as u16,
+        };
+        self.tx_pos = encode_frame(&event, payload, &mut self.tx_buf)
+            .map_err(|_| TransportError::BufferFull)?;
         Ok(())
     }
 

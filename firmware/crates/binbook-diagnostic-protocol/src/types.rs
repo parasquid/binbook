@@ -16,6 +16,9 @@ pub const CAP_STORAGE: u32 = 1 << 6;
 pub const CAP_REFRESH_MODE: u32 = 1 << 7;
 pub const CAP_STORAGE_UPLOAD_WINDOW_2: u32 = 1 << 8;
 pub const CAP_STORAGE_READ_WINDOW_2: u32 = 1 << 9;
+pub const CAP_STORAGE_TRANSFER_LIMITS: u32 = 1 << 10;
+pub const CAP_STORAGE_TRANSFER_METRICS: u32 = 1 << 11;
+pub const CAP_STORAGE_BULK_V1: u32 = 1 << 12;
 
 pub const ALL_CAPABILITIES: u32 = CAP_KEY
     | CAP_PAGE
@@ -26,7 +29,9 @@ pub const ALL_CAPABILITIES: u32 = CAP_KEY
     | CAP_STORAGE
     | CAP_REFRESH_MODE
     | CAP_STORAGE_UPLOAD_WINDOW_2
-    | CAP_STORAGE_READ_WINDOW_2;
+    | CAP_STORAGE_READ_WINDOW_2
+    | CAP_STORAGE_TRANSFER_LIMITS
+    | CAP_STORAGE_TRANSFER_METRICS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolError {
@@ -91,6 +96,15 @@ pub enum Opcode {
     StoreDelete = 0x0F,
     StoreRead = 0x10,
     RefreshMode = 0x11,
+    StoreTransferLimits = 0x12,
+    StoreTransferTrace = 0x13,
+    StoreBulkOpen = 0x14,
+    StoreBulkData = 0x15,
+    StoreBulkCredit = 0x16,
+    StoreBulkStatus = 0x17,
+    StoreBulkFinish = 0x18,
+    StoreBulkAbort = 0x19,
+    StoreSdWriteTrace = 0x1A,
 }
 
 impl Opcode {
@@ -113,6 +127,15 @@ impl Opcode {
             0x0F => Some(Opcode::StoreDelete),
             0x10 => Some(Opcode::StoreRead),
             0x11 => Some(Opcode::RefreshMode),
+            0x12 => Some(Opcode::StoreTransferLimits),
+            0x13 => Some(Opcode::StoreTransferTrace),
+            0x14 => Some(Opcode::StoreBulkOpen),
+            0x15 => Some(Opcode::StoreBulkData),
+            0x16 => Some(Opcode::StoreBulkCredit),
+            0x17 => Some(Opcode::StoreBulkStatus),
+            0x18 => Some(Opcode::StoreBulkFinish),
+            0x19 => Some(Opcode::StoreBulkAbort),
+            0x1A => Some(Opcode::StoreSdWriteTrace),
             _ => None,
         }
     }

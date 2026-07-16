@@ -672,9 +672,9 @@ correct, and the exact deletion set has been captured.
 - [x] Upload the verified artifact:
 
   ```bash
-  "$BIN" diag storage upload \
+  "$BIN" upload \
     --port "$PORT" \
-    --path "$NAME" \
+    --name "$NAME" \
     --file "$BOOK"
   ```
 

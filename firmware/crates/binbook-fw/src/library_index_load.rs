@@ -236,6 +236,19 @@ impl<'a> LibraryIndexLoadClient<'a> {
     }
 }
 
+fn index_name_for_cursor(cursor: crate::library::LibraryIndexCursor) -> StorageName {
+    use crate::{
+        library::LibraryIndexSlot,
+        storage_access::{LIBRARY_INDEX_SLOT_A, LIBRARY_INDEX_SLOT_B},
+    };
+    StorageName::new(match cursor.slot() {
+        LibraryIndexSlot::A => LIBRARY_INDEX_SLOT_A,
+        LibraryIndexSlot::B => LIBRARY_INDEX_SLOT_B,
+        LibraryIndexSlot::Legacy => LIBRARY_INDEX_FILE,
+    })
+    .expect("library index names are bounded")
+}
+
 fn index_name() -> StorageName {
     StorageName::new(LIBRARY_INDEX_FILE).expect("library index name is bounded")
 }
@@ -487,6 +500,8 @@ pub enum LibraryIndexPruneUpdate {
 /// index's filenames.
 pub struct LibraryIndexPruneClient<'a> {
     target: PruneTarget<'a>,
+    fixed_cursor: Option<crate::library::LibraryIndexCursor>,
+    name: StorageName,
     phase: Phase,
     expected_sequence: u32,
     next_sequence: u32,
@@ -500,11 +515,44 @@ impl<'a> LibraryIndexPruneClient<'a> {
         (
             Self {
                 target: PruneTarget::Empty(state),
+                fixed_cursor: None,
+                name: index_name(),
                 phase: Phase::Size,
                 expected_sequence: sequence,
                 next_sequence: sequence.wrapping_add(1),
             },
             envelope(sequence, Request::FileSize { name: index_name() }),
+        )
+    }
+
+    pub fn begin_cursor(
+        state: &'a mut crate::reader_state::ReaderState,
+        cursor: crate::library::LibraryIndexCursor,
+        sequence: u32,
+    ) -> (Self, RequestEnvelope) {
+        let name = index_name_for_cursor(cursor);
+        let request = envelope(
+            sequence,
+            Request::read(
+                name.clone(),
+                0,
+                cursor.header_size() as u16,
+                BufferSlot::LibraryIndex,
+            )
+            .expect("index header is bounded"),
+        );
+        (
+            Self {
+                target: PruneTarget::Empty(state),
+                fixed_cursor: Some(cursor),
+                name,
+                phase: Phase::Header {
+                    file_len: cursor.file_len(),
+                },
+                expected_sequence: sequence,
+                next_sequence: sequence.wrapping_add(1),
+            },
+            request,
         )
     }
 
@@ -535,14 +583,41 @@ impl<'a> LibraryIndexPruneClient<'a> {
                 Ok(self.issue_read(0, INDEX_HEADER_SIZE, Phase::Header { file_len }))
             }
             (Phase::Header { file_len }, Response::Read(read))
-                if usize::from(read) == INDEX_HEADER_SIZE =>
+                if usize::from(read)
+                    == self
+                        .fixed_cursor
+                        .map_or(INDEX_HEADER_SIZE, |cursor| cursor.header_size()) =>
             {
-                let header: &[u8; INDEX_HEADER_SIZE] = bytes
-                    .and_then(|bytes| bytes.get(..INDEX_HEADER_SIZE))
-                    .and_then(|bytes| bytes.try_into().ok())
+                let header_len = self
+                    .fixed_cursor
+                    .map_or(INDEX_HEADER_SIZE, |cursor| cursor.header_size());
+                let header = bytes
+                    .and_then(|bytes| bytes.get(..header_len))
                     .ok_or(LibraryIndexLoadError::MissingBytes)?;
-                let cursor = crate::library::LibraryIndexCursor::from_header(header, file_len)
+                let cursor = if let Some(expected) = self.fixed_cursor {
+                    let header: &[u8; crate::library::INDEX_V2_HEADER_SIZE] = header
+                        .try_into()
+                        .map_err(|_| LibraryIndexLoadError::MissingBytes)?;
+                    let actual = crate::library::LibraryIndexCursor::from_v2_header(
+                        expected.slot(),
+                        header,
+                        file_len,
+                    )
                     .map_err(LibraryIndexLoadError::Decode)?;
+                    if actual != expected {
+                        self.fail();
+                        return Err(LibraryIndexLoadError::Completion);
+                    }
+                    actual
+                } else {
+                    crate::library::LibraryIndexCursor::from_header(
+                        header
+                            .try_into()
+                            .map_err(|_| LibraryIndexLoadError::MissingBytes)?,
+                        file_len,
+                    )
+                    .map_err(LibraryIndexLoadError::Decode)?
+                };
                 let PruneTarget::Empty(state) =
                     core::mem::replace(&mut self.target, PruneTarget::None)
                 else {
@@ -554,16 +629,16 @@ impl<'a> LibraryIndexPruneClient<'a> {
                     validator: crate::library::LibraryIndexCursorValidator::new(cursor, header),
                     matched: [false; crate::reader_state::MAX_PROGRESS_RECORDS],
                 };
-                if file_len == INDEX_HEADER_SIZE {
+                if file_len == header_len {
                     self.complete()
                 } else {
-                    let len = (file_len - INDEX_HEADER_SIZE).min(INDEX_READ_BYTES);
+                    let len = (file_len - header_len).min(INDEX_READ_BYTES);
                     Ok(self.issue_read(
-                        INDEX_HEADER_SIZE,
+                        header_len,
                         len,
                         Phase::Records {
                             file_len,
-                            offset: INDEX_HEADER_SIZE,
+                            offset: header_len,
                             len,
                         },
                     ))
@@ -636,7 +711,7 @@ impl<'a> LibraryIndexPruneClient<'a> {
         LibraryIndexPruneUpdate::Request(envelope(
             sequence,
             Request::read(
-                index_name(),
+                self.name.clone(),
                 offset as u64,
                 len as u16,
                 BufferSlot::LibraryIndex,
@@ -688,7 +763,7 @@ impl<'a> LibraryViewportWindowClient<'a> {
         let request = envelope(
             sequence,
             Request::read(
-                index_name(),
+                index_name_for_cursor(cursor),
                 first.start as u64,
                 len as u16,
                 BufferSlot::LibraryIndex,

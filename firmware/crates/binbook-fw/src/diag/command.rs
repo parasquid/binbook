@@ -4,10 +4,11 @@ use binbook_diagnostic_protocol::{
     decode_store_list_request, decode_store_read_request, decode_store_upload_begin_request,
     decode_store_upload_commit_request, decode_store_upload_write_request, encode_hello_response,
     encode_refresh_mode_payload, encode_status_payload, encode_store_upload_begin_response,
-    encode_store_upload_commit_response, encode_store_upload_write_response, FrameHeader,
-    FrameKind, HelloResponse, KeyAction, KeyCode, Opcode, PageAction, PanelModeCode, ProbeCode,
-    RefreshModeAction, RefreshModeCode, RefreshModePayload, Status, StatusPayload,
-    StoreUploadCommitResult, ALL_CAPABILITIES, MAX_FRAME_BYTES, PROTOCOL_VERSION,
+    encode_store_upload_commit_response, encode_store_upload_write_response,
+    encode_transfer_limits, FrameHeader, FrameKind, HelloResponse, KeyAction, KeyCode, Opcode,
+    PageAction, PanelModeCode, ProbeCode, RefreshModeAction, RefreshModeCode, RefreshModePayload,
+    Status, StatusPayload, StoreUploadCommitResult, TransferLimits, ALL_CAPABILITIES,
+    CAP_STORAGE_BULK_V1, MAX_FRAME_BYTES, PROTOCOL_VERSION, TRANSFER_LIMIT_FLAGS,
 };
 
 use crate::{
@@ -124,7 +125,12 @@ pub fn dispatch_command(
             let hello = HelloResponse {
                 protocol_version: PROTOCOL_VERSION,
                 max_frame_bytes: MAX_FRAME_BYTES as u16,
-                capabilities: ALL_CAPABILITIES,
+                capabilities: ALL_CAPABILITIES
+                    | if cfg!(feature = "bulk-transfer-runtime") {
+                        CAP_STORAGE_BULK_V1
+                    } else {
+                        0
+                    },
                 firmware_name: FIRMWARE_NAME,
                 target: TARGET,
             };
@@ -469,5 +475,53 @@ pub fn dispatch_command(
                 },
             }
         }
+        Opcode::StoreTransferLimits => {
+            if !payload.is_empty() {
+                return DispatchResult::Response {
+                    status: Status::BadRequest,
+                    payload_len: 0,
+                };
+            }
+            let limits = TransferLimits {
+                flags: if cfg!(feature = "bulk-transfer-runtime") {
+                    TRANSFER_LIMIT_FLAGS
+                } else {
+                    0
+                },
+                max_data_bytes: 3584,
+                legacy_upload_window: 2,
+                legacy_read_window: 2,
+                bulk_slots: if cfg!(feature = "bulk-transfer-runtime") {
+                    ((MAX_FRAME_BYTES * 2) / MAX_FRAME_BYTES)
+                        .min(crate::bulk_slots::TRANSFER_SLOT_COUNT) as u8
+                } else {
+                    0
+                },
+                rx_capacity_bytes: (MAX_FRAME_BYTES * 2) as u16,
+                max_frame_bytes: MAX_FRAME_BYTES as u16,
+                idle_timeout_ms: 60_000,
+            };
+            match encode_transfer_limits(&limits, resp_buf) {
+                Ok(payload_len) => DispatchResult::Response {
+                    status: Status::Ok,
+                    payload_len,
+                },
+                Err(_) => DispatchResult::Response {
+                    status: Status::InternalError,
+                    payload_len: 0,
+                },
+            }
+        }
+        Opcode::StoreTransferTrace
+        | Opcode::StoreSdWriteTrace
+        | Opcode::StoreBulkOpen
+        | Opcode::StoreBulkData
+        | Opcode::StoreBulkCredit
+        | Opcode::StoreBulkStatus
+        | Opcode::StoreBulkFinish
+        | Opcode::StoreBulkAbort => DispatchResult::Response {
+            status: Status::Unsupported,
+            payload_len: 0,
+        },
     }
 }

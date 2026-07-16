@@ -3,13 +3,15 @@ use std::rc::Rc;
 
 use embedded_sd_storage::BlockDeviceStream;
 use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx};
-use lamfat::{Seek as _, Write as _};
+use lamfat::{Read as _, Seek as _, Write as _};
 
 #[derive(Default)]
 struct State {
     blocks: Vec<Block>,
     reads: usize,
     writes: usize,
+    read_calls: usize,
+    write_calls: usize,
 }
 
 #[derive(Clone)]
@@ -30,6 +32,8 @@ impl CountingDevice {
             blocks,
             reads: 0,
             writes: 0,
+            read_calls: 0,
+            write_calls: 0,
         })))
     }
 }
@@ -39,6 +43,7 @@ impl BlockDevice for CountingDevice {
 
     fn read(&self, blocks: &mut [Block], start: BlockIdx) -> Result<(), Self::Error> {
         let mut state = self.0.borrow_mut();
+        state.read_calls += 1;
         state.reads += blocks.len();
         for (offset, block) in blocks.iter_mut().enumerate() {
             *block = state.blocks[start.0 as usize + offset].clone();
@@ -48,6 +53,7 @@ impl BlockDevice for CountingDevice {
 
     fn write(&self, blocks: &[Block], start: BlockIdx) -> Result<(), Self::Error> {
         let mut state = self.0.borrow_mut();
+        state.write_calls += 1;
         state.writes += blocks.len();
         for (offset, block) in blocks.iter().enumerate() {
             state.blocks[start.0 as usize + offset] = block.clone();
@@ -100,6 +106,7 @@ fn unaligned_prefix_and_suffix_preserve_untouched_bytes() {
     stream.seek(lamfat::SeekFrom::Start(510)).unwrap();
 
     assert_eq!(stream.write(&[9, 8, 7, 6]).unwrap(), 4);
+    stream.flush().unwrap();
 
     let state = state.borrow();
     assert_eq!(state.reads, 2);
@@ -108,6 +115,95 @@ fn unaligned_prefix_and_suffix_preserve_untouched_bytes() {
     assert_eq!(&state.blocks[0].contents[510..], &[9, 8]);
     assert_eq!(&state.blocks[1].contents[..2], &[7, 6]);
     assert_eq!(&state.blocks[1].contents[2..], &before[1].contents[2..]);
+}
+
+#[test]
+fn adjacent_partial_writes_to_one_sector_share_one_read_modify_write() {
+    let device = CountingDevice::patterned(2);
+    let state = device.0.clone();
+    let before = state.borrow().blocks[0].clone();
+    let mut stream = BlockDeviceStream::new(device, 0);
+
+    stream.seek(lamfat::SeekFrom::Start(17)).unwrap();
+    assert_eq!(stream.write(&[1, 2, 3]).unwrap(), 3);
+    stream.seek(lamfat::SeekFrom::Start(29)).unwrap();
+    assert_eq!(stream.write(&[4, 5]).unwrap(), 2);
+
+    {
+        let state = state.borrow();
+        assert_eq!(state.read_calls, 1);
+        assert_eq!(state.write_calls, 0);
+    }
+
+    stream.flush().unwrap();
+    let state = state.borrow();
+    assert_eq!(state.read_calls, 1);
+    assert_eq!(state.write_calls, 1);
+    assert_eq!(&state.blocks[0].contents[17..20], &[1, 2, 3]);
+    assert_eq!(&state.blocks[0].contents[29..31], &[4, 5]);
+    assert_eq!(&state.blocks[0].contents[..17], &before.contents[..17]);
+    assert_eq!(&state.blocks[0].contents[31..], &before.contents[31..]);
+}
+
+#[test]
+fn same_sector_read_observes_pending_partial_write_without_forcing_writeback() {
+    let device = CountingDevice::patterned(2);
+    let state = device.0.clone();
+    let mut stream = BlockDeviceStream::new(device, 0);
+
+    stream.seek(lamfat::SeekFrom::Start(7)).unwrap();
+    stream.write(&[0xaa]).unwrap();
+    stream.seek(lamfat::SeekFrom::Start(0)).unwrap();
+    let mut actual = [0; 8];
+    stream.read(&mut actual).unwrap();
+
+    assert_eq!(actual[7], 0xaa);
+    let state = state.borrow();
+    assert_eq!(state.read_calls, 1);
+    assert_eq!(state.write_calls, 0);
+}
+
+#[test]
+fn full_read_from_different_sector_does_not_force_metadata_writeback() {
+    let device = CountingDevice::patterned(2);
+    let state = device.0.clone();
+    let mut stream = BlockDeviceStream::new(device, 0);
+
+    stream.seek(lamfat::SeekFrom::Start(7)).unwrap();
+    stream.write(&[0xaa]).unwrap();
+    stream.seek(lamfat::SeekFrom::Start(512)).unwrap();
+    let mut actual = [0; 512];
+    stream.read(&mut actual).unwrap();
+
+    {
+        let state = state.borrow();
+        assert_eq!(state.write_calls, 0);
+        assert_eq!(state.read_calls, 2);
+    }
+    stream.flush().unwrap();
+    assert_eq!(state.borrow().blocks[0].contents[7], 0xaa);
+}
+
+#[test]
+fn full_write_to_different_sector_does_not_force_metadata_writeback() {
+    let device = CountingDevice::patterned(2);
+    let state = device.0.clone();
+    let mut stream = BlockDeviceStream::new(device, 0);
+
+    stream.seek(lamfat::SeekFrom::Start(7)).unwrap();
+    stream.write(&[0xaa]).unwrap();
+    stream.seek(lamfat::SeekFrom::Start(512)).unwrap();
+    stream.write(&[0x55; 512]).unwrap();
+
+    {
+        let state = state.borrow();
+        assert_eq!(state.write_calls, 1);
+        assert_eq!(state.blocks[1].contents, [0x55; 512]);
+    }
+    stream.flush().unwrap();
+    let state = state.borrow();
+    assert_eq!(state.write_calls, 2);
+    assert_eq!(state.blocks[0].contents[7], 0xaa);
 }
 
 #[test]
@@ -132,4 +228,58 @@ fn consecutive_3584_byte_chunks_are_contiguous_and_read_free() {
         .collect::<Vec<_>>();
     assert_eq!(&stored[..3_584], first);
     assert_eq!(&stored[3_584..], second);
+}
+
+#[test]
+fn caller_buffer_batches_a_3584_byte_write_into_one_device_call() {
+    let device = CountingDevice::patterned(8);
+    let state = device.0.clone();
+    let mut scratch = core::array::from_fn::<_, 8, _>(|_| Block::new());
+    let mut stream = BlockDeviceStream::with_scratch(device, 0, &mut scratch);
+    let bytes = (0..3_584).map(|value| value as u8).collect::<Vec<_>>();
+
+    assert_eq!(stream.write(&bytes).unwrap(), bytes.len());
+
+    let state = state.borrow();
+    assert_eq!(state.read_calls, 0);
+    assert_eq!(state.write_calls, 1);
+    assert_eq!(state.writes, 7);
+}
+
+#[test]
+fn caller_buffer_bounds_writes_larger_than_eight_blocks() {
+    let device = CountingDevice::patterned(16);
+    let state = device.0.clone();
+    let mut scratch = core::array::from_fn::<_, 8, _>(|_| Block::new());
+    let mut stream = BlockDeviceStream::with_scratch(device, 0, &mut scratch);
+    let bytes = vec![0x5a; 12 * 512];
+
+    assert_eq!(stream.write(&bytes).unwrap(), bytes.len());
+
+    let state = state.borrow();
+    assert_eq!(state.write_calls, 2);
+    assert_eq!(state.writes, 12);
+}
+
+#[test]
+fn caller_buffer_batches_aligned_reads_and_preserves_bytes() {
+    let device = CountingDevice::patterned(8);
+    let state = device.0.clone();
+    let expected = state
+        .borrow()
+        .blocks
+        .iter()
+        .take(7)
+        .flat_map(|block| block.contents)
+        .collect::<Vec<_>>();
+    let mut scratch = core::array::from_fn::<_, 8, _>(|_| Block::new());
+    let mut stream = BlockDeviceStream::with_scratch(device, 0, &mut scratch);
+    let mut actual = vec![0; 3_584];
+
+    assert_eq!(stream.read(&mut actual).unwrap(), actual.len());
+    assert_eq!(actual, expected);
+
+    let state = state.borrow();
+    assert_eq!(state.read_calls, 1);
+    assert_eq!(state.reads, 7);
 }

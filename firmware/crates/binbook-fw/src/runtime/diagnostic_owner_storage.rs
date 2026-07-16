@@ -1,16 +1,17 @@
 use binbook_diagnostic_protocol::{
     encode_store_entry, encode_store_read_response, encode_store_upload_begin_response,
     encode_store_upload_commit_response, encode_store_upload_write_response, FrameHeader, Status,
-    StoreUploadCommitResult, MAX_PAYLOAD_BYTES,
+    StoreUploadCommitResult, TransferDirection, TransferTraceState, MAX_PAYLOAD_BYTES,
 };
 use binbook_fw::{
     diag::{queue_runtime_response, SerialState},
     diag_owner_storage::{DiagnosticUpload, OwnerStorageCommand},
+    legacy_transfer_trace::{trace_phase as record_trace_phase, LegacyTraceLifecycle},
     library::{
-        Library, LibraryIndexCursor, LibraryIndexCursorValidator, INDEX_HEADER_SIZE,
-        INDEX_RECORD_SIZE,
+        select_library_index_cursor, LibraryIndexCursor, LibraryIndexCursorValidator,
+        LibraryIndexSlot, INDEX_HEADER_SIZE, INDEX_RECORD_SIZE, INDEX_V2_HEADER_SIZE,
     },
-    storage_access::LIBRARY_INDEX_FILE,
+    storage_access::{LIBRARY_INDEX_FILE, LIBRARY_INDEX_SLOT_A, LIBRARY_INDEX_SLOT_B},
     storage_owner::{
         BufferLease, BufferSlot, CompletionError, OwnedRequest, OwnedResponse, Request,
         RequestEnvelope, Response, StorageClient, StorageName, MAX_BOUNDED_IO_BYTES,
@@ -26,6 +27,7 @@ pub(super) struct DiagnosticOwnerRuntime {
     sequence: u32,
     upload: Option<DiagnosticUpload>,
     read_file: Option<(StorageName, u64)>,
+    trace_lifecycle: LegacyTraceLifecycle,
 }
 
 impl DiagnosticOwnerRuntime {
@@ -34,6 +36,7 @@ impl DiagnosticOwnerRuntime {
             sequence: 250_000,
             upload: None,
             read_file: None,
+            trace_lifecycle: LegacyTraceLifecycle::new(),
         }
     }
 
@@ -51,6 +54,7 @@ pub(super) async fn handle_owner_storage_command(
     command: OwnerStorageCommand,
     mut transfer: &'static mut [u8; MAX_BOUNDED_IO_BYTES as usize],
     response_payload: &mut [u8; MAX_PAYLOAD_BYTES],
+    transfer_trace: &mut binbook_fw::transfer_trace_command::TransferTraceCommand,
 ) -> &'static mut [u8; MAX_BOUNDED_IO_BYTES as usize] {
     response_payload.fill(0);
     let (status, payload_len) = match command {
@@ -63,53 +67,126 @@ pub(super) async fn handle_owner_storage_command(
             name,
             offset,
             max_bytes,
-        } => match read_file_size(runtime, &name).await {
-            Some(file_size) if u64::from(offset) <= file_size => {
-                let available = file_size - u64::from(offset);
-                let len = available
-                    .min(u64::from(max_bytes))
-                    .min((MAX_PAYLOAD_BYTES - 5) as u64)
-                    .min(u64::from(MAX_BOUNDED_IO_BYTES)) as u16;
-                if len == 0 {
-                    match encode_store_read_response(&[], true, response_payload) {
-                        Ok(wrote) => (Status::Ok, wrote),
-                        Err(_) => (Status::InternalError, 0),
-                    }
-                } else {
-                    let request =
-                        Request::read(name, u64::from(offset), len, BufferSlot::Diagnostic)
-                            .expect("diagnostic read is bounded");
-                    let read = exchange(
-                        runtime,
-                        request,
-                        Some(BufferLease::new(BufferSlot::Diagnostic, transfer)),
-                    )
-                    .await;
-                    transfer = take_transfer(read.buffer);
-                    match read.envelope.response {
-                        Ok(Response::Read(actual)) if actual == len => {
-                            let eof = u64::from(offset) + u64::from(actual) >= file_size;
-                            match encode_store_read_response(
-                                &transfer[..usize::from(actual)],
-                                eof,
-                                response_payload,
-                            ) {
-                                Ok(wrote) => (Status::Ok, wrote),
-                                Err(_) => (Status::InternalError, 0),
+        } => {
+            start_data_phase(runtime, TransferDirection::Readback, transfer_trace);
+            match read_file_size(runtime, &name).await {
+                Some(file_size) if u64::from(offset) <= file_size => {
+                    let available = file_size - u64::from(offset);
+                    let len = available
+                        .min(u64::from(max_bytes))
+                        .min((MAX_PAYLOAD_BYTES - 5) as u64)
+                        .min(u64::from(MAX_BOUNDED_IO_BYTES)) as u16;
+                    if len == 0 {
+                        match encode_store_read_response(&[], true, response_payload) {
+                            Ok(wrote) => {
+                                finish_data_trace(
+                                    runtime,
+                                    TransferDirection::Readback,
+                                    TransferTraceState::Succeeded,
+                                    serial,
+                                    transfer_trace,
+                                    false,
+                                );
+                                (Status::Ok, wrote)
+                            }
+                            Err(_) => {
+                                finish_data_trace(
+                                    runtime,
+                                    TransferDirection::Readback,
+                                    TransferTraceState::Failed,
+                                    serial,
+                                    transfer_trace,
+                                    false,
+                                );
+                                (Status::InternalError, 0)
                             }
                         }
-                        _ => (Status::Error, 0),
+                    } else {
+                        let request =
+                            Request::read(name, u64::from(offset), len, BufferSlot::Diagnostic)
+                                .expect("diagnostic read is bounded");
+                        let read = exchange(
+                            runtime,
+                            request,
+                            Some(BufferLease::new(BufferSlot::Diagnostic, transfer)),
+                        )
+                        .await;
+                        transfer = take_transfer(read.buffer);
+                        match read.envelope.response {
+                            Ok(Response::Read(actual)) if actual == len => {
+                                let eof = u64::from(offset) + u64::from(actual) >= file_size;
+                                let encoded = match encode_store_read_response(
+                                    &transfer[..usize::from(actual)],
+                                    eof,
+                                    response_payload,
+                                ) {
+                                    Ok(wrote) => (Status::Ok, wrote),
+                                    Err(_) => (Status::InternalError, 0),
+                                };
+                                if eof && encoded.0 == Status::Ok {
+                                    finish_data_trace(
+                                        runtime,
+                                        TransferDirection::Readback,
+                                        TransferTraceState::Succeeded,
+                                        serial,
+                                        transfer_trace,
+                                        false,
+                                    );
+                                } else if encoded.0 != Status::Ok {
+                                    finish_data_trace(
+                                        runtime,
+                                        TransferDirection::Readback,
+                                        TransferTraceState::Failed,
+                                        serial,
+                                        transfer_trace,
+                                        false,
+                                    );
+                                }
+                                encoded
+                            }
+                            _ => {
+                                finish_data_trace(
+                                    runtime,
+                                    TransferDirection::Readback,
+                                    TransferTraceState::Failed,
+                                    serial,
+                                    transfer_trace,
+                                    false,
+                                );
+                                (Status::Error, 0)
+                            }
+                        }
                     }
                 }
+                Some(_) => {
+                    finish_data_trace(
+                        runtime,
+                        TransferDirection::Readback,
+                        TransferTraceState::Failed,
+                        serial,
+                        transfer_trace,
+                        false,
+                    );
+                    (Status::BadRequest, 0)
+                }
+                None => {
+                    finish_data_trace(
+                        runtime,
+                        TransferDirection::Readback,
+                        TransferTraceState::Failed,
+                        serial,
+                        transfer_trace,
+                        false,
+                    );
+                    (Status::NotFound, 0)
+                }
             }
-            Some(_) => (Status::BadRequest, 0),
-            None => (Status::NotFound, 0),
-        },
+        }
         OwnerStorageCommand::Delete { name } => {
             runtime.read_file = None;
             let deleted = exchange(runtime, Request::Delete { name }, None).await;
             if matches!(deleted.envelope.response, Ok(Response::Ack)) {
-                request_library_refresh().await;
+                request_library_refresh(None).await;
                 (Status::Ok, 0)
             } else {
                 (Status::NotFound, 0)
@@ -124,26 +201,50 @@ pub(super) async fn handle_owner_storage_command(
             if runtime.upload.is_some() {
                 (Status::BadRequest, 0)
             } else {
+                trace_phase(
+                    transfer_trace,
+                    TransferDirection::Upload,
+                    binbook_fw::transfer_metrics::TransferPhase::UploadPrepare,
+                    true,
+                );
                 let started = exchange(
                     runtime,
                     Request::UploadBegin {
                         name,
                         expected_size: u64::from(file_size),
+                        expected_crc32,
                         power_save: false,
                     },
                     None,
                 )
                 .await;
+                trace_phase(
+                    transfer_trace,
+                    TransferDirection::Upload,
+                    binbook_fw::transfer_metrics::TransferPhase::UploadPrepare,
+                    false,
+                );
                 match started.envelope.response {
                     Ok(Response::UploadStarted(upload_id)) => {
                         runtime.upload =
                             Some(DiagnosticUpload::new(upload_id, file_size, expected_crc32));
+                        start_data_phase(runtime, TransferDirection::Upload, transfer_trace);
                         match encode_store_upload_begin_response(upload_id, response_payload) {
                             Ok(wrote) => (Status::Ok, wrote),
                             Err(_) => (Status::InternalError, 0),
                         }
                     }
-                    _ => (Status::Error, 0),
+                    _ => {
+                        finish_data_trace(
+                            runtime,
+                            TransferDirection::Upload,
+                            TransferTraceState::Failed,
+                            serial,
+                            transfer_trace,
+                            false,
+                        );
+                        (Status::Error, 0)
+                    }
                 }
             }
         }
@@ -156,12 +257,30 @@ pub(super) async fn handle_owner_storage_command(
                 queue_runtime_response(serial, header, Status::BadRequest, &[]);
                 return transfer;
             };
-            if next_upload
+            trace_phase(
+                transfer_trace,
+                TransferDirection::Upload,
+                binbook_fw::transfer_metrics::TransferPhase::Crc,
+                true,
+            );
+            let accepted = next_upload
                 .accept(upload_id, offset, &transfer[..usize::from(len)])
-                .is_err()
-            {
+                .is_ok();
+            trace_phase(
+                transfer_trace,
+                TransferDirection::Upload,
+                binbook_fw::transfer_metrics::TransferPhase::Crc,
+                false,
+            );
+            if !accepted {
                 (Status::BadRequest, 0)
             } else {
+                trace_phase(
+                    transfer_trace,
+                    TransferDirection::Upload,
+                    binbook_fw::transfer_metrics::TransferPhase::DataIo,
+                    true,
+                );
                 let written = exchange(
                     runtime,
                     Request::UploadWrite {
@@ -175,6 +294,12 @@ pub(super) async fn handle_owner_storage_command(
                     Some(BufferLease::new(BufferSlot::Diagnostic, transfer)),
                 )
                 .await;
+                trace_phase(
+                    transfer_trace,
+                    TransferDirection::Upload,
+                    binbook_fw::transfer_metrics::TransferPhase::DataIo,
+                    false,
+                );
                 transfer = take_transfer(written.buffer);
                 match written.envelope.response {
                     Ok(Response::Written(actual)) if actual == len => {
@@ -198,18 +323,11 @@ pub(super) async fn handle_owner_storage_command(
             };
             match upload.finish(upload_id) {
                 Ok((crc_matches, computed_crc32)) => {
-                    let committed =
-                        exchange(runtime, Request::upload_commit(upload_id, false), None).await;
-                    if matches!(committed.envelope.response, Ok(Response::Ack)) {
-                        runtime.upload = None;
-                        request_library_refresh().await;
-                        let result = if crc_matches {
-                            StoreUploadCommitResult::Ok
-                        } else {
-                            StoreUploadCommitResult::CrcMismatch
-                        };
+                    end_data_phase(runtime, TransferDirection::Upload, transfer_trace);
+                    if !crc_matches {
+                        finish_trace(TransferTraceState::Failed, serial, transfer_trace, false);
                         match encode_store_upload_commit_response(
-                            result,
+                            StoreUploadCommitResult::CrcMismatch,
                             computed_crc32,
                             response_payload,
                         ) {
@@ -217,7 +335,42 @@ pub(super) async fn handle_owner_storage_command(
                             Err(_) => (Status::InternalError, 0),
                         }
                     } else {
-                        (Status::Error, 0)
+                        trace_phase(
+                            transfer_trace,
+                            TransferDirection::Upload,
+                            binbook_fw::transfer_metrics::TransferPhase::Commit,
+                            true,
+                        );
+                        let committed =
+                            exchange(runtime, Request::upload_commit(upload_id, false), None).await;
+                        trace_phase(
+                            transfer_trace,
+                            TransferDirection::Upload,
+                            binbook_fw::transfer_metrics::TransferPhase::Commit,
+                            false,
+                        );
+                        if matches!(committed.envelope.response, Ok(Response::Ack)) {
+                            runtime.upload = None;
+                            let trace_id = transfer_trace.active_trace_id();
+                            finish_trace(
+                                TransferTraceState::Succeeded,
+                                serial,
+                                transfer_trace,
+                                trace_id.is_some(),
+                            );
+                            request_library_refresh(trace_id).await;
+                            match encode_store_upload_commit_response(
+                                StoreUploadCommitResult::Ok,
+                                computed_crc32,
+                                response_payload,
+                            ) {
+                                Ok(wrote) => (Status::Ok, wrote),
+                                Err(_) => (Status::InternalError, 0),
+                            }
+                        } else {
+                            finish_trace(TransferTraceState::Failed, serial, transfer_trace, false);
+                            (Status::Error, 0)
+                        }
                     }
                 }
                 Err(_) => (Status::BadRequest, 0),
@@ -230,6 +383,14 @@ pub(super) async fn handle_owner_storage_command(
                 let aborted = exchange(runtime, Request::UploadAbort { upload_id }, None).await;
                 if matches!(aborted.envelope.response, Ok(Response::Ack)) {
                     runtime.upload = None;
+                    finish_data_trace(
+                        runtime,
+                        TransferDirection::Upload,
+                        TransferTraceState::Aborted,
+                        serial,
+                        transfer_trace,
+                        false,
+                    );
                     (Status::Ok, 0)
                 } else {
                     (Status::Error, 0)
@@ -239,6 +400,73 @@ pub(super) async fn handle_owner_storage_command(
     };
     queue_runtime_response(serial, header, status, &response_payload[..payload_len]);
     transfer
+}
+
+fn start_data_phase(
+    runtime: &mut DiagnosticOwnerRuntime,
+    direction: TransferDirection,
+    trace: &mut binbook_fw::transfer_trace_command::TransferTraceCommand,
+) {
+    runtime
+        .trace_lifecycle
+        .start_data(direction, trace, embassy_time::Instant::now().as_micros());
+}
+
+fn end_data_phase(
+    runtime: &mut DiagnosticOwnerRuntime,
+    direction: TransferDirection,
+    trace: &mut binbook_fw::transfer_trace_command::TransferTraceCommand,
+) {
+    runtime
+        .trace_lifecycle
+        .end_data(direction, trace, embassy_time::Instant::now().as_micros());
+}
+
+fn finish_data_trace(
+    runtime: &mut DiagnosticOwnerRuntime,
+    direction: TransferDirection,
+    state: TransferTraceState,
+    serial: &SerialState,
+    trace: &mut binbook_fw::transfer_trace_command::TransferTraceCommand,
+    library_pending: bool,
+) {
+    runtime.trace_lifecycle.finish(
+        direction,
+        state,
+        serial.protocol_error_count(),
+        embassy_time::Instant::now().as_micros(),
+        library_pending,
+        trace,
+    );
+}
+
+fn finish_trace(
+    state: TransferTraceState,
+    serial: &SerialState,
+    trace: &mut binbook_fw::transfer_trace_command::TransferTraceCommand,
+    library_pending: bool,
+) {
+    let _ = trace.finish(
+        state,
+        serial.protocol_error_count(),
+        embassy_time::Instant::now().as_micros(),
+        library_pending,
+    );
+}
+
+fn trace_phase(
+    trace: &mut binbook_fw::transfer_trace_command::TransferTraceCommand,
+    direction: TransferDirection,
+    phase: binbook_fw::transfer_metrics::TransferPhase,
+    enter: bool,
+) {
+    record_trace_phase(
+        trace,
+        direction,
+        phase,
+        enter,
+        embassy_time::Instant::now().as_micros(),
+    );
 }
 
 async fn read_file_size(runtime: &mut DiagnosticOwnerRuntime, name: &StorageName) -> Option<u64> {
@@ -266,27 +494,19 @@ async fn list_index(
     usize,
     &'static mut [u8; MAX_BOUNDED_IO_BYTES as usize],
 ) {
-    let index_name = StorageName::new(LIBRARY_INDEX_FILE).expect("index name is bounded");
-    let size = exchange(
-        runtime,
-        Request::FileSize {
-            name: index_name.clone(),
-        },
-        None,
-    )
-    .await;
-    let file_len = match size.envelope.response {
-        Ok(Response::FileSize(value)) => match usize::try_from(value) {
-            Ok(value) if (INDEX_HEADER_SIZE..=Library::max_index_bytes()).contains(&value) => value,
-            _ => return (Status::Error, 0, transfer),
-        },
-        _ => return (Status::NotFound, 0, transfer),
+    let (cursor, returned) = select_diagnostic_index(runtime, transfer).await;
+    transfer = returned;
+    let Some(cursor) = cursor else {
+        return (Status::NotFound, 0, transfer);
     };
+    let index_name = diagnostic_index_name(cursor.slot());
+    let file_len = cursor.file_len();
+    let header_size = cursor.header_size();
 
     let header_read = Request::read(
         index_name.clone(),
         0,
-        INDEX_HEADER_SIZE as u16,
+        header_size as u16,
         BufferSlot::Diagnostic,
     )
     .expect("index header is bounded");
@@ -299,24 +519,16 @@ async fn list_index(
     transfer = take_transfer(header_response.buffer);
     if !matches!(
         header_response.envelope.response,
-        Ok(Response::Read(read)) if usize::from(read) == INDEX_HEADER_SIZE
+        Ok(Response::Read(read)) if usize::from(read) == header_size
     ) {
         return (Status::Error, 0, transfer);
     }
-    let header: &[u8; INDEX_HEADER_SIZE] = match transfer[..INDEX_HEADER_SIZE].try_into() {
-        Ok(header) => header,
-        Err(_) => return (Status::InternalError, 0, transfer),
-    };
-    let cursor = match LibraryIndexCursor::from_header(header, file_len) {
-        Ok(cursor) => cursor,
-        Err(_) => return (Status::Error, 0, transfer),
-    };
-    let mut validator = LibraryIndexCursorValidator::new(cursor, header);
+    let mut validator = LibraryIndexCursorValidator::new(cursor, &transfer[..header_size]);
     response_payload[..2].fill(0);
     let mut response_len = 2usize;
     let mut encoded_count = 0u16;
     let mut encode_failed = false;
-    let mut offset = INDEX_HEADER_SIZE;
+    let mut offset = header_size;
     while offset < file_len {
         let remaining_records = (file_len - offset) / INDEX_RECORD_SIZE;
         let record_count =
@@ -345,7 +557,7 @@ async fn list_index(
             if validator.push_record(record).is_err() {
                 return (Status::Error, 0, transfer);
             }
-            let record_index = (offset - INDEX_HEADER_SIZE) / INDEX_RECORD_SIZE + local_index;
+            let record_index = (offset - header_size) / INDEX_RECORD_SIZE + local_index;
             if record_index >= usize::from(start_index) && !encode_failed {
                 let entry = match cursor.decode_record(record) {
                     Ok(entry) => entry,
@@ -374,12 +586,135 @@ async fn list_index(
     (Status::Ok, response_len, transfer)
 }
 
+async fn select_diagnostic_index(
+    runtime: &mut DiagnosticOwnerRuntime,
+    mut transfer: &'static mut [u8; MAX_BOUNDED_IO_BYTES as usize],
+) -> (
+    Option<LibraryIndexCursor>,
+    &'static mut [u8; MAX_BOUNDED_IO_BYTES as usize],
+) {
+    let (a, returned) = validate_diagnostic_index(runtime, LibraryIndexSlot::A, transfer).await;
+    transfer = returned;
+    let (b, returned) = validate_diagnostic_index(runtime, LibraryIndexSlot::B, transfer).await;
+    transfer = returned;
+    if a.is_some() || b.is_some() {
+        return (select_library_index_cursor(a, b, None), transfer);
+    }
+    let (legacy, transfer) =
+        validate_diagnostic_index(runtime, LibraryIndexSlot::Legacy, transfer).await;
+    (select_library_index_cursor(None, None, legacy), transfer)
+}
+
+async fn validate_diagnostic_index(
+    runtime: &mut DiagnosticOwnerRuntime,
+    slot: LibraryIndexSlot,
+    mut transfer: &'static mut [u8; MAX_BOUNDED_IO_BYTES as usize],
+) -> (
+    Option<LibraryIndexCursor>,
+    &'static mut [u8; MAX_BOUNDED_IO_BYTES as usize],
+) {
+    let name = diagnostic_index_name(slot);
+    let size = exchange(runtime, Request::FileSize { name: name.clone() }, None).await;
+    let Ok(Response::FileSize(file_len)) = size.envelope.response else {
+        return (None, transfer);
+    };
+    let Ok(file_len) = usize::try_from(file_len) else {
+        return (None, transfer);
+    };
+    let header_size = if slot == LibraryIndexSlot::Legacy {
+        INDEX_HEADER_SIZE
+    } else {
+        INDEX_V2_HEADER_SIZE
+    };
+    if file_len < header_size
+        || file_len > header_size + 200 * INDEX_RECORD_SIZE
+        || !(file_len - header_size).is_multiple_of(INDEX_RECORD_SIZE)
+    {
+        return (None, transfer);
+    }
+    let response = exchange(
+        runtime,
+        Request::read(name.clone(), 0, header_size as u16, BufferSlot::Diagnostic)
+            .expect("header read is bounded"),
+        Some(BufferLease::new(BufferSlot::Diagnostic, transfer)),
+    )
+    .await;
+    transfer = take_transfer(response.buffer);
+    if !matches!(response.envelope.response, Ok(Response::Read(len)) if usize::from(len) == header_size)
+    {
+        return (None, transfer);
+    }
+    let cursor = match slot {
+        LibraryIndexSlot::Legacy => transfer[..INDEX_HEADER_SIZE]
+            .try_into()
+            .ok()
+            .and_then(|header| LibraryIndexCursor::from_header(header, file_len).ok()),
+        LibraryIndexSlot::A | LibraryIndexSlot::B => transfer[..INDEX_V2_HEADER_SIZE]
+            .try_into()
+            .ok()
+            .and_then(|header| LibraryIndexCursor::from_v2_header(slot, header, file_len).ok()),
+    };
+    let Some(cursor) = cursor else {
+        return (None, transfer);
+    };
+    let mut validator = LibraryIndexCursorValidator::new(cursor, &transfer[..header_size]);
+    let mut offset = header_size;
+    while offset < file_len {
+        let len = (file_len - offset)
+            .min((MAX_BOUNDED_IO_BYTES as usize / INDEX_RECORD_SIZE) * INDEX_RECORD_SIZE);
+        let response = exchange(
+            runtime,
+            Request::read(
+                name.clone(),
+                offset as u64,
+                len as u16,
+                BufferSlot::Diagnostic,
+            )
+            .expect("validation read is bounded"),
+            Some(BufferLease::new(BufferSlot::Diagnostic, transfer)),
+        )
+        .await;
+        transfer = take_transfer(response.buffer);
+        if !matches!(response.envelope.response, Ok(Response::Read(actual)) if usize::from(actual) == len)
+        {
+            return (None, transfer);
+        }
+        for record in transfer[..len].chunks_exact(INDEX_RECORD_SIZE) {
+            if validator.push_record(record.try_into().unwrap()).is_err() {
+                return (None, transfer);
+            }
+        }
+        offset += len;
+    }
+    (validator.finish().ok().map(|()| cursor), transfer)
+}
+
+fn diagnostic_index_name(slot: LibraryIndexSlot) -> StorageName {
+    StorageName::new(match slot {
+        LibraryIndexSlot::A => LIBRARY_INDEX_SLOT_A,
+        LibraryIndexSlot::B => LIBRARY_INDEX_SLOT_B,
+        LibraryIndexSlot::Legacy => LIBRARY_INDEX_FILE,
+    })
+    .expect("index name is bounded")
+}
+
 async fn exchange(
     runtime: &mut DiagnosticOwnerRuntime,
     request: Request,
     buffer: Option<BufferLease<'static>>,
 ) -> OwnedResponse<'static> {
     let sequence = runtime.next_sequence();
+    super::SD_CAPTURE_PURPOSE.store(
+        match &request {
+            Request::UploadWrite { .. } => 6,
+            Request::UploadBegin { .. }
+            | Request::UploadCommit { .. }
+            | Request::UploadAbort { .. }
+            | Request::Delete { .. } => 4,
+            _ => 7,
+        },
+        portable_atomic::Ordering::Relaxed,
+    );
     STORAGE_REQUEST_CHANNEL
         .send(OwnedRequest {
             envelope: RequestEnvelope {
@@ -391,6 +726,7 @@ async fn exchange(
         })
         .await;
     let response = STORAGE_DIAGNOSTIC_RESPONSE_CHANNEL.receive().await;
+    super::SD_CAPTURE_PURPOSE.store(0, portable_atomic::Ordering::Relaxed);
     if response.envelope.client != StorageClient::Diagnostic
         || response.envelope.sequence != sequence
     {
@@ -418,9 +754,10 @@ fn take_transfer(
         .expect("diagnostic transfer buffer keeps its fixed size")
 }
 
-async fn request_library_refresh() {
+pub(super) async fn request_library_refresh(trace_id: Option<u32>) {
     LIBRARY_REFRESH_TRIGGER_CHANNEL
         .send(LibraryRefreshTrigger {
+            trace_id,
             prefetch: heapless::Vec::new(),
         })
         .await;

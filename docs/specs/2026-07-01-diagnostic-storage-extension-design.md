@@ -2,7 +2,7 @@
 
 Status: Implemented for the SD backend when firmware is built with
 `diagnostic-console,sd-storage`. The LittleFS internal-flash backend remains
-roadmap work.
+out of scope.
 
 Correction note: the upload design writes directly to the final filename and
 guarantees integrity via CRC32 verification at commit plus `binbook-storage`
@@ -70,9 +70,10 @@ The reader, state store, library refresh, and diagnostic console all submit
 typed requests to the single mounted FAT owner. Diagnostic commands must not
 mount, enumerate, or borrow the filesystem independently.
 
-- `StoreList` pages through the validated `BINBOOK.LIBRARY.INDEX`; it does not
-  start a competing directory scan. The CLI advances a `start_index` cursor
-  until the device returns an empty page.
+- `StoreList` pages through the selected, validated A/B library index (or the
+  version-1 migration fallback); it does not start a competing directory scan.
+  The CLI advances a `start_index` cursor until the device returns an empty
+  page.
 - List records preserve portable names up to 121 bytes. `page_count` is zero
   because the persistent index does not store BinBook page metadata.
 - `StoreRead` uses bounded owner reads and the CLI streams directly to its
@@ -90,10 +91,10 @@ mount, enumerate, or borrow the filesystem independently.
 
 ## Protocol changes (`binbook-diagnostic-protocol`)
 
-- **Frame size bump:** `MAX_PAYLOAD_BYTES` → **4096** (`MAX_FRAME_BYTES` ~4120);
+- **Frame size bump:** `MAX_PAYLOAD_BYTES` → **4096** (`MAX_FRAME_BYTES` = 4126);
   `PROTOCOL_VERSION` → 2. `Hello` already advertises `max_frame_bytes`, so the
-  host CLI adapts automatically. This benefits `LogGet` too. Static firmware frame
-  buffer grows to ~4 KB (trivial on ESP32-C3).
+  host CLI adapts automatically. This benefits `LogGet` too. Every frame-sized
+  firmware buffer remains explicit and is included in linked-RAM inspection.
 - **New capability bit:** `CAP_STORAGE` (next free bit, advertised in `Hello`).
 - **New status:** `Unsupported` (used when a `backend` value is valid but not
   implemented, e.g. `flash` today).
@@ -135,11 +136,10 @@ payload layouts.
    outstanding response, issues no new write, and attempts `StoreAbort`.
 3. `StoreUploadCommit { backend, name, expected_crc32 }` → flush, read back all
    written bytes, compute CRC32, and compare to `expected_crc32`. On match the
-   file is complete and valid; on mismatch the response carries
-   `result=CrcMismatch` + `computed_crc32` and the (incomplete) file is left in
-   place — but it is **invisible to `StoreList`** because `binbook-storage`'s
-   enumeration validates every file via `Book::open` (a truncated/corrupt file
-   fails to open and is skipped). The host may then `StoreDelete` it or re-upload.
+   file is complete and valid. On mismatch the response carries
+   `result=CrcMismatch` + `computed_crc32`; firmware does not execute the owner
+   commit or publish the file. The upload session remains available for the
+   host's required `StoreAbort` cleanup.
 4. `StoreAbort { upload_id }` → delete the incomplete file and drop the owner
    upload session.
 
@@ -183,16 +183,20 @@ remain strictly request/response compatible.
 
 ## Host CLI
 
-New noun-based subcommand under the existing `diag` command:
+Storage inspection and cleanup remain under the existing `diag` command:
 
 ```
-binbook diag storage {upload,list,delete,read,begin,abort} ...
+binbook diag storage {list,delete,read,begin,abort} ...
 ```
 
-The current CLI targets SD. `upload <path>` reads a local `.binbook` and
-pushes it (pipelined, ascending offsets); `list` prints entries; `delete <name>`
-removes; `read <name>` fetches bytes (used by the verification harness). The CLI
-reads `max_frame_bytes` from `Hello` and adapts chunk sizing.
+The current CLI targets SD. Top-level `binbook upload --file <path>` reads a
+local `.binbook` and pushes it as a bounded ascending stream. `list` prints
+entries, `delete` removes one, and `read` fetches bytes for independent
+verification. Full upload and full readback accept
+`--transfer-mode auto|legacy|bulk`, `--window auto|1|2|4|8`, and
+`--transfer-report <path>`. A range read selected by `--offset` or
+`--max-bytes` rejects those transfer-only flags. The CLI reads negotiated limits
+and never selects a mode or window solely from protocol version.
 
 ## Crate wiring (`binbook-fw`)
 
@@ -247,25 +251,93 @@ waiting even when the peer reports protocol v2. Per-frame CRC guards transport,
 exact accepted lengths advance acknowledged progress, and the commit CRC plus
 independent complete readback remain the whole-file integrity decision.
 
+### Phase 2 transfer negotiation and observability
+
+The protocol crate reserves and implements these capability bits:
+
+- bit 10, `CAP_STORAGE_TRANSFER_LIMITS`;
+- bit 11, `CAP_STORAGE_TRANSFER_METRICS`;
+- bit 12, `CAP_STORAGE_BULK_V1`.
+
+The current production capability set advertises transfer limits and metrics.
+It deliberately withholds `CAP_STORAGE_BULK_V1` until the four-slot runtime has
+passed its live RAM, cleanup, integrity, and zero-error checkpoint. New hosts
+therefore continue selecting the legacy path automatically against the current
+firmware even though bulk codecs and runtime state machines are compiled in.
+Forced `--transfer-mode bulk` fails clearly when the capability is absent.
+
+`StoreTransferLimits` (`0x12`) returns schema 1 with maximum data bytes, legacy
+upload/read windows, bulk slot count, measured RX capacity, maximum frame size,
+and idle timeout. Reserved bytes and unknown flags are rejected. A host clamps
+its requested window to these limits and reports the actual selected value.
+
+`StoreTransferTrace` (`0x13`) starts, retrieves, and clears one bounded metrics
+aggregate. It separates USB RX/TX bytes, framing, frame CRC, owner queue and
+execution, physical SD reads/writes, payload CRC, commit, and library refresh.
+It also records overlap, RX/slot high-water marks, queue stalls, and
+instrumentation anomalies. Legacy success, failure, and abort paths terminalize
+the trace; a rejected legacy read cannot leave the trace slot active. Metrics
+are diagnostic aggregates and do not create per-frame log growth.
+
+### Bulk streaming protocol
+
+Bulk v1 uses opcodes `StoreBulkOpen` (`0x14`), `StoreBulkData` (`0x15`),
+`StoreBulkCredit` (`0x16`), `StoreBulkStatus` (`0x17`), `StoreBulkFinish`
+(`0x18`), and `StoreBulkAbort` (`0x19`). Every new opcode is sent only when
+`CAP_STORAGE_BULK_V1` is advertised; otherwise the exact legacy protocol is the
+fallback.
+
+`StoreBulkOpen` negotiates direction, chunk size, and window and returns a
+nonzero stream ID, selected chunk, initial credits, durable offset, and total
+size. Upload data events carry exact ascending offsets. Firmware accepts them
+only into one shared pool of four caller-owned 3,584-byte slots and queues slot
+descriptors—not payload copies—to the sole storage owner. Cumulative upload
+credits are emitted only after correlated SD-write completion, so host progress
+never advances beyond device-confirmed durable bytes.
+
+For readback, firmware retains a slot until its data event has been sent and the
+host returns a credit for bytes successfully written to the output. The host
+flushes and truncates to the last acknowledged offset at a status barrier before
+granting further credits. Partial output is removed on unrecoverable failure.
+
+Status is the recovery boundary after a lost event or timeout. It reports the
+exact stream, direction, state, available credits, durable offset, total size,
+and running CRC. The host discards uncertain upload packets or rolls back its
+readback output to that offset; it never blindly retries a mutating frame.
+Finish validates exact size and CRC. Abort invalidates the generation, uses the
+priority owner-control lane for upload cleanup, reclaims stale leases by owner
+sequence, and does not release the shared pool until the abort acknowledgement
+and every outstanding lease return. A named 60-second idle timeout invokes the
+same cleanup. Control/status/abort handling remains serviceable when all data
+slots are occupied.
+
+The runtime has one physical four-slot pool shared sequentially between upload
+and readback, an eight-entry owner-operation bound, and fixed-capacity reply
+metadata. Reply saturation produces an explicit error while any operation
+already admitted by the coordinator still drains, preventing stranded storage
+state. The linked diagnostic image currently retains 72,704 bytes of DRAM
+headroom. This is build evidence, not authorization to advertise bulk or a live
+throughput claim.
+
+### Transfer progress and reports
+
+TTY progress names preparation, upload/readback, CRC verification, publication,
+and library-update phases. It shows durable bytes, percentage, rolling rate,
+elapsed time, and ETA. `--progress auto|always|never` preserves non-TTY behavior.
+
+`--transfer-report <path>` atomically writes schema-version 1 JSON after a full
+upload or readback. It records requested/selected mode, exact limits, host phase
+durations, rate, recovery counters, CRC/result fields, cleanup state, protocol
+error delta, and the firmware trace when supported. Post-negotiation failures
+also write a report. Preflight failures do not fabricate a selected mode or
+limits; stderr is authoritative before negotiation succeeds.
+
 ---
 
-## Roadmap entry to add to `docs/ROADMAP.md`
+## Future internal-flash backend
 
-> **Location note:** This entry belongs in `docs/ROADMAP.md` (the planning agent
-> cannot write there). Move it during implementation.
-
-```markdown
-## LittleFS internal-flash BinBook storage backend
-
-Status: roadmap (not started).
-
-Add LittleFS on the ESP32-C3 internal flash as a second `binbook-storage`
-backend (a full writable peer to SD: upload/list/delete/read). The diagnostic
-protocol already reserves the `backend` enum (`sd` | `flash`) and the
-`--device flash` CLI flag from the 2026-07-01 diagnostic-storage-extension
-design; implementing this backend lights up the `flash` path without a protocol
-change. Respect the existing crash sector and the read-only `FlashStorage` table;
-size for a small number of small books given ~192 KB total. Address
-wear-leveling/fragmentation and the careful sector-aligned erase/program path
-before implementation.
-```
+The backend enum reserves `flash`, but the CLI and firmware currently implement
+SD only. A future LittleFS implementation would need explicit flash-layout,
+wear-leveling, capacity, erase/program, and crash-sector analysis before this
+protocol path could be advertised. It is not part of the serial-throughput
+phase.

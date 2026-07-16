@@ -577,7 +577,7 @@ OUT=/tmp/binbook-readback-booka-binbook
 rm -f "$OUT"
 target/debug/binbook diag hello --port "$PORT"
 target/debug/binbook diag storage list --port "$PORT"
-target/debug/binbook diag storage upload --port "$PORT" --path booka.binbook --file crates/binbook-storage/tests/fixtures/book_a.binbook
+target/debug/binbook upload --port "$PORT" --name booka.binbook --file crates/binbook-storage/tests/fixtures/book_a.binbook
 target/debug/binbook diag storage list --port "$PORT"
 target/debug/binbook diag storage read --port "$PORT" --path booka.binbook --output "$OUT"
 sha256sum crates/binbook-storage/tests/fixtures/book_a.binbook "$OUT"

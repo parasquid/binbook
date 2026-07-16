@@ -10,15 +10,32 @@ mod mounted_reader_io;
 mod render_timing;
 #[cfg(feature = "sd-storage")]
 mod storage_owner_task;
+#[cfg(all(feature = "usb-rx-isr-buffer", target_arch = "riscv32"))]
+mod usb_rx_isr;
+
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+use core::cell::RefCell;
 
 #[cfg(feature = "diagnostic-console")]
 mod diagnostic_aggregator;
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+mod diagnostic_bulk;
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+mod diagnostic_bulk_action;
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+mod diagnostic_bulk_owner;
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+mod diagnostic_bulk_timeout;
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+mod diagnostic_bulk_types;
 #[cfg(feature = "diagnostic-console")]
 mod diagnostic_console;
 #[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
 mod diagnostic_owner_storage;
 
 use embassy_executor::Spawner;
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
     channel::{Channel, Receiver, Sender},
@@ -39,10 +56,135 @@ const SD_SPI_FREQ_HZ: u32 = 4_000_000;
 
 #[cfg(feature = "sd-storage")]
 type RuntimeSdFilesystem = binbook_fw::storage::SdFilesystem<
-    binbook_fw::board::FreqManagedSpiDevice<'static, esp_hal::gpio::Output<'static>>,
+    RuntimeSdSpi,
     binbook_fw::board::DisplayDelay,
     binbook_fw::storage::FixedTime,
+    RuntimeBlockIoObserver,
 >;
+
+#[cfg(all(feature = "sd-storage", not(feature = "diagnostic-console")))]
+type RuntimeSdSpi =
+    binbook_fw::board::FreqManagedSpiDevice<'static, esp_hal::gpio::Output<'static>>;
+
+#[cfg(all(feature = "sd-storage", feature = "diagnostic-console"))]
+type RuntimeSdSpi = binbook_fw::sd_spi_trace::TracedSpiDevice<
+    binbook_fw::board::FreqManagedSpiDevice<'static, esp_hal::gpio::Output<'static>>,
+    RuntimeSdSpiObserver,
+>;
+
+#[cfg(feature = "sd-storage")]
+#[derive(Clone, Copy)]
+struct RuntimeBlockIoObserver;
+
+#[cfg(feature = "sd-storage")]
+impl embedded_sd_storage::BlockIoObserver for RuntimeBlockIoObserver {
+    fn observe(&self, _event: embedded_sd_storage::BlockIoEvent) {
+        #[cfg(feature = "diagnostic-console")]
+        {
+            let now_us = embassy_time::Instant::now().as_micros();
+            TRANSFER_BLOCK_IO.observe(_event, now_us);
+            if SD_CAPTURE_OWNER_CLIENT.load(portable_atomic::Ordering::Relaxed) == 3 {
+                let contextual = SD_CAPTURE_PURPOSE.load(portable_atomic::Ordering::Relaxed);
+                let purpose = SD_SEMANTIC_MAP.lock(|semantic| {
+                    semantic.borrow().as_ref().map_or(contextual, |semantic| {
+                        match semantic.classify(_event.start_block) {
+                            embedded_sd_storage::SectorPurpose::OutsideVolume => 8,
+                            embedded_sd_storage::SectorPurpose::Reserved => 1,
+                            embedded_sd_storage::SectorPurpose::Fat { copy: 0 } => 2,
+                            embedded_sd_storage::SectorPurpose::Fat { .. } => 3,
+                            embedded_sd_storage::SectorPurpose::Directory => 4,
+                            embedded_sd_storage::SectorPurpose::Journal => 5,
+                            embedded_sd_storage::SectorPurpose::Payload => 6,
+                            embedded_sd_storage::SectorPurpose::DataOther => contextual,
+                        }
+                    })
+                });
+                SD_WRITE_CAPTURE.lock(|capture| {
+                    capture.borrow_mut().observe_block_io_with_purpose(
+                        _event,
+                        now_us as u32,
+                        purpose,
+                    );
+                });
+            }
+        }
+    }
+
+    fn observe_read_data(&self, _start_block: u32, _blocks: &[embedded_sd_storage::Block]) {
+        #[cfg(feature = "diagnostic-console")]
+        for (offset, block) in _blocks.iter().enumerate() {
+            let sector = _start_block.saturating_add(offset as u32);
+            SD_FAT_PROBE.lock(|probe| {
+                let mut probe = probe.borrow_mut();
+                if sector == 0 {
+                    if let Ok(geometry) =
+                        embedded_sd_storage::FatGeometry::from_boot_sector(0, &block.contents)
+                    {
+                        SD_SEMANTIC_MAP.lock(|slot| {
+                            *slot.borrow_mut() =
+                                Some(embedded_sd_storage::SemanticSectorMap::new(geometry));
+                        });
+                    } else if block.contents[510..512] == [0x55, 0xaa] {
+                        for entry in 0..4 {
+                            let at = 446 + entry * 16;
+                            let partition_start = u32::from_le_bytes(
+                                block.contents[at + 8..at + 12].try_into().unwrap(),
+                            );
+                            if partition_start != 0 {
+                                *probe = Some(partition_start);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if *probe == Some(sector) {
+                    if let Ok(geometry) =
+                        embedded_sd_storage::FatGeometry::from_boot_sector(sector, &block.contents)
+                    {
+                        SD_SEMANTIC_MAP.lock(|slot| {
+                            *slot.borrow_mut() =
+                                Some(embedded_sd_storage::SemanticSectorMap::new(geometry));
+                        });
+                    }
+                }
+            });
+        }
+    }
+
+    fn observe_write_data(&self, _start_block: u32, _blocks: &[embedded_sd_storage::Block]) {
+        #[cfg(feature = "diagnostic-console")]
+        SD_SEMANTIC_MAP.lock(|semantic| {
+            let mut semantic = semantic.borrow_mut();
+            let Some(semantic) = semantic.as_mut() else {
+                return;
+            };
+            for (offset, block) in _blocks.iter().enumerate() {
+                if embedded_sd_storage::is_upload_journal_sector(&block.contents) {
+                    let sector = _start_block.saturating_add(offset as u32);
+                    let _ =
+                        semantic.add_range(sector, 1, embedded_sd_storage::SectorPurpose::Journal);
+                }
+            }
+        });
+    }
+}
+
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+#[derive(Clone, Copy)]
+struct RuntimeSdSpiObserver;
+
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+impl binbook_fw::sd_spi_trace::SpiTraceObserver for RuntimeSdSpiObserver {
+    fn now_us(&self) -> u32 {
+        embassy_time::Instant::now().as_micros() as u32
+    }
+
+    fn observe(&self, event: binbook_fw::sd_spi_trace::SpiOperationEvent) {
+        if SD_CAPTURE_OWNER_CLIENT.load(portable_atomic::Ordering::Relaxed) == 3 {
+            SD_WRITE_CAPTURE.lock(|capture| capture.borrow_mut().observe_spi(event));
+        }
+    }
+}
 
 type RequestSender =
     Sender<'static, CriticalSectionRawMutex, DisplayRequest, { PAGE_TURN_QUEUE_CAPACITY }>;
@@ -65,6 +207,43 @@ static POWER_REQUEST_CHANNEL: Channel<CriticalSectionRawMutex, binbook_fw::power
 static POWER_ACK_CHANNEL: Channel<CriticalSectionRawMutex, binbook_fw::power::PowerAck, 1> =
     Channel::new();
 static RUNTIME_EVENT_CHANNEL: Channel<CriticalSectionRawMutex, RuntimeEvent, 32> = Channel::new();
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+static TRANSFER_OWNER_TIMING_CHANNEL: Channel<
+    CriticalSectionRawMutex,
+    binbook_fw::transfer_owner_timing::OwnerTimingEvent,
+    32,
+> = Channel::new();
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+static TRANSFER_OWNER_TIMING_DROPS: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+static TRANSFER_BLOCK_IO: binbook_fw::transfer_block_io::BlockIoAccumulator =
+    binbook_fw::transfer_block_io::BlockIoAccumulator::new();
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+#[cfg(feature = "bulk-transfer-runtime")]
+const SD_WRITE_CAPTURE_RECORDS: usize = 64;
+#[cfg(all(
+    feature = "diagnostic-console",
+    feature = "sd-storage",
+    not(feature = "bulk-transfer-runtime")
+))]
+const SD_WRITE_CAPTURE_RECORDS: usize = 384;
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+static SD_WRITE_CAPTURE: Mutex<
+    CriticalSectionRawMutex,
+    RefCell<binbook_fw::sd_spi_trace::SdWriteCapture<SD_WRITE_CAPTURE_RECORDS>>,
+> = Mutex::new(RefCell::new(binbook_fw::sd_spi_trace::SdWriteCapture::new()));
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+static SD_CAPTURE_OWNER_CLIENT: AtomicU8 = AtomicU8::new(0);
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+static SD_CAPTURE_PURPOSE: AtomicU8 = AtomicU8::new(0);
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+static SD_FAT_PROBE: Mutex<CriticalSectionRawMutex, RefCell<Option<u32>>> =
+    Mutex::new(RefCell::new(None));
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+static SD_SEMANTIC_MAP: Mutex<
+    CriticalSectionRawMutex,
+    RefCell<Option<embedded_sd_storage::SemanticSectorMap<4>>>,
+> = Mutex::new(RefCell::new(None));
 static REQUEST_EPOCH: AtomicU32 = AtomicU32::new(0);
 
 #[cfg(feature = "sd-storage")]
@@ -111,20 +290,22 @@ struct LibraryRefreshCompletion {
     status: u8,
     book_count: u16,
     elapsed_ms: u32,
-    prepared: heapless::Vec<
-        (
-            binbook_fw::storage_owner::StorageName,
-            binbook_fw::library::MountFileToken,
-        ),
-        { binbook_fw::library::LIBRARY_VIEWPORT_CAPACITY },
-    >,
+    cursor: Option<binbook_fw::library::LibraryIndexCursor>,
+    prepared: heapless::Vec<binbook_fw::library_publication::PreparedMount, 15>,
 }
 #[cfg(all(feature = "sd-storage", feature = "mounted-storage-owner"))]
 struct LibraryRefreshTrigger {
+    trace_id: Option<u32>,
     prefetch: heapless::Vec<
         binbook_fw::storage_owner::StorageName,
         { binbook_fw::library::LIBRARY_VIEWPORT_CAPACITY },
     >,
+}
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+#[derive(Clone, Copy)]
+struct TransferLibraryTiming {
+    trace_id: u32,
+    elapsed_us: u32,
 }
 #[cfg(all(feature = "sd-storage", feature = "mounted-storage-owner"))]
 static LIBRARY_REFRESH_TRIGGER_CHANNEL: Channel<CriticalSectionRawMutex, LibraryRefreshTrigger, 1> =
@@ -135,6 +316,9 @@ static LIBRARY_REFRESH_COMPLETION_CHANNEL: Channel<
     LibraryRefreshCompletion,
     1,
 > = Channel::new();
+#[cfg(all(feature = "diagnostic-console", feature = "sd-storage"))]
+static TRANSFER_LIBRARY_TIMING_CHANNEL: Channel<CriticalSectionRawMutex, TransferLibraryTiming, 1> =
+    Channel::new();
 
 #[cfg(feature = "diagnostic-console")]
 type CommittedCompletion = binbook_fw::runtime_aggregator::CommittedCompletion;
@@ -261,7 +445,10 @@ pub(crate) async fn run(spawner: Spawner, peripherals: RuntimePeripherals) {
 
         let sd_cs = Output::new(peripherals.gpio12, Level::High, OutputConfig::default());
         let sd_spi = FreqManagedSpiDevice::new(shared_spi2, sd_cs, SD_SPI_FREQ_HZ);
-        let sd_fs = SdFilesystem::new(sd_spi, DisplayDelay, FixedTime);
+        #[cfg(feature = "diagnostic-console")]
+        let sd_spi = binbook_fw::sd_spi_trace::TracedSpiDevice::new(sd_spi, RuntimeSdSpiObserver);
+        let sd_fs =
+            SdFilesystem::new_measured(sd_spi, DisplayDelay, FixedTime, RuntimeBlockIoObserver);
         spawner.spawn(
             storage_owner_task::mounted_storage_owner_task(
                 sd_fs,
@@ -272,12 +459,15 @@ pub(crate) async fn run(spawner: Spawner, peripherals: RuntimePeripherals) {
         use static_cell::StaticCell;
         static ACTIVE_VIEWPORT: StaticCell<binbook_fw::library::LibraryViewport> =
             StaticCell::new();
-        static REFRESH_LIBRARY: StaticCell<binbook_fw::library::Library> = StaticCell::new();
+        static REFRESH_WORKSPACE: StaticCell<
+            binbook_fw::library_external_sort::LibraryRefreshWorkspace,
+        > = StaticCell::new();
         let active_viewport = ACTIVE_VIEWPORT.init(binbook_fw::library::LibraryViewport::empty());
-        let refresh_library = REFRESH_LIBRARY.init(binbook_fw::library::Library::empty());
+        let refresh_workspace = REFRESH_WORKSPACE
+            .init(binbook_fw::library_external_sort::LibraryRefreshWorkspace::new());
         spawner.spawn(
             library_refresh_task::library_refresh_task(
-                refresh_library,
+                refresh_workspace,
                 LIBRARY_REFRESH_TRIGGER_CHANNEL.receiver(),
                 LIBRARY_REFRESH_COMPLETION_CHANNEL.sender(),
             )
@@ -330,10 +520,14 @@ pub(crate) async fn run(spawner: Spawner, peripherals: RuntimePeripherals) {
 
             let sd_cs = Output::new(peripherals.gpio12, Level::High, OutputConfig::default());
             let sd_spi = FreqManagedSpiDevice::new(shared_spi2, sd_cs, SD_SPI_FREQ_HZ);
-            let sd_fs = SD_FS.init(SharedSdFilesystem::new(SdFilesystem::new(
+            #[cfg(feature = "diagnostic-console")]
+            let sd_spi =
+                binbook_fw::sd_spi_trace::TracedSpiDevice::new(sd_spi, RuntimeSdSpiObserver);
+            let sd_fs = SD_FS.init(SharedSdFilesystem::new(SdFilesystem::new_measured(
                 sd_spi,
                 DisplayDelay,
                 FixedTime,
+                RuntimeBlockIoObserver,
             )));
             let mut sd_handle = sd_fs.handle();
 

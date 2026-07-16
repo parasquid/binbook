@@ -218,9 +218,9 @@ pub(super) async fn load_viewport(
     buffers: &mut OwnerReaderBuffers,
     sequence: &mut u32,
 ) -> Result<binbook_fw::library::LibraryStatus, ()> {
-    use binbook_fw::library_index_load::{LibraryIndexLoadUpdate, LibraryViewportLoadClient};
+    use binbook_fw::library_index_select::{LibraryIndexSelectClient, LibraryIndexSelectUpdate};
 
-    let (mut client, mut request) = LibraryViewportLoadClient::begin(viewport, start, *sequence);
+    let (mut client, mut request) = LibraryIndexSelectClient::begin(*sequence);
     loop {
         let needs_buffer = matches!(request.request, Request::Read { .. });
         let lease = needs_buffer.then(|| {
@@ -244,10 +244,17 @@ pub(super) async fn load_viewport(
         }
         let bytes = needs_buffer.then(|| buffers.io.as_deref().unwrap());
         match client.accept(response.envelope, bytes).map_err(|_| ())? {
-            LibraryIndexLoadUpdate::Request(next) => request = next,
-            LibraryIndexLoadUpdate::Complete(status) => {
+            LibraryIndexSelectUpdate::Request(next) => request = next,
+            LibraryIndexSelectUpdate::Complete(cursor) => {
                 *sequence = sequence.wrapping_add(64).max(1);
-                return Ok(status);
+                drop(client);
+                let cursor = cursor.ok_or(())?;
+                if cursor.entry_count() == 0 {
+                    viewport.adopt_empty_cursor(cursor);
+                    return Ok(binbook_fw::library::LibraryStatus::NoBooks);
+                }
+                load_viewport_window(viewport, cursor, start, buffers, sequence).await?;
+                return Ok(binbook_fw::library::LibraryStatus::Ready);
             }
         }
     }
@@ -290,12 +297,13 @@ pub(super) async fn load_viewport_window(
 
 pub(super) async fn prune_state_from_index(
     state: &mut ReaderState,
+    cursor: binbook_fw::library::LibraryIndexCursor,
     buffers: &mut OwnerReaderBuffers,
     sequence: &mut u32,
 ) -> Result<usize, ()> {
     use binbook_fw::library_index_load::{LibraryIndexPruneClient, LibraryIndexPruneUpdate};
 
-    let (mut client, mut request) = LibraryIndexPruneClient::begin(state, *sequence);
+    let (mut client, mut request) = LibraryIndexPruneClient::begin_cursor(state, cursor, *sequence);
     loop {
         let needs_buffer = matches!(request.request, Request::Read { .. });
         let lease = needs_buffer.then(|| {

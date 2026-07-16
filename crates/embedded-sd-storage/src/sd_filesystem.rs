@@ -1,7 +1,7 @@
 //! Generic `SdStorage` — wraps an SD block device and exposes a flat `/BOOKS`
 //! FAT directory through backend-agnostic operations.
 
-use core::{cmp::min, marker::PhantomData};
+use core::{cmp::min, fmt::Write as _, marker::PhantomData};
 
 use binbook_core::ReadAt;
 use embedded_hal::delay::DelayNs;
@@ -11,13 +11,22 @@ use embedded_sdmmc::{Block, BlockDevice, BlockIdx, SdCard};
 use heapless::String;
 use lamfat::{FileSystem, FsOptions, Read, Seek, SeekFrom, Write};
 
-use crate::block_stream::{BlockDeviceStream, BorrowedBlockDevice};
+use crate::block_stream::{BlockDeviceStream, BorrowedBlockDevice, STREAM_BATCH_BLOCKS};
 pub use crate::fat_directory::StorageError;
 use crate::fat_directory::{entry_name, FatDirectory, BOOKS_DIR, NAME_BUF_LEN, TMP_DIR};
+use crate::{
+    decode_upload_journal, encode_upload_journal, UploadJournalPhase, UploadJournalRecord,
+    UPLOAD_JOURNAL_BYTES,
+};
 
 const MAX_FILE_EXTENTS: usize = 128;
 const READ_BATCH_BLOCKS: usize = 8;
 const ZERO_CHUNK: [u8; 512] = [0; 512];
+pub const UPLOAD_JOURNAL_A: &str = "XFERA.DAT";
+pub const UPLOAD_JOURNAL_B: &str = "XFERB.DAT";
+
+pub type MountedScratch = [Block; STREAM_BATCH_BLOCKS];
+type MountedBlockStream<D> = BlockDeviceStream<D, &'static mut MountedScratch>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountedScanEntry {
@@ -30,6 +39,7 @@ pub struct MountedScanBatch {
     pub entries: heapless::Vec<MountedScanEntry, 8>,
     pub inspected: u8,
     pub complete: bool,
+    pub unsupported_name: bool,
 }
 
 pub struct MountedScanFile<'a, D>
@@ -50,6 +60,7 @@ where
     pub entries: heapless::Vec<MountedScanFile<'a, D>, 8>,
     pub inspected: u8,
     pub complete: bool,
+    pub unsupported_name: bool,
 }
 
 /// A persistent `/BOOKS` directory iterator over one consuming FAT mount.
@@ -66,7 +77,7 @@ where
     entries: Option<
         lamfat::DirIter<
             'a,
-            BlockDeviceStream<D>,
+            MountedBlockStream<D>,
             lamfat::DefaultTimeProvider,
             lamfat::LossyOemCpConverter,
         >,
@@ -80,7 +91,7 @@ where
     D: BlockDevice,
     D::Error: core::fmt::Debug,
 {
-    fs: FileSystem<BlockDeviceStream<D>>,
+    fs: FileSystem<MountedBlockStream<D>>,
 }
 
 pub struct MountedDirectorySession<'a, D>
@@ -90,7 +101,7 @@ where
 {
     dir: lamfat::Dir<
         'a,
-        BlockDeviceStream<D>,
+        MountedBlockStream<D>,
         lamfat::DefaultTimeProvider,
         lamfat::LossyOemCpConverter,
     >,
@@ -165,7 +176,7 @@ where
 {
     file: lamfat::File<
         'a,
-        BlockDeviceStream<D>,
+        MountedBlockStream<D>,
         lamfat::DefaultTimeProvider,
         lamfat::LossyOemCpConverter,
     >,
@@ -178,7 +189,7 @@ where
 {
     file: lamfat::File<
         'a,
-        BlockDeviceStream<D>,
+        MountedBlockStream<D>,
         lamfat::DefaultTimeProvider,
         lamfat::LossyOemCpConverter,
     >,
@@ -303,6 +314,215 @@ where
         self.create_file_session_in_dir(BOOKS_DIR, name)
     }
 
+    pub fn begin_book_upload(
+        &self,
+        record: &UploadJournalRecord,
+    ) -> Result<MountedWriteSession<'_, D>, StorageError<D>> {
+        if record.phase != UploadJournalPhase::Receiving {
+            return Err(StorageError::UploadJournal);
+        }
+        let stage = upload_stage_name(record.generation)?;
+        self.create_file_session_in_dir(TMP_DIR, stage.as_str())
+    }
+
+    pub fn publish_book_upload(&self, record: &UploadJournalRecord) -> Result<(), StorageError<D>> {
+        if record.phase != UploadJournalPhase::Receiving {
+            return Err(StorageError::UploadJournal);
+        }
+        let stage = upload_stage_name(record.generation)?;
+        let backup = upload_backup_name(record.generation)?;
+        let verified = record_with_phase(record, UploadJournalPhase::Verified)?;
+        let root = self.fs.root_dir();
+        let books = match root.open_dir(BOOKS_DIR) {
+            Ok(dir) => dir,
+            Err(lamfat::Error::NotFound) => {
+                root.create_dir(BOOKS_DIR).map_err(StorageError::Fat)?
+            }
+            Err(error) => return Err(StorageError::Fat(error)),
+        };
+        let tmp = root.open_dir(TMP_DIR).map_err(StorageError::Fat)?;
+        self.write_upload_journal_in_dir(&tmp, &verified)?;
+        tmp.rename(stage.as_str(), &tmp, record.target_name.as_str())
+            .map_err(StorageError::Fat)?;
+        let old_target_moved = books.open_file(record.target_name.as_str()).is_ok();
+        if old_target_moved {
+            tmp.remove(backup.as_str()).ok();
+            books
+                .rename(record.target_name.as_str(), &tmp, backup.as_str())
+                .map_err(StorageError::Fat)?;
+            self.write_upload_journal_in_dir(
+                &tmp,
+                &record_with_phase(record, UploadJournalPhase::OldMoved)?,
+            )?;
+        }
+        if let Err(error) = tmp.rename(
+            record.target_name.as_str(),
+            &books,
+            record.target_name.as_str(),
+        ) {
+            if books.open_file(record.target_name.as_str()).is_err() {
+                let _ = tmp.rename(backup.as_str(), &books, record.target_name.as_str());
+            }
+            return Err(StorageError::Fat(error));
+        }
+        let tmp = root.open_dir(TMP_DIR).map_err(StorageError::Fat)?;
+        self.write_upload_journal_in_dir(
+            &tmp,
+            &record_with_phase(record, UploadJournalPhase::Published)?,
+        )?;
+        tmp.remove(backup.as_str()).ok();
+        self.clear_upload_journal_in_dir(&tmp, record)
+    }
+
+    pub fn abort_book_upload(&self, record: &UploadJournalRecord) -> Result<(), StorageError<D>> {
+        let root = self.fs.root_dir();
+        if let Ok(tmp) = root.open_dir(TMP_DIR) {
+            let stage = upload_stage_name(record.generation)?;
+            tmp.remove(stage.as_str()).ok();
+        }
+        Ok(())
+    }
+
+    pub fn discard_book_upload_stage(&self, generation: u32) -> Result<(), StorageError<D>> {
+        let root = self.fs.root_dir();
+        let tmp = match root.open_dir(TMP_DIR) {
+            Ok(dir) => dir,
+            Err(lamfat::Error::NotFound) => return Ok(()),
+            Err(error) => return Err(StorageError::Fat(error)),
+        };
+        let stage = upload_stage_name(generation)?;
+        match tmp.remove(stage.as_str()) {
+            Ok(()) | Err(lamfat::Error::NotFound) => Ok(()),
+            Err(error) => Err(StorageError::Fat(error)),
+        }
+    }
+
+    pub fn recover_book_upload(&self) -> Result<(), StorageError<D>> {
+        let Some(record) = self.read_upload_journal()? else {
+            return Ok(());
+        };
+        let root = self.fs.root_dir();
+        let books = match root.open_dir(BOOKS_DIR) {
+            Ok(dir) => dir,
+            Err(lamfat::Error::NotFound) => {
+                root.create_dir(BOOKS_DIR).map_err(StorageError::Fat)?
+            }
+            Err(error) => return Err(StorageError::Fat(error)),
+        };
+        let tmp = match root.open_dir(TMP_DIR) {
+            Ok(dir) => dir,
+            Err(lamfat::Error::NotFound) => root.create_dir(TMP_DIR).map_err(StorageError::Fat)?,
+            Err(error) => return Err(StorageError::Fat(error)),
+        };
+        let stage = upload_stage_name(record.generation)?;
+        let backup = upload_backup_name(record.generation)?;
+        match record.phase {
+            UploadJournalPhase::Clear => {}
+            UploadJournalPhase::Receiving | UploadJournalPhase::Verified => {
+                tmp.remove(stage.as_str()).ok();
+                tmp.remove(record.target_name.as_str()).ok();
+            }
+            UploadJournalPhase::OldMoved => {
+                if books.open_file(record.target_name.as_str()).is_err() {
+                    let _ = tmp.rename(backup.as_str(), &books, record.target_name.as_str());
+                } else {
+                    tmp.remove(backup.as_str()).ok();
+                }
+                tmp.remove(stage.as_str()).ok();
+                tmp.remove(record.target_name.as_str()).ok();
+            }
+            UploadJournalPhase::Published => {
+                tmp.remove(stage.as_str()).ok();
+                tmp.remove(record.target_name.as_str()).ok();
+                tmp.remove(backup.as_str()).ok();
+            }
+        }
+        self.clear_upload_journal_in_dir(&tmp, &record)
+    }
+
+    pub fn next_upload_generation(&self) -> Result<u32, StorageError<D>> {
+        Ok(self
+            .read_upload_journal()?
+            .map_or(1, |record| record.generation.wrapping_add(1).max(1)))
+    }
+
+    fn clear_upload_journal_in_dir(
+        &self,
+        tmp: &lamfat::Dir<
+            '_,
+            MountedBlockStream<D>,
+            lamfat::DefaultTimeProvider,
+            lamfat::LossyOemCpConverter,
+        >,
+        record: &UploadJournalRecord,
+    ) -> Result<(), StorageError<D>> {
+        let clear = UploadJournalRecord::new(
+            UploadJournalPhase::Clear,
+            record.generation.wrapping_add(1).max(1),
+            0,
+            0,
+            record.target_name.as_str(),
+        )
+        .map_err(|_| StorageError::UploadJournal)?;
+        self.write_upload_journal_in_dir(tmp, &clear)
+    }
+
+    fn read_upload_journal(&self) -> Result<Option<UploadJournalRecord>, StorageError<D>> {
+        let root = self.fs.root_dir();
+        let tmp = match root.open_dir(TMP_DIR) {
+            Ok(dir) => dir,
+            Err(lamfat::Error::NotFound) => return Ok(None),
+            Err(error) => return Err(StorageError::Fat(error)),
+        };
+        let mut selected: Option<UploadJournalRecord> = None;
+        for name in [UPLOAD_JOURNAL_A, UPLOAD_JOURNAL_B] {
+            let Ok(mut file) = tmp.open_file(name) else {
+                continue;
+            };
+            let mut bytes = [0; UPLOAD_JOURNAL_BYTES];
+            if file.read_exact(&mut bytes).is_err() {
+                continue;
+            }
+            let Ok(candidate) = decode_upload_journal(&bytes) else {
+                continue;
+            };
+            if selected
+                .as_ref()
+                .is_none_or(|current| journal_is_newer(&candidate, current))
+            {
+                selected = Some(candidate);
+            }
+        }
+        Ok(selected)
+    }
+
+    fn write_upload_journal_in_dir(
+        &self,
+        tmp: &lamfat::Dir<
+            '_,
+            MountedBlockStream<D>,
+            lamfat::DefaultTimeProvider,
+            lamfat::LossyOemCpConverter,
+        >,
+        record: &UploadJournalRecord,
+    ) -> Result<(), StorageError<D>> {
+        let slot = if (record.generation + u32::from(record.phase as u8)) & 1 == 0 {
+            UPLOAD_JOURNAL_A
+        } else {
+            UPLOAD_JOURNAL_B
+        };
+        let mut bytes = [0; UPLOAD_JOURNAL_BYTES];
+        encode_upload_journal(record, &mut bytes).map_err(|_| StorageError::UploadJournal)?;
+        let mut file = tmp.create_file(slot).map_err(StorageError::Fat)?;
+        let current_len = file.seek(SeekFrom::End(0)).map_err(StorageError::Fat)?;
+        if current_len != UPLOAD_JOURNAL_BYTES as u64 {
+            file.truncate().map_err(StorageError::Fat)?;
+        }
+        file.seek(SeekFrom::Start(0)).map_err(StorageError::Fat)?;
+        file.write_all(&bytes).map_err(StorageError::Fat)?;
+        file.flush().map_err(StorageError::Fat)
+    }
+
     pub fn file_size(&self, name: &str) -> Result<u64, StorageError<D>> {
         self.file_size_in_dir(BOOKS_DIR, name)
     }
@@ -410,12 +630,63 @@ where
     }
 }
 
+fn upload_stage_name<D>(generation: u32) -> Result<String<12>, StorageError<D>>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    upload_transaction_name::<D>("BBU", generation)
+}
+
+fn upload_backup_name<D>(generation: u32) -> Result<String<12>, StorageError<D>>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    upload_transaction_name::<D>("BBB", generation)
+}
+
+fn upload_transaction_name<D>(prefix: &str, generation: u32) -> Result<String<12>, StorageError<D>>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    let mut name = String::new();
+    write!(&mut name, "{prefix}{:05X}.TMP", generation & 0x000f_ffff)
+        .map_err(|_| StorageError::UploadJournal)?;
+    Ok(name)
+}
+
+fn record_with_phase<D>(
+    record: &UploadJournalRecord,
+    phase: UploadJournalPhase,
+) -> Result<UploadJournalRecord, StorageError<D>>
+where
+    D: BlockDevice,
+    D::Error: core::fmt::Debug,
+{
+    UploadJournalRecord::new(
+        phase,
+        record.generation,
+        record.expected_size,
+        record.expected_crc32,
+        record.target_name.as_str(),
+    )
+    .map_err(|_| StorageError::UploadJournal)
+}
+
+fn journal_is_newer(candidate: &UploadJournalRecord, current: &UploadJournalRecord) -> bool {
+    let generation_delta = candidate.generation.wrapping_sub(current.generation);
+    (generation_delta != 0 && generation_delta < (1 << 31))
+        || (candidate.generation == current.generation && candidate.phase > current.phase)
+}
+
 impl<'a, D> MountedDirectoryScan<'a, D>
 where
     D: BlockDevice,
     D::Error: core::fmt::Debug,
 {
-    pub fn start(fs: &'a FileSystem<BlockDeviceStream<D>>) -> Result<Self, StorageError<D>> {
+    pub fn start(fs: &'a FileSystem<MountedBlockStream<D>>) -> Result<Self, StorageError<D>> {
         let root = fs.root_dir();
         let entries = match root.open_dir(BOOKS_DIR) {
             Ok(dir) => Some(dir.iter()),
@@ -436,6 +707,7 @@ where
             entries: heapless::Vec::new(),
             inspected: 0,
             complete: self.complete,
+            unsupported_name: false,
         };
         let Some(entries) = self.entries.as_mut() else {
             return Ok(batch);
@@ -456,6 +728,7 @@ where
                 continue;
             }
             let Ok(name) = String::try_from(name.as_str()) else {
+                batch.unsupported_name = true;
                 continue;
             };
             batch
@@ -480,6 +753,7 @@ where
             entries: heapless::Vec::new(),
             inspected: 0,
             complete: self.complete,
+            unsupported_name: false,
         };
         let Some(entries) = self.entries.as_mut() else {
             return Ok(batch);
@@ -500,6 +774,7 @@ where
                 continue;
             }
             let Ok(name) = String::try_from(name.as_str()) else {
+                batch.unsupported_name = true;
                 continue;
             };
             let size = entry.len();
@@ -643,20 +918,26 @@ where
     /// This is intended for a single long-lived storage-owner task. The
     /// returned filesystem owns the device, so directory iterators may remain
     /// live between bounded task steps without a self-borrow or global mutex.
+    /// The caller owns the persistent eight-block scratch allocation, keeping
+    /// it out of temporary FAT streams and async task moves.
     pub fn into_mounted_filesystem(
         self,
-    ) -> Result<FileSystem<BlockDeviceStream<D>>, StorageError<D>> {
+        scratch: &'static mut MountedScratch,
+    ) -> Result<FileSystem<MountedBlockStream<D>>, StorageError<D>> {
         if self.active_upload.is_some() {
             return Err(StorageError::UploadInProgress);
         }
         let mut device = self.block_device;
         let base_offset = crate::fat_directory::filesystem_base_offset(&mut device)?;
-        let stream = BlockDeviceStream::new(device, base_offset);
+        let stream = BlockDeviceStream::with_scratch(device, base_offset, scratch);
         FileSystem::new(stream, FsOptions::new()).map_err(StorageError::Fat)
     }
 
-    pub fn into_owned_mount(self) -> Result<MountedStorage<D>, StorageError<D>> {
-        self.into_mounted_filesystem()
+    pub fn into_owned_mount(
+        self,
+        scratch: &'static mut MountedScratch,
+    ) -> Result<MountedStorage<D>, StorageError<D>> {
+        self.into_mounted_filesystem(scratch)
             .map(|fs| MountedStorage { fs })
     }
 

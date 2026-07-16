@@ -1,10 +1,12 @@
+use std::io::{IsTerminal, Write};
 use std::time::Duration;
 
 use binbook_diagnostic_protocol::{KeyCode, Opcode, MAX_PAYLOAD_BYTES};
 
 use crate::{
     diag_protocol, serial_transport::SerialSession, DiagCommand, ExerciseCommand, PageAction,
-    ProbeCommand, RefreshModeAction, RefreshModeChoice, StorageCommand,
+    ProbeCommand, ProgressMode, RefreshModeAction, RefreshModeChoice, RequestedTransferMode,
+    RequestedTransferWindow, StorageCommand,
 };
 
 const STORAGE_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -237,6 +239,10 @@ pub fn run_diag(cmd: DiagCommand) {
                 output,
                 offset,
                 max_bytes,
+                progress,
+                transfer_mode,
+                window,
+                transfer_report,
             } => {
                 if let Some(output) = output {
                     if offset.is_some() || max_bytes.is_some() {
@@ -248,7 +254,15 @@ pub fn run_diag(cmd: DiagCommand) {
                             max_bytes.unwrap_or((MAX_PAYLOAD_BYTES - 5) as u32),
                         );
                     }
-                    return read_file(port, path, output);
+                    return read_file(
+                        port,
+                        path,
+                        output,
+                        *progress,
+                        *transfer_mode,
+                        *window,
+                        transfer_report.as_deref(),
+                    );
                 }
                 let frame = diag_protocol::store_read_request_range(
                     1,
@@ -426,18 +440,332 @@ fn read_file_range(port: &str, path: &str, output: &std::path::Path, offset: u32
     );
 }
 
-fn read_file(port: &str, path: &str, output: &std::path::Path) {
+fn read_file(
+    port: &str,
+    path: &str,
+    output: &std::path::Path,
+    progress_mode: Option<ProgressMode>,
+    requested_mode: RequestedTransferMode,
+    requested_window: RequestedTransferWindow,
+    transfer_report: Option<&std::path::Path>,
+) {
+    let clock = crate::upload::SystemClock::start();
     let file = std::fs::File::create(output).unwrap_or_else(|error| {
         eprintln!("Error creating {}: {error}", output.display());
         std::process::exit(1);
     });
     let mut output_file = std::io::BufWriter::new(file);
-    let bytes =
-        crate::storage_readback::read_file(path, port, &mut output_file).unwrap_or_else(|error| {
+    let mut session = SerialSession::open(port).unwrap_or_else(|error| {
+        let _ = std::fs::remove_file(output);
+        eprintln!("Read failed: {error}");
+        std::process::exit(1);
+    });
+    let selection = crate::transfer_probe::probe_transfer(
+        &mut session,
+        binbook_diagnostic_protocol::TransferDirection::Readback,
+        read_requested_mode(requested_mode),
+        read_requested_window(requested_window),
+    )
+    .unwrap_or_else(|error| {
+        let _ = std::fs::remove_file(output);
+        eprintln!("Read negotiation failed: {error}");
+        std::process::exit(1);
+    });
+    let prepare_ms = elapsed_ms(&clock);
+    let trace_id = if transfer_report.is_some()
+        && selection.capabilities & binbook_diagnostic_protocol::CAP_STORAGE_TRANSFER_METRICS != 0
+    {
+        Some(
+            crate::transfer_trace_client::start_trace(
+                &mut session,
+                binbook_diagnostic_protocol::TransferDirection::Readback,
+            )
+            .unwrap_or_else(|error| {
+                let _ = std::fs::remove_file(output);
+                eprintln!("Read trace start failed: {error}");
+                std::process::exit(1);
+            })
+            .trace_id,
+        )
+    } else {
+        None
+    };
+    let stderr = std::io::stderr();
+    let is_tty = stderr.is_terminal();
+    let mut stderr = stderr.lock();
+    let text_progress = crate::progress::TextProgress::for_readback(
+        &mut stderr,
+        progress_mode.unwrap_or(ProgressMode::Auto),
+        is_tty,
+        path,
+    );
+    let mut progress = crate::host_transfer_metrics::MeasuringProgress::new(text_progress, &clock);
+    let storage_name = match crate::storage_readback::sd_storage_name(path) {
+        Ok(name) => name,
+        Err(error) => {
             drop(output_file);
             let _ = std::fs::remove_file(output);
             eprintln!("Read failed: {error}");
+            return;
+        }
+    };
+    let (result, status_queries, retries) = match selection.mode {
+        crate::transfer_negotiation::SelectedMode::Legacy => (
+            crate::storage_readback::read_stream_with_window(
+                storage_name,
+                usize::from(selection.window),
+                &mut session,
+                &mut output_file,
+            )
+            .map(|bytes| (bytes, None)),
+            0,
+            0,
+        ),
+        crate::transfer_negotiation::SelectedMode::Bulk => {
+            let mut bulk = crate::bulk_serial::BulkSerial::new(
+                &mut session,
+                Duration::from_millis(u64::from(selection.idle_timeout_ms)),
+            );
+            let result = crate::bulk_readback_stream::bulk_readback_stream(
+                storage_name,
+                selection.window,
+                &mut bulk,
+                &mut output_file,
+                &mut progress,
+                &clock,
+            );
+            let (status_queries, retries) = bulk.recovery_metrics();
+            (
+                result.map(|summary| (summary.bytes, Some(summary))),
+                status_queries,
+                retries,
+            )
+        }
+    };
+    let (bytes, summary) = match result {
+        Ok(value) => value,
+        Err(error) => {
+            let partial_bytes = output_file
+                .get_ref()
+                .metadata()
+                .map_or(0, |value| value.len());
+            drop(output_file);
+            let host = progress.finish(status_queries, retries);
+            let firmware = trace_id.and_then(|trace_id| {
+                let snapshot = crate::transfer_trace_client::get_trace(
+                    &mut session,
+                    binbook_diagnostic_protocol::TransferDirection::Readback,
+                    trace_id,
+                )
+                .ok();
+                let _ = crate::transfer_trace_client::clear_trace(
+                    &mut session,
+                    binbook_diagnostic_protocol::TransferDirection::Readback,
+                    trace_id,
+                );
+                snapshot
+            });
+            if let Some(report_path) = transfer_report {
+                let protocol_error_delta = firmware.map_or(0, |value| {
+                    value
+                        .protocol_errors_end
+                        .saturating_sub(value.protocol_errors_start)
+                });
+                let report = crate::transfer_report::TransferReport {
+                    operation: crate::transfer_report::ReportOperation::Readback,
+                    mode_requested: read_requested_mode_name(requested_mode),
+                    mode_selected: read_selected_mode_name(selection.mode),
+                    name: path,
+                    bytes: partial_bytes,
+                    expected_crc32: None,
+                    computed_crc32: None,
+                    limits: selection.limits,
+                    host,
+                    firmware: firmware.as_ref(),
+                    result: crate::transfer_report::ReportResult {
+                        ok: false,
+                        library_visible: None,
+                        library_refresh_pending: false,
+                        cleanup_confirmed: read_cleanup_confirmed(&error),
+                        protocol_error_delta,
+                    },
+                };
+                if let Err(report_error) = report.write_atomic(report_path) {
+                    eprintln!(
+                        "Read transfer report {} failed: {report_error}",
+                        report_path.display()
+                    );
+                }
+            }
+            let _ = std::fs::remove_file(output);
+            eprintln!("Read failed: {error}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(error) = progress.inner().result() {
+        let _ = std::fs::remove_file(output);
+        eprintln!("Read progress failed: {error}");
+        std::process::exit(1);
+    }
+    if let Err(error) = output_file.flush() {
+        let _ = std::fs::remove_file(output);
+        eprintln!("Read flush failed: {error}");
+        std::process::exit(1);
+    }
+    drop(output_file);
+    let mut host = progress.finish(status_queries, retries);
+    if summary.is_none() {
+        host.prepare_ms = prepare_ms;
+        host.data_ms = host.end_to_end_ms.saturating_sub(prepare_ms);
+        host.bytes_per_second = bytes
+            .saturating_mul(1_000)
+            .checked_div(host.data_ms)
+            .unwrap_or(0);
+    }
+    let before_host_verification_ms = elapsed_ms(&clock);
+    let computed_crc32 = if transfer_report.is_some() {
+        let mut completed = std::fs::File::open(output).unwrap_or_else(|error| {
+            eprintln!("Read verification failed for {}: {error}", output.display());
             std::process::exit(1);
         });
-    println!("Read {bytes} bytes from {path} into {}", output.display(),);
+        Some(
+            crate::upload_source::measure_source(&mut completed)
+                .unwrap_or_else(|error| {
+                    eprintln!("Read verification failed for {}: {error}", output.display());
+                    std::process::exit(1);
+                })
+                .1,
+        )
+    } else {
+        summary.as_ref().map(|value| value.crc32)
+    };
+    let after_host_verification_ms = elapsed_ms(&clock);
+    host.finish_ms = host
+        .finish_ms
+        .saturating_add(after_host_verification_ms.saturating_sub(before_host_verification_ms));
+    host.end_to_end_ms = after_host_verification_ms;
+    let firmware = trace_id.map(|trace_id| {
+        let snapshot = crate::transfer_trace_client::get_trace(
+            &mut session,
+            binbook_diagnostic_protocol::TransferDirection::Readback,
+            trace_id,
+        )
+        .unwrap_or_else(|error| {
+            eprintln!("Read succeeded, but transfer trace retrieval failed: {error}");
+            std::process::exit(1);
+        });
+        if snapshot.state != binbook_diagnostic_protocol::TransferTraceState::Succeeded {
+            eprintln!(
+                "Read succeeded, but transfer trace state is {:?}",
+                snapshot.state
+            );
+            std::process::exit(1);
+        }
+        crate::transfer_trace_client::clear_trace(
+            &mut session,
+            binbook_diagnostic_protocol::TransferDirection::Readback,
+            trace_id,
+        )
+        .unwrap_or_else(|error| {
+            eprintln!("Read succeeded, but transfer trace cleanup failed: {error}");
+            std::process::exit(1);
+        });
+        snapshot
+    });
+    if let Some(report_path) = transfer_report {
+        let protocol_error_delta = firmware.map_or(0, |value| {
+            value
+                .protocol_errors_end
+                .saturating_sub(value.protocol_errors_start)
+        });
+        crate::transfer_report::TransferReport {
+            operation: crate::transfer_report::ReportOperation::Readback,
+            mode_requested: read_requested_mode_name(requested_mode),
+            mode_selected: read_selected_mode_name(selection.mode),
+            name: path,
+            bytes,
+            expected_crc32: summary.as_ref().map(|value| value.crc32),
+            computed_crc32,
+            limits: selection.limits,
+            host,
+            firmware: firmware.as_ref(),
+            result: crate::transfer_report::ReportResult {
+                ok: true,
+                library_visible: None,
+                library_refresh_pending: false,
+                cleanup_confirmed: None,
+                protocol_error_delta,
+            },
+        }
+        .write_atomic(report_path)
+        .unwrap_or_else(|error| {
+            eprintln!(
+                "Read succeeded, but transfer report {} failed: {error}",
+                report_path.display()
+            );
+            std::process::exit(1);
+        });
+    }
+    if let Some(summary) = summary {
+        println!(
+            "Read {bytes} bytes from {path} into {} (CRC32=0x{:08X}, {} B/s)",
+            output.display(),
+            summary.crc32,
+            summary.bytes_per_second
+        );
+    } else {
+        println!("Read {bytes} bytes from {path} into {}", output.display());
+    }
+}
+
+fn elapsed_ms(clock: &impl crate::upload::Clock) -> u64 {
+    clock.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+fn read_requested_mode_name(value: RequestedTransferMode) -> &'static str {
+    match value {
+        RequestedTransferMode::Auto => "auto",
+        RequestedTransferMode::Legacy => "legacy",
+        RequestedTransferMode::Bulk => "bulk",
+    }
+}
+
+fn read_selected_mode_name(value: crate::transfer_negotiation::SelectedMode) -> &'static str {
+    match value {
+        crate::transfer_negotiation::SelectedMode::Legacy => "legacy",
+        crate::transfer_negotiation::SelectedMode::Bulk => "bulk",
+    }
+}
+
+fn read_cleanup_confirmed(error: &crate::storage_readback::ReadbackError) -> Option<bool> {
+    let crate::storage_readback::ReadbackError::Protocol(message) = error else {
+        return None;
+    };
+    if message.ends_with("cleanup confirmed: true") {
+        Some(true)
+    } else if message.ends_with("cleanup confirmed: false") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn read_requested_mode(value: RequestedTransferMode) -> crate::transfer_negotiation::RequestedMode {
+    match value {
+        RequestedTransferMode::Auto => crate::transfer_negotiation::RequestedMode::Auto,
+        RequestedTransferMode::Legacy => crate::transfer_negotiation::RequestedMode::Legacy,
+        RequestedTransferMode::Bulk => crate::transfer_negotiation::RequestedMode::Bulk,
+    }
+}
+
+fn read_requested_window(
+    value: RequestedTransferWindow,
+) -> crate::transfer_negotiation::RequestedWindow {
+    match value {
+        RequestedTransferWindow::Auto => crate::transfer_negotiation::RequestedWindow::Auto,
+        RequestedTransferWindow::One => crate::transfer_negotiation::RequestedWindow::One,
+        RequestedTransferWindow::Two => crate::transfer_negotiation::RequestedWindow::Two,
+        RequestedTransferWindow::Four => crate::transfer_negotiation::RequestedWindow::Four,
+        RequestedTransferWindow::Eight => crate::transfer_negotiation::RequestedWindow::Eight,
+    }
 }

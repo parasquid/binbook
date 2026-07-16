@@ -39,6 +39,7 @@ pub enum ProgressEvent {
         elapsed_ms: u64,
     },
     Verifying,
+    Publishing,
     UpdatingLibrary,
     Complete(UploadSummary),
 }

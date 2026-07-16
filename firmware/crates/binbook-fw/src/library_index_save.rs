@@ -50,6 +50,7 @@ impl<'a> LibraryIndexSaveClient<'a> {
             Request::UploadBegin {
                 name: index_name(),
                 expected_size: library.index_encoded_len() as u64,
+                expected_crc32: 0,
                 power_save: false,
             },
         );

@@ -13,7 +13,14 @@ use embedded_sdmmc::SdCard;
 
 use binbook_core::ReadAt;
 use binbook_storage::filesystem::{Filesystem, WritableFilesystem};
-use embedded_sd_storage::{MountedFileAccess, SdStorage};
+use embedded_sd_storage::{
+    BlockDevice, BlockIoObserver, MeasuredBlockDevice, MountedFileAccess, NoopBlockIoObserver,
+    SdStorage,
+};
+
+pub type MeasuredSdCard<SPI, DELAY, O> = MeasuredBlockDevice<SdCard<SPI, DELAY>, O>;
+pub type MountedMeasuredSdStorage<SPI, DELAY, O> =
+    embedded_sd_storage::MountedStorage<MeasuredSdCard<SPI, DELAY, O>>;
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -37,16 +44,11 @@ pub const fn classify_device_error(error: embedded_sdmmc::sdcard::Error) -> SdEr
     }
 }
 
-impl<SPI, DELAY>
-    From<embedded_sd_storage::sd_filesystem::StorageError<embedded_sdmmc::SdCard<SPI, DELAY>>>
-    for SdError
+impl<D> From<embedded_sd_storage::sd_filesystem::StorageError<D>> for SdError
 where
-    SPI: SpiDevice<u8>,
-    DELAY: DelayNs,
+    D: BlockDevice<Error = embedded_sdmmc::sdcard::Error>,
 {
-    fn from(
-        e: embedded_sd_storage::sd_filesystem::StorageError<embedded_sdmmc::SdCard<SPI, DELAY>>,
-    ) -> Self {
+    fn from(e: embedded_sd_storage::sd_filesystem::StorageError<D>) -> Self {
         match e {
             embedded_sd_storage::sd_filesystem::StorageError::Device(error) => {
                 classify_device_error(error)
@@ -59,6 +61,7 @@ where
             | embedded_sd_storage::sd_filesystem::StorageError::UploadTooFragmented
             | embedded_sd_storage::sd_filesystem::StorageError::FileTooFragmented
             | embedded_sd_storage::sd_filesystem::StorageError::BadUploadOffset
+            | embedded_sd_storage::sd_filesystem::StorageError::UploadJournal
             | embedded_sd_storage::sd_filesystem::StorageError::UnexpectedEof => SdError::Sdmmc,
             embedded_sd_storage::sd_filesystem::StorageError::NotFound => SdError::NotFound,
         }
@@ -91,16 +94,17 @@ impl TimeSource for FixedTime {
 // ---------------------------------------------------------------------------
 
 /// Wraps an `SdStorage<SdCard<SPI, DELAY>, TIME>` as a `binbook_storage::Filesystem`.
-pub struct SdFilesystem<SPI, DELAY, TIME>
+pub struct SdFilesystem<SPI, DELAY, TIME, O = NoopBlockIoObserver>
 where
     SPI: SpiDevice<u8>,
     DELAY: DelayNs,
     TIME: TimeSource,
+    O: BlockIoObserver,
 {
-    inner: SdStorage<SdCard<SPI, DELAY>, TIME>,
+    inner: SdStorage<MeasuredSdCard<SPI, DELAY, O>, TIME>,
 }
 
-impl<SPI, DELAY, TIME> SdFilesystem<SPI, DELAY, TIME>
+impl<SPI, DELAY, TIME> SdFilesystem<SPI, DELAY, TIME, NoopBlockIoObserver>
 where
     SPI: SpiDevice<u8>,
     DELAY: DelayNs,
@@ -109,31 +113,48 @@ where
     /// Construct from an SPI device, a delay implementation, and a time source.
     pub fn new(spi: SPI, delay: DELAY, time: TIME) -> Self {
         Self {
-            inner: SdStorage::new(spi, delay, time),
+            inner: SdStorage::from_block_device(
+                MeasuredBlockDevice::new(SdCard::new(spi, delay), NoopBlockIoObserver),
+                time,
+            ),
+        }
+    }
+}
+
+impl<SPI, DELAY, TIME, O> SdFilesystem<SPI, DELAY, TIME, O>
+where
+    SPI: SpiDevice<u8>,
+    DELAY: DelayNs,
+    TIME: TimeSource,
+    O: BlockIoObserver,
+{
+    pub fn new_measured(spi: SPI, delay: DELAY, time: TIME, observer: O) -> Self {
+        Self {
+            inner: SdStorage::from_block_device(
+                MeasuredBlockDevice::new(SdCard::new(spi, delay), observer),
+                time,
+            ),
         }
     }
 
     pub fn into_owned_mount(
         self,
-    ) -> Result<embedded_sd_storage::MountedStorage<SdCard<SPI, DELAY>>, SdError> {
-        self.inner.into_owned_mount().map_err(SdError::from)
+        scratch: &'static mut embedded_sd_storage::MountedScratch,
+    ) -> Result<MountedMeasuredSdStorage<SPI, DELAY, O>, SdError> {
+        self.inner.into_owned_mount(scratch).map_err(SdError::from)
     }
 }
 
-struct MappedMountedSource<'a, SPI, DELAY>
+struct MappedMountedSource<'a, D>
 where
-    SPI: SpiDevice<u8>,
-    DELAY: DelayNs,
+    D: BlockDevice<Error = embedded_sdmmc::sdcard::Error>,
 {
-    inner: &'a mut dyn ReadAt<
-        Error = embedded_sd_storage::sd_filesystem::StorageError<SdCard<SPI, DELAY>>,
-    >,
+    inner: &'a mut dyn ReadAt<Error = embedded_sd_storage::sd_filesystem::StorageError<D>>,
 }
 
-impl<SPI, DELAY> ReadAt for MappedMountedSource<'_, SPI, DELAY>
+impl<D> ReadAt for MappedMountedSource<'_, D>
 where
-    SPI: SpiDevice<u8>,
-    DELAY: DelayNs,
+    D: BlockDevice<Error = embedded_sdmmc::sdcard::Error>,
 {
     type Error = SdError;
 
@@ -146,11 +167,12 @@ where
     }
 }
 
-impl<SPI, DELAY, TIME> MountedFileAccess for SdFilesystem<SPI, DELAY, TIME>
+impl<SPI, DELAY, TIME, O> MountedFileAccess for SdFilesystem<SPI, DELAY, TIME, O>
 where
     SPI: SpiDevice<u8>,
     DELAY: DelayNs,
     TIME: TimeSource,
+    O: BlockIoObserver,
 {
     type Error = SdError;
 
@@ -168,11 +190,12 @@ where
     }
 }
 
-impl<SPI, DELAY, TIME> Filesystem for SdFilesystem<SPI, DELAY, TIME>
+impl<SPI, DELAY, TIME, O> Filesystem for SdFilesystem<SPI, DELAY, TIME, O>
 where
     SPI: SpiDevice<u8>,
     DELAY: DelayNs,
     TIME: TimeSource,
+    O: BlockIoObserver,
 {
     type Error = SdError;
 
@@ -226,11 +249,12 @@ where
     }
 }
 
-impl<SPI, DELAY, TIME> WritableFilesystem for SdFilesystem<SPI, DELAY, TIME>
+impl<SPI, DELAY, TIME, O> WritableFilesystem for SdFilesystem<SPI, DELAY, TIME, O>
 where
     SPI: SpiDevice<u8>,
     DELAY: DelayNs,
     TIME: TimeSource,
+    O: BlockIoObserver,
 {
     fn create_or_truncate(&mut self, name: &str) -> Result<(), Self::Error> {
         #[cfg(feature = "debug-log")]

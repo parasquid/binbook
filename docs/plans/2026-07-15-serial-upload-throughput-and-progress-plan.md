@@ -106,8 +106,8 @@ live comparison proves that it affects throughput.
   the host falls back to stop-and-wait when the bit is absent.
 - Advance progress only from validated acknowledgements. Bytes written to the
   host OS or merely sent over USB do not count as device-accepted bytes.
-- Keep `binbook diag storage upload` for diagnostic scripts, but make the
-  existing top-level `binbook upload` command execute the same implementation.
+- Use the top-level `binbook upload` command for complete uploads. Keep
+  diagnostic `storage begin`/`abort` for explicit session and cleanup probes.
 - Default the destination name to the local UTF-8 filename. Retain explicit
   `--name`/`--path` overrides.
 - Default progress mode to `auto`: a single updating line on a TTY; stable
@@ -209,8 +209,8 @@ work.
   the 4,096-byte historical smoke upload. Use this command shape for each run:
 
   ```bash
-  /usr/bin/time -p target/debug/binbook diag storage upload \
-    --port "$PORT" --path "$NAME" --file "$FIXTURE"
+  /usr/bin/time -p target/debug/binbook upload \
+    --port "$PORT" --name "$NAME" --file "$FIXTURE"
   target/debug/binbook diag status --port "$PORT"
   ```
 - [x] After one run, poll list until the new name appears, read the entire file
@@ -284,9 +284,9 @@ number.
 - [x] Validate every response and accepted length before updating progress.
   Preserve typed transport, protocol, local-I/O, device-status, CRC, cleanup,
   and library-wait failures.
-- [x] Make `binbook upload` functional. Preserve existing flags where practical,
-  allow destination-name inference, and keep `diag storage upload` as the
-  lower-level equivalent.
+- [x] Make `binbook upload` functional. Preserve existing flags where practical
+  and allow destination-name inference. Keep diagnostic begin/abort commands as
+  the lower-level session and cleanup probes.
 - [x] Add `--progress always|auto|never`, `--no-wait-library`, and a deterministic
   machine-readable final summary (`--json`) containing bytes, CRC32, elapsed
   milliseconds, acknowledged throughput, and library visibility. JSON mode
@@ -296,8 +296,8 @@ number.
   background scan.
 
 **Gate:** All fake-peer tests pass; a short or malformed acknowledgement cannot
-produce 100%; the large test file is never read into one host `Vec`; both CLI
-surfaces share one implementation.
+produce 100%; the large test file is never read into one host `Vec`; the
+top-level CLI uses the tested typed implementation.
 
 ## Task 3: Remove the firmware's polling-latency ceiling
 

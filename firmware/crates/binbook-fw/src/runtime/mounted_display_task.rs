@@ -77,8 +77,8 @@ pub(super) async fn mounted_display_task(
 
     static MENU_FB: StaticCell<Gray2Framebuffer> = StaticCell::new();
     static READER_STATE: StaticCell<ReaderState> = StaticCell::new();
-    let menu_fb = MENU_FB.init(Gray2Framebuffer::new());
-    let reader_state = READER_STATE.init(ReaderState::empty());
+    let menu_fb = MENU_FB.init_with(Gray2Framebuffer::new);
+    let reader_state = READER_STATE.init_with(ReaderState::empty);
     let mut buffers = OwnerReaderBuffers::init();
     let mut state_buffer = OwnerStateBuffer::init();
     let mut state_slots = OwnerStateSlots::new();
@@ -106,6 +106,10 @@ pub(super) async fn mounted_display_task(
     if status == LibraryStatus::Ready && restore_hash != 0 {
         let _ = load_selected_viewport(viewport, restore_hash, &mut buffers, &mut sequence).await;
     }
+
+    // Catalog reconciliation is storage-owned and must not wait for panel
+    // initialization or the first menu render to complete.
+    request_refresh(viewport).await;
 
     let cs = Output::new(gpio21, Level::High, OutputConfig::default());
     let spi = FreqManagedSpiDevice::new(
@@ -146,7 +150,6 @@ pub(super) async fn mounted_display_task(
         (StorageName, MountFileToken),
         { binbook_fw::library::LIBRARY_VIEWPORT_CAPACITY },
     >::new();
-    request_refresh(viewport).await;
     probe(32, 0, 0).await;
     let mut lifecycle = OwnerReaderLifecycle::new();
     let mut book: Option<OwnerBook> = None;
@@ -444,15 +447,30 @@ pub(super) async fn mounted_display_task(
             },
             Either4::Third(completion) => {
                 probe(34, completion.status, completion.elapsed_ms).await;
-                prepared = completion.prepared;
                 let selected_hash = viewport_entry(viewport, menu.selected())
                     .map(|entry| entry.filename_hash)
                     .unwrap_or(reader_state.selected_filename_hash);
+                let previous_selected = menu.selected();
                 let current_start = viewport.start();
-                if load_viewport(viewport, current_start, &mut buffers, &mut sequence)
-                    .await
-                    .is_ok()
-                {
+                let loaded = if let Some(cursor) = completion.cursor {
+                    if cursor.entry_count() == 0 {
+                        viewport.adopt_empty_cursor(cursor);
+                        true
+                    } else {
+                        load_viewport_window(
+                            viewport,
+                            cursor,
+                            current_start.min(cursor.entry_count() - 1),
+                            &mut buffers,
+                            &mut sequence,
+                        )
+                        .await
+                        .is_ok()
+                    }
+                } else {
+                    false
+                };
+                if loaded {
                     if selected_hash != 0 {
                         let _ = load_selected_viewport(
                             viewport,
@@ -461,6 +479,15 @@ pub(super) async fn mounted_display_task(
                             &mut sequence,
                         )
                         .await;
+                    }
+                    prepared.clear();
+                    for prepared_mount in completion.prepared {
+                        let index = usize::from(prepared_mount.absolute_index);
+                        if let Some(entry) = viewport_entry(viewport, index) {
+                            if let Ok(name) = StorageName::new(entry.name.as_str()) {
+                                let _ = prepared.push((name, prepared_mount.token));
+                            }
+                        }
                     }
                     probe(35, 0, viewport.entries().len() as u32).await;
                     menu.reset(viewport.total());
@@ -472,6 +499,27 @@ pub(super) async fn mounted_display_task(
                     {
                         menu.restore_selected(selected);
                         reader_state.selected_filename_hash = selected_hash;
+                    } else if let Some(fallback) = binbook_fw::library::resolve_refreshed_selection(
+                        previous_selected,
+                        None,
+                        viewport.total(),
+                    ) {
+                        if !viewport_contains(viewport, fallback) {
+                            let start = fallback.saturating_sub(5);
+                            let _ = load_viewport_window(
+                                viewport,
+                                viewport.cursor().expect("loaded viewport has a cursor"),
+                                start,
+                                &mut buffers,
+                                &mut sequence,
+                            )
+                            .await;
+                        }
+                        menu.restore_selected(fallback);
+                        reader_state.selected_filename_hash = viewport_entry(viewport, fallback)
+                            .map_or(0, |entry| entry.filename_hash);
+                    } else {
+                        reader_state.selected_filename_hash = 0;
                     }
                     if DISPLAY_MODE.load(portable_atomic::Ordering::Relaxed) == MODE_MENU {
                         let _ = render_ui_transition(
@@ -486,27 +534,33 @@ pub(super) async fn mounted_display_task(
                 }
                 if completion.status == LibraryStatus::Ready.code() {
                     let before = reader_state.records().len();
-                    if let Ok(removed) =
-                        prune_state_from_index(reader_state, &mut buffers, &mut sequence).await
-                    {
-                        if removed > 0 {
-                            let saved = save_state(
-                                &mut state_slots,
-                                reader_state,
-                                &mut state_buffer,
-                                &mut state_sequence,
-                            )
-                            .await;
-                            if saved.is_ok() {
-                                state_flush.record_success();
-                            } else {
-                                state_flush.record_failure(
-                                    embassy_time::Instant::now().as_millis(),
-                                    STATE_IDLE_SAVE_RETRY_MS,
-                                );
+                    if let Some(cursor) = viewport.cursor() {
+                        if let Ok(removed) = prune_state_from_index(
+                            reader_state,
+                            cursor,
+                            &mut buffers,
+                            &mut sequence,
+                        )
+                        .await
+                        {
+                            if removed > 0 {
+                                let saved = save_state(
+                                    &mut state_slots,
+                                    reader_state,
+                                    &mut state_buffer,
+                                    &mut state_sequence,
+                                )
+                                .await;
+                                if saved.is_ok() {
+                                    state_flush.record_success();
+                                } else {
+                                    state_flush.record_failure(
+                                        embassy_time::Instant::now().as_millis(),
+                                        STATE_IDLE_SAVE_RETRY_MS,
+                                    );
+                                }
                             }
-                        }
-                        RUNTIME_EVENT_CHANNEL
+                            RUNTIME_EVENT_CHANNEL
                             .send(binbook_fw::runtime_engine::RuntimeEvent {
                                 timestamp_ms: embassy_time::Instant::now().as_millis(),
                                 kind: binbook_fw::runtime_engine::RuntimeEventKind::ReaderStatePruned {
@@ -515,6 +569,7 @@ pub(super) async fn mounted_display_task(
                                 },
                             })
                             .await;
+                        }
                     }
                     if reader_state.saved_mode != binbook_fw::reader_state::SavedMode::Reading {
                         restore_reading = false;
@@ -791,7 +846,6 @@ where
                         .is_ok()
                     {
                         prepared.clear();
-                        request_refresh(viewport).await;
                     }
                 }
             }
@@ -1344,6 +1398,9 @@ async fn request_refresh(viewport: &LibraryViewport) {
         }
     }
     LIBRARY_REFRESH_TRIGGER_CHANNEL
-        .send(LibraryRefreshTrigger { prefetch })
+        .send(LibraryRefreshTrigger {
+            trace_id: None,
+            prefetch,
+        })
         .await;
 }

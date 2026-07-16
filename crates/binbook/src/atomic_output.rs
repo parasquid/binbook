@@ -39,8 +39,54 @@ pub(crate) fn write_atomic<T>(
     }
 }
 
+#[cfg(feature = "serial-device")]
+pub(crate) fn write_atomic_io<T>(
+    destination: &Path,
+    write: impl FnOnce(&mut File) -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    let temporary = temporary_path_io(destination)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .create_new(true)
+        .open(&temporary)?;
+    let result = write(&mut file).and_then(|value| {
+        file.sync_all()?;
+        Ok(value)
+    });
+    drop(file);
+    match result {
+        Ok(value) => match fs::rename(&temporary, destination) {
+            Ok(()) => Ok(value),
+            Err(source) => {
+                let _ = fs::remove_file(&temporary);
+                Err(source)
+            }
+        },
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            Err(error)
+        }
+    }
+}
+
 fn temporary_path(destination: &Path) -> Result<PathBuf, CliError> {
     let name = destination.file_name().ok_or(CliError::InvalidOutputPath)?;
+    let mut temporary = OsString::from(".");
+    temporary.push(name);
+    temporary.push(format!(
+        ".tmp-{}-{}",
+        std::process::id(),
+        NONCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    Ok(destination.with_file_name(temporary))
+}
+
+#[cfg(feature = "serial-device")]
+fn temporary_path_io(destination: &Path) -> std::io::Result<PathBuf> {
+    let name = destination.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid output path")
+    })?;
     let mut temporary = OsString::from(".");
     temporary.push(name);
     temporary.push(format!(

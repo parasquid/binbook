@@ -2,7 +2,7 @@ use crate::{ProtocolError, StorageBackend};
 
 pub const STORE_NAME_MAX: usize = 121;
 
-fn validate_name(name: &str) -> Result<&[u8], ProtocolError> {
+pub(crate) fn validate_name(name: &str) -> Result<&[u8], ProtocolError> {
     let bytes = name.as_bytes();
     if bytes.is_empty()
         || bytes.len() > STORE_NAME_MAX

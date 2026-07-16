@@ -5,7 +5,7 @@ use embedded_hal::{
 };
 use std::{cell::RefCell, rc::Rc};
 
-use binbook_fw::board::BoardSpiDevice;
+use binbook_fw::board::{BoardSpiDevice, SpiFrequencyState};
 
 #[derive(Clone, Default)]
 struct Trace(Rc<RefCell<Vec<&'static str>>>);
@@ -67,4 +67,16 @@ fn board_spi_adapter_owns_chip_select_for_the_whole_transaction() {
         &["select", "write", "read", "flush", "deselect"]
     );
     assert_eq!(read, [0x5a; 2]);
+}
+
+#[test]
+fn shared_spi_frequency_changes_only_at_device_transitions() {
+    let mut state = SpiFrequencyState::new(20_000_000);
+    assert!(!state.needs_apply(20_000_000));
+    assert!(state.needs_apply(4_000_000));
+    state.mark_applied(4_000_000);
+    assert!(!state.needs_apply(4_000_000));
+    assert!(state.needs_apply(20_000_000));
+    state.mark_applied(20_000_000);
+    assert!(!state.needs_apply(20_000_000));
 }

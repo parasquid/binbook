@@ -1,23 +1,95 @@
 use binbook_diagnostic_protocol::{
-    decode_frame, decode_hello_response, decode_log_get_payload, decode_log_record,
-    decode_status_payload, decode_store_abort_request, decode_store_delete_request,
-    decode_store_list_request, decode_store_read_request, decode_store_read_response,
-    decode_store_upload_begin_request, decode_store_upload_begin_response,
-    decode_store_upload_commit_request, decode_store_upload_commit_response,
-    decode_store_upload_write_request, decode_store_upload_write_response, encode_frame,
-    encode_hello_response, encode_log_get_payload, encode_log_record, encode_page_payload,
-    encode_status_payload, encode_store_abort_request, encode_store_delete_request,
-    encode_store_upload_begin_request, encode_store_upload_begin_response,
-    encode_store_upload_commit_request, encode_store_upload_commit_response,
-    encode_store_upload_write_request, encode_store_upload_write_response, FrameHeader, FrameKind,
-    HelloResponse, KeyAction, KeyCode, LogGetPayload, LogRecordPayload, Opcode, PageAction,
-    PanelModeCode, ProbeCode, RefreshModeAction, RefreshModeCode, RefreshModePayload, Status,
-    StatusPayload, StorageBackend, StoreUploadCommitResult, EVT_DISPLAY_RECOVERY,
-    EVT_INPUT_DECISION, EVT_INPUT_TRANSITION, EVT_REFRESH_PHASE, EVT_RESEED_COMPLETE,
-    EVT_RESEED_START, EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED, EVT_TURN_QUEUED,
-    EVT_TURN_STARTED, FRAME_DELIMITER, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
+    decode_frame, decode_frame_in_place_profiled, decode_frame_profiled, decode_hello_response,
+    decode_log_get_payload, decode_log_record, decode_status_payload, decode_store_abort_request,
+    decode_store_delete_request, decode_store_list_request, decode_store_read_request,
+    decode_store_read_response, decode_store_upload_begin_request,
+    decode_store_upload_begin_response, decode_store_upload_commit_request,
+    decode_store_upload_commit_response, decode_store_upload_write_request,
+    decode_store_upload_write_response, encode_frame, encode_hello_response,
+    encode_log_get_payload, encode_log_record, encode_page_payload, encode_status_payload,
+    encode_store_abort_request, encode_store_delete_request, encode_store_upload_begin_request,
+    encode_store_upload_begin_response, encode_store_upload_commit_request,
+    encode_store_upload_commit_response, encode_store_upload_write_request,
+    encode_store_upload_write_response, FrameDecodeEvent, FrameHeader, FrameKind, HelloResponse,
+    KeyAction, KeyCode, LogGetPayload, LogRecordPayload, Opcode, PageAction, PanelModeCode,
+    ProbeCode, RefreshModeAction, RefreshModeCode, RefreshModePayload, Status, StatusPayload,
+    StorageBackend, StoreUploadCommitResult, EVT_DISPLAY_RECOVERY, EVT_INPUT_DECISION,
+    EVT_INPUT_TRANSITION, EVT_REFRESH_PHASE, EVT_RESEED_COMPLETE, EVT_RESEED_START,
+    EVT_TURN_BOUNDARY_NOOP, EVT_TURN_DEQUEUED, EVT_TURN_DROPPED, EVT_TURN_QUEUED, EVT_TURN_STARTED,
+    FRAME_DELIMITER, MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
     STORE_LIST_ENTRY_HEADER_BYTES,
 };
+
+#[test]
+fn crc16_ccitt_false_keeps_the_locked_known_vector() {
+    assert_eq!(
+        binbook_diagnostic_protocol::crc16_ccitt_false(b"123456789"),
+        0x29b1
+    );
+}
+
+#[test]
+fn profiled_decode_separates_framing_and_crc_boundaries() {
+    let header = FrameHeader {
+        kind: FrameKind::Request,
+        opcode: Opcode::Hello,
+        status: Status::Ok,
+        sequence: 7,
+        payload_len: 0,
+    };
+    let mut encoded = [0; MAX_FRAME_BYTES];
+    let len = encode_frame(&header, &[], &mut encoded).unwrap();
+    let mut payload = [0; MAX_PAYLOAD_BYTES];
+    let mut events = Vec::new();
+
+    assert_eq!(
+        decode_frame_profiled(&encoded[..len], &mut payload, |event| events.push(event)).unwrap(),
+        (header, 0)
+    );
+    assert_eq!(
+        events,
+        [
+            FrameDecodeEvent::FramingStart,
+            FrameDecodeEvent::FramingEnd,
+            FrameDecodeEvent::CrcStart,
+            FrameDecodeEvent::CrcEnd,
+            FrameDecodeEvent::Complete {
+                logical_bytes: 0,
+                encoded_bytes: len as u16,
+            },
+        ]
+    );
+}
+
+#[test]
+fn in_place_decode_preserves_maximum_payload_and_profile_events() {
+    let mut payload = [0u8; MAX_PAYLOAD_BYTES];
+    for (index, byte) in payload.iter_mut().enumerate() {
+        *byte = if index % 251 == 0 { 0 } else { index as u8 };
+    }
+    let header = FrameHeader {
+        kind: FrameKind::Request,
+        opcode: Opcode::StoreUploadWrite,
+        status: Status::Ok,
+        sequence: 99,
+        payload_len: MAX_PAYLOAD_BYTES as u16,
+    };
+    let mut frame = [0; MAX_FRAME_BYTES];
+    let len = encode_frame(&header, &payload, &mut frame).unwrap();
+    let mut events = Vec::new();
+    let (decoded, range) =
+        decode_frame_in_place_profiled(&mut frame, len, |event| events.push(event)).unwrap();
+
+    assert_eq!(decoded, header);
+    assert_eq!(&frame[range], payload);
+    assert_eq!(
+        events.last().copied(),
+        Some(FrameDecodeEvent::Complete {
+            logical_bytes: MAX_PAYLOAD_BYTES as u16,
+            encoded_bytes: len as u16,
+        })
+    );
+}
 
 #[test]
 fn log_response_header_preserves_count_and_counters() {
@@ -167,7 +239,10 @@ fn storage_and_refresh_mode_opcodes_are_defined() {
     assert_eq!(Opcode::from_u8(0x0F), Some(Opcode::StoreDelete));
     assert_eq!(Opcode::from_u8(0x10), Some(Opcode::StoreRead));
     assert_eq!(Opcode::from_u8(0x11), Some(Opcode::RefreshMode));
-    assert_eq!(Opcode::from_u8(0x12), None);
+    assert_eq!(Opcode::from_u8(0x12), Some(Opcode::StoreTransferLimits));
+    assert_eq!(Opcode::from_u8(0x19), Some(Opcode::StoreBulkAbort));
+    assert_eq!(Opcode::from_u8(0x1A), Some(Opcode::StoreSdWriteTrace));
+    assert_eq!(Opcode::from_u8(0x1B), None);
 }
 
 #[test]

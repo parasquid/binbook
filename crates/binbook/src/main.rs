@@ -1,4 +1,4 @@
-use binbook::{Cli, Commands, DiagCommand};
+use binbook::{Cli, Commands, DiagCommand, StorageCommand};
 use clap::Parser;
 
 #[cfg(feature = "serial-device")]
@@ -62,11 +62,15 @@ fn main() {
             println!("Flashing {} to {}...", firmware.display(), port);
         }
         Commands::Upload(args) => run_upload(args),
-        Commands::List { port } => {
-            println!("Listing books on {}...", port);
-        }
+        Commands::List { port } => run_diag(DiagCommand::Storage(StorageCommand::List {
+            port,
+            path: None,
+        })),
         Commands::Delete { port, name } => {
-            println!("Deleting {} from {}...", name, port);
+            run_diag(DiagCommand::Storage(StorageCommand::Delete {
+                port,
+                path: name,
+            }));
         }
         Commands::Diag(cmd) => run_diag(cmd),
     }

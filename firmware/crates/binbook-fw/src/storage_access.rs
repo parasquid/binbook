@@ -16,6 +16,8 @@ pub const STATE_SLOT_B: &str = "BINBOOK.B.STATE";
 pub const LEGACY_STATE_SLOT_A: &str = "LEGACY.BINBOOK.A.STATE";
 pub const LEGACY_STATE_SLOT_B: &str = "LEGACY.BINBOOK.B.STATE";
 pub const LIBRARY_INDEX_FILE: &str = "BINBOOK.LIBRARY.INDEX";
+pub const LIBRARY_INDEX_SLOT_A: &str = "BINBOOK.A.INDEX";
+pub const LIBRARY_INDEX_SLOT_B: &str = "BINBOOK.B.INDEX";
 pub const METADATA_DIR: &str = "BINBOOK";
 const WRITE_CHUNK_BYTES: usize = 512;
 

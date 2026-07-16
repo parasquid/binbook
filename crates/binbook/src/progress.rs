@@ -10,6 +10,7 @@ pub struct TextProgress<'a, W> {
     mode: ProgressMode,
     is_tty: bool,
     name: &'a str,
+    activity: &'static str,
     line_active: bool,
     last_render_ms: Option<u64>,
     error: Option<io::Error>,
@@ -22,10 +23,22 @@ impl<'a, W: Write> TextProgress<'a, W> {
             mode,
             is_tty,
             name,
+            activity: "Uploading",
             line_active: false,
             last_render_ms: None,
             error: None,
         }
+    }
+
+    pub fn for_readback(
+        writer: &'a mut W,
+        mode: ProgressMode,
+        is_tty: bool,
+        name: &'a str,
+    ) -> Self {
+        let mut progress = Self::new(writer, mode, is_tty, name);
+        progress.activity = "Reading";
+        progress
     }
 
     pub fn result(&self) -> io::Result<()> {
@@ -42,7 +55,11 @@ impl<'a, W: Write> TextProgress<'a, W> {
         match event {
             ProgressEvent::Preparing { total } => {
                 self.finish_active_line()?;
-                writeln!(self.writer, "Preparing {} ({total} bytes)", self.name)
+                writeln!(
+                    self.writer,
+                    "Preparing storage for {} ({total} bytes)",
+                    self.name
+                )
             }
             ProgressEvent::Transfer {
                 acknowledged,
@@ -52,6 +69,10 @@ impl<'a, W: Write> TextProgress<'a, W> {
             ProgressEvent::Verifying => {
                 self.finish_active_line()?;
                 writeln!(self.writer, "Verifying CRC32")
+            }
+            ProgressEvent::Publishing => {
+                self.finish_active_line()?;
+                writeln!(self.writer, "Publishing")
             }
             ProgressEvent::UpdatingLibrary => {
                 self.finish_active_line()?;
@@ -77,7 +98,7 @@ impl<'a, W: Write> TextProgress<'a, W> {
         self.last_render_ms = Some(elapsed_ms);
 
         let percentage = if total == 0 || acknowledged >= total {
-            99.9
+            100.0
         } else {
             acknowledged as f64 * 100.0 / total as f64
         };
@@ -100,7 +121,8 @@ impl<'a, W: Write> TextProgress<'a, W> {
         let suffix = if self.is_tty { "" } else { "\n" };
         write!(
             self.writer,
-            "{prefix}Transferring {acknowledged}/{total} bytes ({percentage:.1}%) at {rate} B/s; elapsed {:.1}s; ETA {eta}{suffix}",
+            "{prefix}{} {acknowledged}/{total} bytes ({percentage:.1}%) at {rate} B/s; elapsed {:.1}s; ETA {eta}{suffix}",
+            self.activity,
             elapsed_ms as f64 / 1_000.0
         )?;
         self.line_active = self.is_tty;

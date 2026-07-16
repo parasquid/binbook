@@ -28,6 +28,82 @@ fn diag_hello_response_has_all_required_fields() {
     }
 }
 
+#[test]
+fn diag_transfer_limits_report_real_legacy_rx_capacity_without_bulk_advertisement() {
+    use binbook_diagnostic_protocol::{
+        decode_transfer_limits, FrameHeader, FrameKind, Opcode, Status, CAP_STORAGE_BULK_V1,
+        CAP_STORAGE_TRANSFER_LIMITS, CAP_STORAGE_TRANSFER_METRICS, MAX_FRAME_BYTES,
+    };
+
+    let header = FrameHeader {
+        kind: FrameKind::Request,
+        opcode: Opcode::StoreTransferLimits,
+        status: Status::Ok,
+        sequence: 42,
+        payload_len: 0,
+    };
+    let mut ctx = binbook_fw::diag::CommandContext::new(0, 0, 0, 0);
+    let mut response = [0; 64];
+    let mut storage = binbook_fw::diag_storage::UnavailableStorage;
+    let result =
+        binbook_fw::diag::dispatch_command(header, &[], &mut ctx, &mut response, &mut storage);
+    let binbook_fw::diag::DispatchResult::Response {
+        status: Status::Ok,
+        payload_len,
+    } = result
+    else {
+        panic!("unexpected limits result {result:?}");
+    };
+    let limits = decode_transfer_limits(&response[..payload_len]).unwrap();
+    assert_eq!(
+        limits.flags,
+        if cfg!(feature = "bulk-transfer-runtime") {
+            binbook_diagnostic_protocol::TRANSFER_LIMIT_FLAGS
+        } else {
+            0
+        }
+    );
+    assert_eq!(
+        limits.bulk_slots,
+        if cfg!(feature = "bulk-transfer-runtime") {
+            2
+        } else {
+            0
+        }
+    );
+    assert_eq!(limits.rx_capacity_bytes, (MAX_FRAME_BYTES * 2) as u16);
+    assert_ne!(
+        binbook_diagnostic_protocol::ALL_CAPABILITIES & CAP_STORAGE_TRANSFER_LIMITS,
+        0
+    );
+    assert_ne!(
+        binbook_diagnostic_protocol::ALL_CAPABILITIES & CAP_STORAGE_TRANSFER_METRICS,
+        0
+    );
+    assert_eq!(
+        binbook_diagnostic_protocol::ALL_CAPABILITIES & CAP_STORAGE_BULK_V1,
+        0
+    );
+
+    let invalid = binbook_fw::diag::dispatch_command(
+        FrameHeader {
+            payload_len: 1,
+            ..header
+        },
+        &[0],
+        &mut ctx,
+        &mut response,
+        &mut storage,
+    );
+    assert_eq!(
+        invalid,
+        binbook_fw::diag::DispatchResult::Response {
+            status: Status::BadRequest,
+            payload_len: 0
+        }
+    );
+}
+
 #[cfg(feature = "diagnostic-console")]
 #[test]
 fn diag_status_response_uses_live_state_without_truncation() {

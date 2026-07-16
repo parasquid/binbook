@@ -439,7 +439,7 @@ git commit -m "feat(binbook-fw): storage upload (stateless in-order, crc-verify,
 
 ```bash
 git add crates/binbook
-git commit -m "feat(binbook): diag storage upload/list/delete/read CLI with pipelining"
+git commit -m "feat(binbook): storage upload/list/delete/read CLI with pipelining"
 ```
 
 ---
@@ -455,7 +455,7 @@ hardware with serial + (for the bridge to C) webcam. Capture the full transcript
 - [ ] **Step 2: Empty list** — `binbook diag storage list --device sd` → assert
   an empty entry list (proves `StoreList` works on an empty dir, not a no-op).
 
-- [ ] **Step 3: Upload** — `binbook diag storage upload target/debug/.../nav_probe.binbook`
+- [ ] **Step 3: Upload** — `binbook upload --file target/debug/.../nav_probe.binbook`
   (or the committed fixture path) → `StoreUploadCommit` returns `result=Ok`.
 
 - [ ] **Step 4: List shows it** — `storage list` → exactly one entry

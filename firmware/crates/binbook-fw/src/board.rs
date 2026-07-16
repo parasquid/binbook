@@ -5,6 +5,25 @@ use embedded_hal::{
 
 use crate::error::FirmwareError;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpiFrequencyState {
+    applied_hz: u32,
+}
+
+impl SpiFrequencyState {
+    pub const fn new(applied_hz: u32) -> Self {
+        Self { applied_hz }
+    }
+
+    pub fn needs_apply(&self, requested_hz: u32) -> bool {
+        self.applied_hz != requested_hz
+    }
+
+    pub fn mark_applied(&mut self, applied_hz: u32) {
+        self.applied_hz = applied_hz;
+    }
+}
+
 pub struct BoardSpiDevice<BUS, CS> {
     bus: BUS,
     chip_select: CS,
@@ -96,12 +115,13 @@ mod shared_spi {
     use esp_hal::time::Rate;
     use esp_hal::Blocking;
 
-    use crate::error::FirmwareError;
+    use crate::{board::SpiFrequencyState, error::FirmwareError};
 
     /// Shared SPI2 bus, wrapped in a `RefCell` so that both the display and SD
     /// tasks can share the same hardware peripheral without moving it.
     pub struct SharedSpi2 {
         bus: RefCell<Spi<'static, Blocking>>,
+        frequency: RefCell<SpiFrequencyState>,
     }
 
     impl SharedSpi2 {
@@ -126,6 +146,7 @@ mod shared_spi {
             .with_miso(gpio7);
             Self {
                 bus: RefCell::new(spi),
+                frequency: RefCell::new(SpiFrequencyState::new(20_000_000)),
             }
         }
     }
@@ -159,12 +180,17 @@ mod shared_spi {
     impl<'a, CS: OutputPin> SpiDevice<u8> for FreqManagedSpiDevice<'a, CS> {
         fn transaction(&mut self, operations: &mut [Operation<'_, u8>]) -> Result<(), Self::Error> {
             let mut bus = self.shared.bus.borrow_mut();
-            bus.apply_config(
-                &SpiConfig::default()
-                    .with_frequency(Rate::from_hz(self.freq_hz))
-                    .with_mode(Mode::_0),
-            )
-            .map_err(|_| FirmwareError::Spi)?;
+            let mut frequency = self.shared.frequency.borrow_mut();
+            if frequency.needs_apply(self.freq_hz) {
+                bus.apply_config(
+                    &SpiConfig::default()
+                        .with_frequency(Rate::from_hz(self.freq_hz))
+                        .with_mode(Mode::_0),
+                )
+                .map_err(|_| FirmwareError::Spi)?;
+                frequency.mark_applied(self.freq_hz);
+            }
+            drop(frequency);
             self.cs.set_low().map_err(|_| FirmwareError::Gpio)?;
             let result = operations
                 .iter_mut()

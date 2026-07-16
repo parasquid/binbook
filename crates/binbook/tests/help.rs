@@ -53,12 +53,132 @@ fn upload_help_exposes_progress_integrity_and_destination_options() {
             "--name",
             "--path",
             "--progress",
+            "--transfer-mode",
+            "--window",
             "--no-wait-library",
             "--json",
+            "--transfer-report",
         ] {
             assert!(text.contains(option), "missing {option}: {text}");
         }
     }
+}
+
+#[cfg(feature = "serial-device")]
+#[test]
+fn upload_transfer_mode_and_window_parse_explicit_bulk_and_legacy_controls() {
+    use binbook::{Cli, Commands, RequestedTransferMode, RequestedTransferWindow};
+    use clap::Parser;
+
+    let cli = Cli::try_parse_from([
+        "binbook",
+        "upload",
+        "--port",
+        "fake",
+        "--file",
+        "book.binbook",
+        "--transfer-mode",
+        "bulk",
+        "--window",
+        "4",
+    ])
+    .unwrap();
+    let Commands::Upload(args) = cli.command else {
+        panic!("expected upload")
+    };
+    assert_eq!(args.transfer_mode, RequestedTransferMode::Bulk);
+    assert_eq!(args.window, RequestedTransferWindow::Four);
+
+    let cli = Cli::try_parse_from([
+        "binbook",
+        "upload",
+        "--port",
+        "fake",
+        "--file",
+        "book.binbook",
+        "--transfer-mode",
+        "legacy",
+        "--window",
+        "1",
+    ])
+    .unwrap();
+    let Commands::Upload(args) = cli.command else {
+        panic!("expected upload")
+    };
+    assert_eq!(args.transfer_mode, RequestedTransferMode::Legacy);
+    assert_eq!(args.window, RequestedTransferWindow::One);
+}
+
+#[cfg(feature = "serial-device")]
+#[test]
+fn read_help_exposes_bulk_controls_and_range_reads_reject_transfer_only_flags() {
+    use binbook::Cli;
+    use clap::Parser;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_binbook"))
+        .args(["diag", "storage", "read", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    for option in [
+        "--progress",
+        "--transfer-mode",
+        "--window",
+        "--transfer-report",
+    ] {
+        assert!(text.contains(option), "missing {option}: {text}");
+    }
+
+    assert!(Cli::try_parse_from([
+        "binbook",
+        "diag",
+        "storage",
+        "read",
+        "--port",
+        "fake",
+        "--path",
+        "book.binbook",
+        "--output",
+        "out.binbook",
+        "--offset",
+        "1",
+    ])
+    .is_ok());
+    assert!(Cli::try_parse_from([
+        "binbook",
+        "diag",
+        "storage",
+        "read",
+        "--port",
+        "fake",
+        "--path",
+        "book.binbook",
+        "--output",
+        "out.binbook",
+        "--offset",
+        "1",
+        "--transfer-mode",
+        "bulk",
+    ])
+    .is_err());
+    assert!(Cli::try_parse_from([
+        "binbook",
+        "diag",
+        "storage",
+        "read",
+        "--port",
+        "fake",
+        "--path",
+        "book.binbook",
+        "--output",
+        "out.binbook",
+        "--offset",
+        "1",
+        "--transfer-report",
+        "report.json",
+    ])
+    .is_err());
 }
 
 #[test]

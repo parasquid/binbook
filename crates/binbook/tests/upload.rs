@@ -638,8 +638,8 @@ fn non_tty_progress_is_stable_and_reports_rate_elapsed_and_eta() {
     let text = String::from_utf8(output).unwrap();
     assert_eq!(
         text,
-        "Preparing fixture.binbook (8000 bytes)\n\
-Transferring 4000/8000 bytes (50.0%) at 2000 B/s; elapsed 2.0s; ETA 2.0s\n\
+        "Preparing storage for fixture.binbook (8000 bytes)\n\
+Uploading 4000/8000 bytes (50.0%) at 2000 B/s; elapsed 2.0s; ETA 2.0s\n\
 Verifying CRC32\n\
 Updating library\n"
     );
@@ -665,8 +665,8 @@ fn tty_progress_updates_one_line_and_zero_duration_is_safe() {
     progress.report(ProgressEvent::Verifying);
 
     let text = String::from_utf8(output).unwrap();
-    assert!(text.contains("\rTransferring 1/2 bytes (50.0%) at 0 B/s; elapsed 0.0s; ETA unknown"));
-    assert!(text.contains("\rTransferring 2/2 bytes (99.9%) at 0 B/s; elapsed 0.0s; ETA 0.0s"));
+    assert!(text.contains("\rUploading 1/2 bytes (50.0%) at 0 B/s; elapsed 0.0s; ETA unknown"));
+    assert!(text.contains("\rUploading 2/2 bytes (100.0%) at 0 B/s; elapsed 0.0s; ETA 0.0s"));
     assert!(text.ends_with("\nVerifying CRC32\n"));
 }
 

@@ -1,16 +1,31 @@
 use crate::{ProtocolError, FRAME_DELIMITER};
 
+const CRC16_TABLE: [u16; 256] = make_crc16_table();
+
+const fn make_crc16_table() -> [u16; 256] {
+    let mut table = [0; 256];
+    let mut index = 0;
+    while index < table.len() {
+        let mut value = (index as u16) << 8;
+        let mut bit = 0;
+        while bit < 8 {
+            value = if value & 0x8000 != 0 {
+                (value << 1) ^ 0x1021
+            } else {
+                value << 1
+            };
+            bit += 1;
+        }
+        table[index] = value;
+        index += 1;
+    }
+    table
+}
+
 pub fn crc16_ccitt_false(data: &[u8]) -> u16 {
     let mut crc: u16 = 0xFFFF;
     for &byte in data {
-        crc ^= (byte as u16) << 8;
-        for _ in 0..8 {
-            if crc & 0x8000 != 0 {
-                crc = (crc << 1) ^ 0x1021;
-            } else {
-                crc <<= 1;
-            }
-        }
+        crc = (crc << 8) ^ CRC16_TABLE[usize::from((crc >> 8) ^ u16::from(byte))];
     }
     crc
 }
@@ -95,5 +110,35 @@ pub fn cobs_decode(input: &[u8], output: &mut [u8]) -> Result<usize, ProtocolErr
         }
     }
 
+    Ok(write_pos)
+}
+
+pub fn cobs_decode_in_place(buffer: &mut [u8], input_len: usize) -> Result<usize, ProtocolError> {
+    if input_len == 0 || input_len > buffer.len() || buffer[input_len - 1] != FRAME_DELIMITER {
+        return Err(ProtocolError::BadCobs);
+    }
+
+    let mut read_pos = 0;
+    let mut write_pos = 0;
+    while read_pos < input_len - 1 {
+        let code = usize::from(buffer[read_pos]);
+        read_pos += 1;
+        if code == 0 {
+            return Err(ProtocolError::BadCobs);
+        }
+        let end = read_pos + code - 1;
+        if end > input_len - 1 {
+            return Err(ProtocolError::BadCobs);
+        }
+        while read_pos < end {
+            buffer[write_pos] = buffer[read_pos];
+            write_pos += 1;
+            read_pos += 1;
+        }
+        if code < 0xff && read_pos < input_len - 1 {
+            buffer[write_pos] = 0;
+            write_pos += 1;
+        }
+    }
     Ok(write_pos)
 }

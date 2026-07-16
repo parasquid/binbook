@@ -78,6 +78,36 @@ pub struct UploadArgs {
     pub no_wait_library: bool,
     #[arg(long)]
     pub json: bool,
+    /// Atomically write a machine-readable transfer evidence report
+    #[arg(long)]
+    pub transfer_report: Option<PathBuf>,
+    /// Capture every physical SD write transaction to JSON (diagnostic firmware only)
+    #[arg(long)]
+    pub sd_write_trace: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = RequestedTransferMode::Auto)]
+    pub transfer_mode: RequestedTransferMode,
+    #[arg(long, value_enum, default_value_t = RequestedTransferWindow::Auto)]
+    pub window: RequestedTransferWindow,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum RequestedTransferMode {
+    Auto,
+    Legacy,
+    Bulk,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum RequestedTransferWindow {
+    Auto,
+    #[value(name = "1")]
+    One,
+    #[value(name = "2")]
+    Two,
+    #[value(name = "4")]
+    Four,
+    #[value(name = "8")]
+    Eight,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -325,6 +355,15 @@ pub enum StorageCommand {
         offset: Option<u32>,
         #[arg(long)]
         max_bytes: Option<u32>,
+        #[arg(long, value_enum, conflicts_with_all = ["offset", "max_bytes"])]
+        progress: Option<ProgressMode>,
+        #[arg(long, value_enum, default_value_t = RequestedTransferMode::Auto, conflicts_with_all = ["offset", "max_bytes"])]
+        transfer_mode: RequestedTransferMode,
+        #[arg(long, value_enum, default_value_t = RequestedTransferWindow::Auto, conflicts_with_all = ["offset", "max_bytes"])]
+        window: RequestedTransferWindow,
+        /// Atomically write a machine-readable transfer evidence report
+        #[arg(long, conflicts_with_all = ["offset", "max_bytes"])]
+        transfer_report: Option<std::path::PathBuf>,
     },
     /// Delete a file from a storage backend
     Delete {

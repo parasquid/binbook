@@ -56,16 +56,24 @@ pub(super) async fn mounted_storage_owner_task(
         STORAGE_QUEUE_CAPACITY,
     >,
 ) {
-    let storage = match filesystem.into_owned_mount() {
+    static MOUNTED_SCRATCH: static_cell::StaticCell<embedded_sd_storage::MountedScratch> =
+        static_cell::StaticCell::new();
+    let scratch = MOUNTED_SCRATCH.init(core::array::from_fn(|_| embedded_sd_storage::Block::new()));
+    let storage = match filesystem.into_owned_mount(scratch) {
         Ok(storage) => storage,
-        Err(_) => {
+        Err(error) => {
+            let detail = match error {
+                binbook_fw::storage::SdError::NoCard => 1,
+                binbook_fw::storage::SdError::Sdmmc => 2,
+                binbook_fw::storage::SdError::NotFound => 3,
+            };
             super::RUNTIME_EVENT_CHANNEL
                 .send(binbook_fw::runtime_engine::RuntimeEvent {
                     timestamp_ms: embassy_time::Instant::now().as_millis(),
                     kind: binbook_fw::runtime_engine::RuntimeEventKind::StorageOwnerProbe {
                         phase: 20,
                         status: 1,
-                        elapsed_ms: 0,
+                        elapsed_ms: detail,
                     },
                 })
                 .await;
@@ -141,6 +149,24 @@ pub(super) async fn mounted_storage_owner_task(
 }
 
 fn record_phase(phase: StorageOwnerPhase) {
+    #[cfg(feature = "diagnostic-console")]
+    match phase {
+        StorageOwnerPhase::Executing { client, .. } => super::SD_CAPTURE_OWNER_CLIENT.store(
+            match client {
+                StorageClient::Reader => 1,
+                StorageClient::State => 2,
+                StorageClient::Diagnostic => 3,
+                StorageClient::Library => 4,
+            },
+            portable_atomic::Ordering::Relaxed,
+        ),
+        StorageOwnerPhase::Completed { .. } => {
+            super::SD_CAPTURE_OWNER_CLIENT.store(0, portable_atomic::Ordering::Relaxed)
+        }
+        StorageOwnerPhase::Queued { .. } => {}
+    }
+    #[cfg(feature = "diagnostic-console")]
+    record_transfer_timing(phase);
     let (kind, client, sequence) = match phase {
         StorageOwnerPhase::Queued { client, sequence } => (1, client, sequence),
         StorageOwnerPhase::Executing { client, sequence } => (2, client, sequence),
@@ -156,6 +182,38 @@ fn record_phase(phase: StorageOwnerPhase) {
         (kind << 30) | (client << 28) | (sequence & 0x0fff_ffff),
         portable_atomic::Ordering::Relaxed,
     );
+}
+
+#[cfg(feature = "diagnostic-console")]
+fn record_transfer_timing(phase: StorageOwnerPhase) {
+    use binbook_fw::transfer_owner_timing::{OwnerTimingEvent, OwnerTimingPhase};
+
+    let (client, sequence, phase) = match phase {
+        StorageOwnerPhase::Queued { client, sequence } => {
+            (client, sequence, OwnerTimingPhase::Queued)
+        }
+        StorageOwnerPhase::Executing { client, sequence } => {
+            (client, sequence, OwnerTimingPhase::Executing)
+        }
+        StorageOwnerPhase::Completed { client, sequence } => {
+            (client, sequence, OwnerTimingPhase::Completed)
+        }
+    };
+    if client != StorageClient::Diagnostic {
+        return;
+    }
+    if super::TRANSFER_OWNER_TIMING_CHANNEL
+        .sender()
+        .try_send(OwnerTimingEvent {
+            client,
+            sequence,
+            phase,
+            timestamp_us: embassy_time::Instant::now().as_micros(),
+        })
+        .is_err()
+    {
+        super::TRANSFER_OWNER_TIMING_DROPS.fetch_add(1, portable_atomic::Ordering::Relaxed);
+    }
 }
 
 async fn route(response: OwnedResponse<'static>) {

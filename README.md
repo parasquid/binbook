@@ -40,18 +40,25 @@ and library publication waiting:
 
 ```bash
 target/debug/binbook upload --port "$PORT" --file book.binbook \
-  --progress auto
+  --transfer-mode auto --window auto --progress auto \
+  --transfer-report upload-report.json
 ```
 
 Use `--progress always|auto|never`, `--json` for a machine-readable final
 summary, and `--no-wait-library` when publication does not need to be observed.
+Use `--transfer-mode legacy` for compatibility measurements; forced `bulk`
+fails unless firmware advertises the capability. `--window auto|1|2|4|8`
+requests a bound that firmware may clamp. Progress and report bytes advance
+from validated durable acknowledgements, not serial writes.
 On failure after an upload begins, the command attempts device-side abort and
 reports whether cleanup was independently confirmed. Full verification can
 stream the stored bytes back without buffering the book in host memory:
 
 ```bash
 target/debug/binbook diag storage read --port "$PORT" \
-  --path book.binbook --output device-readback.binbook
+  --path book.binbook --output device-readback.binbook \
+  --transfer-mode auto --window auto --progress auto \
+  --transfer-report readback-report.json
 cmp book.binbook device-readback.binbook
 ```
 

@@ -4,6 +4,59 @@ use binbook_diagnostic_protocol::MAX_FRAME_BYTES;
 use binbook_fw::diag::SerialState;
 
 #[test]
+fn response_is_encoded_directly_into_persistent_tx_storage() {
+    use binbook_diagnostic_protocol::{decode_frame, FrameHeader, FrameKind, Opcode, Status};
+
+    let request = FrameHeader {
+        kind: FrameKind::Request,
+        opcode: Opcode::StoreTransferLimits,
+        status: Status::Ok,
+        sequence: 65534,
+        payload_len: 0,
+    };
+    let payload = [1, 2, 3, 4];
+    let mut state = SerialState::new();
+    state
+        .replace_tx_response(request, Status::Ok, &payload)
+        .unwrap();
+
+    let mut decoded_payload = [0u8; MAX_FRAME_BYTES];
+    let (header, payload_len) = decode_frame(state.pending_tx(), &mut decoded_payload).unwrap();
+    assert_eq!(header.kind, FrameKind::Response);
+    assert_eq!(header.opcode, Opcode::StoreTransferLimits);
+    assert_eq!(header.sequence, 65534);
+    assert_eq!(&decoded_payload[..payload_len], payload);
+}
+
+#[test]
+fn maximum_bulk_event_is_encoded_directly_with_one_delimiter() {
+    use binbook_diagnostic_protocol::{decode_frame, FrameKind, Opcode, Status, FRAME_DELIMITER};
+
+    let payload = [0xff; 3_596];
+    let mut state = SerialState::new();
+    state
+        .replace_tx_event(Opcode::StoreBulkData, &payload)
+        .unwrap();
+
+    assert_eq!(state.pending_tx().last(), Some(&FRAME_DELIMITER));
+    assert_eq!(
+        state
+            .pending_tx()
+            .iter()
+            .filter(|byte| **byte == FRAME_DELIMITER)
+            .count(),
+        1
+    );
+    let mut decoded = [0u8; MAX_FRAME_BYTES];
+    let (header, payload_len) = decode_frame(state.pending_tx(), &mut decoded).unwrap();
+    assert_eq!(header.kind, FrameKind::Event);
+    assert_eq!(header.opcode, Opcode::StoreBulkData);
+    assert_eq!(header.status, Status::Ok);
+    assert_eq!(header.sequence, 0);
+    assert_eq!(&decoded[..payload_len], payload);
+}
+
+#[test]
 fn diag_serial_keeps_partial_frame_until_delimiter() {
     use binbook_diagnostic_protocol::{
         encode_frame, FrameHeader, FrameKind, Opcode, Status, MAX_FRAME_BYTES,
@@ -60,6 +113,7 @@ fn maximum_frame_in_64_byte_fragments_dispatches_only_after_delimiter() {
 }
 
 #[test]
+#[cfg(not(feature = "usb-rx-isr-buffer"))]
 fn two_maximum_frames_fill_existing_ring_without_drop_or_reorder() {
     let mut first = vec![1u8; MAX_FRAME_BYTES];
     first[MAX_FRAME_BYTES - 1] = 0;
@@ -82,6 +136,18 @@ fn two_maximum_frames_fill_existing_ring_without_drop_or_reorder() {
     assert_eq!(serial.next_frame(&mut decoded), Some(MAX_FRAME_BYTES));
     assert_eq!(decoded, second.as_slice());
     assert_eq!(serial.protocol_error_count(), 0);
+}
+
+#[test]
+fn explicit_rx_overflow_discards_until_delimiter_then_recovers() {
+    let mut serial = binbook_fw::diag::SerialState::new();
+    serial.feed_rx(&[1, 2, 3]);
+    serial.note_rx_overflow();
+    assert_eq!(serial.protocol_error_count(), 1);
+    serial.feed_rx(&[4, 5, 0, 7, 0]);
+    let mut decoded = [0; MAX_FRAME_BYTES];
+    assert_eq!(serial.next_frame(&mut decoded), Some(2));
+    assert_eq!(&decoded[..2], &[7, 0]);
 }
 
 #[test]

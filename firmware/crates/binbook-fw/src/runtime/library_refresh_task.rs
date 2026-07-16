@@ -1,8 +1,10 @@
 use binbook_fw::{
-    library::Library,
-    library_index_save::{LibraryIndexSaveClient, LibraryIndexSaveUpdate},
-    library_refresh::{LibraryRefreshClient, LibraryRefreshUpdate},
-    storage_owner::{BufferLease, BufferSlot, OwnedRequest, Request, SCAN_BATCH_BYTES},
+    library::{LibraryIndexSlot, LibraryStatus},
+    library_external_sort::LibraryRefreshWorkspace,
+    library_index_select::{LibraryIndexSelectClient, LibraryIndexSelectUpdate},
+    library_publication::{LibraryPublicationClient, LibraryPublicationUpdate},
+    library_run_generation::{LibraryRunGenerationClient, LibraryRunGenerationUpdate},
+    storage_owner::{BufferLease, BufferSlot, OwnedRequest, Request, MAX_BOUNDED_IO_BYTES},
 };
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
@@ -21,153 +23,230 @@ use super::{
 
 #[embassy_executor::task]
 pub(super) async fn library_refresh_task(
-    refresh: &'static mut Library,
+    workspace: &'static mut LibraryRefreshWorkspace,
     trigger: Receiver<'static, CriticalSectionRawMutex, LibraryRefreshTrigger, 1>,
     completion: Sender<'static, CriticalSectionRawMutex, LibraryRefreshCompletion, 1>,
 ) {
-    static BUFFER: StaticCell<[u8; SCAN_BATCH_BYTES]> = StaticCell::new();
-    let mut buffer: Option<&'static mut [u8]> = Some(BUFFER.init([0; SCAN_BATCH_BYTES]));
+    static BUFFER: StaticCell<[u8; MAX_BOUNDED_IO_BYTES as usize]> = StaticCell::new();
+    let mut buffer: Option<&'static mut [u8]> =
+        Some(BUFFER.init([0; MAX_BOUNDED_IO_BYTES as usize]));
     let mut sequence = 1u32;
+    probe_refresh_phase(40, 0, 0);
     loop {
         let trigger = trigger.receive().await;
+        probe_refresh_phase(41, trigger.prefetch.len() as u8, sequence);
         let started = embassy_time::Instant::now().as_millis();
-        let (mut client, mut request) =
-            LibraryRefreshClient::begin_with_prefetch(refresh, &trigger.prefetch, sequence)
-                .expect("viewport prefetch names are already protocol-bounded");
+        let (mut generation, mut request) =
+            LibraryRunGenerationClient::begin(workspace, &trigger.prefetch, sequence)
+                .expect("fresh workspace and bounded prefetch names");
         let status = loop {
-            let needs_buffer = matches!(request.request, Request::ScanStep { .. });
-            #[cfg(feature = "mounted-storage-owner")]
-            let request_code = refresh_request_code(&request.request);
-            let lease = if needs_buffer {
-                Some(BufferLease::new(
-                    BufferSlot::LibraryIndex,
-                    buffer.take().expect("refresh buffer must be returned"),
-                ))
-            } else {
-                None
-            };
-            STORAGE_REQUEST_CHANNEL
-                .send(OwnedRequest {
-                    envelope: request,
-                    buffer: lease,
-                })
-                .await;
-            let response = STORAGE_LIBRARY_RESPONSE_CHANNEL.receive().await;
-            if let Some(lease) = response.buffer {
-                buffer = Some(lease.into_bytes());
-            }
-            let batch = needs_buffer.then(|| {
-                &buffer
-                    .as_deref()
-                    .expect("refresh response must return its buffer")[..]
-            });
-            #[cfg(feature = "mounted-storage-owner")]
-            if let Err(error) = response.envelope.response {
-                probe_refresh_failure(request_code, error).await;
-            }
-            match client.accept(response.envelope, batch) {
-                Ok(LibraryRefreshUpdate::Request(next)) => {
-                    let continuing_scan = matches!(next.request, Request::ScanStep { .. });
+            probe_refresh_phase(42, refresh_request_code(&request.request), sequence);
+            let needs_buffer = request_needs_buffer(&request.request);
+            let response = execute_library_request(request, needs_buffer, &mut buffer).await;
+            let bytes = needs_buffer.then(|| buffer.as_deref_mut().unwrap());
+            match generation.accept(response, bytes) {
+                Ok(LibraryRunGenerationUpdate::Request(next)) => {
+                    let should_yield = matches!(
+                        next.request,
+                        Request::ScanStep { .. } | Request::LibraryScratchWrite { .. }
+                    );
                     request = next;
-                    if continuing_scan {
+                    if should_yield {
                         embassy_time::Timer::after_millis(10).await;
                     }
                 }
-                Ok(LibraryRefreshUpdate::Complete(status)) => break status,
+                Ok(LibraryRunGenerationUpdate::Complete(status)) => break status,
                 Err(_) => {
-                    if let Some(cancel) = client.cancel() {
-                        STORAGE_REQUEST_CHANNEL
-                            .send(OwnedRequest {
-                                envelope: cancel,
-                                buffer: None,
-                            })
-                            .await;
-                        let cancelled = STORAGE_LIBRARY_RESPONSE_CHANNEL.receive().await;
-                        let _ = client.accept(cancelled.envelope, None);
+                    let mut cleanup = generation.cleanup(LibraryStatus::CardError);
+                    let mut cleaned_status = LibraryStatus::CardError;
+                    while let Some(cleanup_request) = cleanup {
+                        let needs_buffer = request_needs_buffer(&cleanup_request.request);
+                        let response =
+                            execute_library_request(cleanup_request, needs_buffer, &mut buffer)
+                                .await;
+                        let bytes = needs_buffer.then(|| buffer.as_deref_mut().unwrap());
+                        match generation.accept(response, bytes) {
+                            Ok(LibraryRunGenerationUpdate::Request(next)) => cleanup = Some(next),
+                            Ok(LibraryRunGenerationUpdate::Complete(value)) => {
+                                cleaned_status = value;
+                                cleanup = None;
+                            }
+                            Err(_) => cleanup = None,
+                        }
                     }
-                    break binbook_fw::library::LibraryStatus::CardError;
+                    break cleaned_status;
                 }
             }
         };
-        drop(client);
-        if status == binbook_fw::library::LibraryStatus::Ready {
-            let (mut save, mut request) =
-                LibraryIndexSaveClient::begin(refresh, sequence.wrapping_add(32));
-            loop {
-                let needs_buffer = matches!(request.request, Request::UploadWrite { .. });
-                #[cfg(feature = "mounted-storage-owner")]
-                let request_code = refresh_request_code(&request.request);
-                let lease = if needs_buffer {
-                    Some(BufferLease::new(
-                        BufferSlot::LibraryIndex,
-                        buffer.take().expect("index-save buffer must be returned"),
-                    ))
-                } else {
-                    None
-                };
-                STORAGE_REQUEST_CHANNEL
-                    .send(OwnedRequest {
-                        envelope: request,
-                        buffer: lease,
-                    })
-                    .await;
-                let response = STORAGE_LIBRARY_RESPONSE_CHANNEL.receive().await;
-                if let Some(lease) = response.buffer {
-                    buffer = Some(lease.into_bytes());
+        drop(generation);
+        probe_refresh_phase(43, status.code(), workspace.entry_count() as u32);
+
+        let mut publication = None;
+        if matches!(status, LibraryStatus::Ready | LibraryStatus::NoBooks) {
+            let (mut selector, mut request) =
+                LibraryIndexSelectClient::begin(sequence.wrapping_add(1_000));
+            let selected = loop {
+                let needs_buffer = request_needs_buffer(&request.request);
+                let response = execute_library_request(request, needs_buffer, &mut buffer).await;
+                let bytes = needs_buffer.then(|| &buffer.as_deref().unwrap()[..]);
+                match selector.accept(response, bytes) {
+                    Ok(LibraryIndexSelectUpdate::Request(next)) => request = next,
+                    Ok(LibraryIndexSelectUpdate::Complete(cursor)) => break cursor,
+                    Err(_) => break None,
                 }
-                let save_buffer = buffer
-                    .as_deref_mut()
-                    .expect("index-save buffer must be locally available");
-                #[cfg(feature = "mounted-storage-owner")]
-                if let Err(error) = response.envelope.response {
-                    probe_index_save_failure(
-                        request_code,
-                        match error {
-                            binbook_fw::storage_owner::CompletionError::Request(_) => 1,
-                            binbook_fw::storage_owner::CompletionError::Backend => 2,
-                            binbook_fw::storage_owner::CompletionError::BufferUnavailable => 3,
-                        },
-                    )
-                    .await;
+            };
+            drop(selector);
+            let (slot, generation_number) = match selected {
+                Some(cursor) => {
+                    let slot = if cursor.slot() == LibraryIndexSlot::A {
+                        LibraryIndexSlot::B
+                    } else {
+                        LibraryIndexSlot::A
+                    };
+                    (slot, cursor.generation().wrapping_add(1).max(1))
                 }
-                match save.accept(response.envelope, save_buffer) {
-                    Ok(LibraryIndexSaveUpdate::Request(next)) => {
-                        let continuing_write = matches!(next.request, Request::UploadWrite { .. });
-                        request = next;
-                        if continuing_write {
-                            embassy_time::Timer::after_millis(10).await;
+                None => (LibraryIndexSlot::A, 1),
+            };
+            if let Ok((mut publisher, mut request)) = LibraryPublicationClient::begin(
+                workspace,
+                slot,
+                generation_number,
+                sequence.wrapping_add(2_000),
+            ) {
+                loop {
+                    let needs_buffer = request_needs_buffer(&request.request);
+                    let response =
+                        execute_library_request(request, needs_buffer, &mut buffer).await;
+                    let bytes = needs_buffer.then(|| buffer.as_deref_mut().unwrap());
+                    match publisher.accept(response, bytes) {
+                        Ok(LibraryPublicationUpdate::Request(next)) => {
+                            let should_yield = matches!(
+                                next.request,
+                                Request::LibraryScratchRead { .. }
+                                    | Request::UploadWrite { .. }
+                                    | Request::Read { .. }
+                            );
+                            request = next;
+                            if should_yield {
+                                embassy_time::Timer::after_millis(10).await;
+                            }
                         }
-                    }
-                    Ok(LibraryIndexSaveUpdate::Complete) => break,
-                    Err(_) => {
-                        #[cfg(feature = "mounted-storage-owner")]
-                        probe_index_save_failure(0, 4).await;
-                        break;
+                        Ok(LibraryPublicationUpdate::Complete(value)) => {
+                            publication = Some(value);
+                            break;
+                        }
+                        Err(_) => {
+                            let mut cleanup = publisher.cleanup();
+                            while let Some(cleanup_request) = cleanup {
+                                let needs_buffer = request_needs_buffer(&cleanup_request.request);
+                                let response = execute_library_request(
+                                    cleanup_request,
+                                    needs_buffer,
+                                    &mut buffer,
+                                )
+                                .await;
+                                let bytes = needs_buffer.then(|| buffer.as_deref_mut().unwrap());
+                                cleanup = match publisher.accept(response, bytes) {
+                                    Ok(LibraryPublicationUpdate::Request(next)) => Some(next),
+                                    _ => None,
+                                };
+                            }
+                            break;
+                        }
                     }
                 }
             }
         }
         sequence = sequence.wrapping_add(64).max(1);
         let ended = embassy_time::Instant::now().as_millis();
-        let mut prepared = heapless::Vec::new();
-        for entry in refresh.entries() {
-            let (Ok(name), Some(token)) = (
-                binbook_fw::storage_owner::StorageName::new(entry.name.as_str()),
-                entry.mount_token,
-            ) else {
-                continue;
-            };
-            let _ = prepared.push((name, token));
-        }
+        let published_status = publication.as_ref().map_or_else(
+            || {
+                if matches!(status, LibraryStatus::Ready | LibraryStatus::NoBooks) {
+                    LibraryStatus::CardError
+                } else {
+                    status
+                }
+            },
+            |value| value.status,
+        );
         completion
             .send(LibraryRefreshCompletion {
-                status: status.code(),
-                book_count: refresh.entries().len() as u16,
+                status: published_status.code(),
+                book_count: publication.as_ref().map_or(0, |value| value.book_count),
                 elapsed_ms: ended.saturating_sub(started).min(u32::MAX as u64) as u32,
-                prepared,
+                cursor: publication.as_ref().and_then(|value| value.cursor),
+                prepared: publication.map_or_else(heapless::Vec::new, |value| value.prepared),
             })
             .await;
+        #[cfg(feature = "diagnostic-console")]
+        if let Some(trace_id) = trigger.trace_id {
+            if super::TRANSFER_LIBRARY_TIMING_CHANNEL
+                .sender()
+                .try_send(super::TransferLibraryTiming {
+                    trace_id,
+                    elapsed_us: ended
+                        .saturating_sub(started)
+                        .saturating_mul(1_000)
+                        .min(u64::from(u32::MAX)) as u32,
+                })
+                .is_err()
+            {
+                super::TRANSFER_OWNER_TIMING_DROPS.fetch_add(1, portable_atomic::Ordering::Relaxed);
+            }
+        }
     }
+}
+
+#[cfg(feature = "diagnostic-console")]
+fn probe_refresh_phase(phase: u8, status: u8, detail: u32) {
+    use binbook_fw::runtime_engine::{RuntimeEvent, RuntimeEventKind};
+
+    let _ = RUNTIME_EVENT_CHANNEL.try_send(RuntimeEvent {
+        timestamp_ms: embassy_time::Instant::now().as_millis(),
+        kind: RuntimeEventKind::StorageOwnerProbe {
+            phase,
+            status,
+            elapsed_ms: detail,
+        },
+    });
+}
+
+#[cfg(not(feature = "diagnostic-console"))]
+fn probe_refresh_phase(_phase: u8, _status: u8, _detail: u32) {}
+
+fn request_needs_buffer(request: &Request) -> bool {
+    matches!(
+        request,
+        Request::ScanStep { .. }
+            | Request::LibraryScratchWrite { .. }
+            | Request::LibraryScratchRead { .. }
+            | Request::UploadWrite { .. }
+            | Request::Read { .. }
+    )
+}
+
+async fn execute_library_request(
+    request: binbook_fw::storage_owner::RequestEnvelope,
+    needs_buffer: bool,
+    buffer: &mut Option<&'static mut [u8]>,
+) -> binbook_fw::storage_owner::ResponseEnvelope {
+    let lease = needs_buffer.then(|| {
+        BufferLease::new(
+            BufferSlot::LibraryIndex,
+            buffer.take().expect("library buffer must be returned"),
+        )
+    });
+    STORAGE_REQUEST_CHANNEL
+        .send(OwnedRequest {
+            envelope: request,
+            buffer: lease,
+        })
+        .await;
+    let response = STORAGE_LIBRARY_RESPONSE_CHANNEL.receive().await;
+    if let Some(lease) = response.buffer {
+        *buffer = Some(lease.into_bytes());
+    }
+    response.envelope
 }
 
 #[cfg(feature = "mounted-storage-owner")]
@@ -313,6 +392,8 @@ pub(super) async fn library_boot_probe_task(
                                 BufferTooSmall => 23,
                                 RecordIndex => 24,
                                 Status => 25,
+                                Generation => 26,
+                                Ordering => 27,
                             },
                             0,
                         )
@@ -412,7 +493,10 @@ pub(super) async fn library_boot_probe_task(
         }
     }
     LIBRARY_REFRESH_TRIGGER_CHANNEL
-        .send(LibraryRefreshTrigger { prefetch })
+        .send(LibraryRefreshTrigger {
+            trace_id: None,
+            prefetch,
+        })
         .await;
     let completion = LIBRARY_REFRESH_COMPLETION_CHANNEL.receive().await;
     RUNTIME_EVENT_CHANNEL
@@ -426,7 +510,16 @@ pub(super) async fn library_boot_probe_task(
         })
         .await;
     let _ = completion.status;
-    if let Some((name, token)) = completion.prepared.first().cloned() {
+    if let Some((name, token)) = completion.prepared.first().and_then(|prepared| {
+        active
+            .entries()
+            .get(usize::from(prepared.absolute_index).checked_sub(active.start())?)
+            .and_then(|entry| {
+                binbook_fw::storage_owner::StorageName::new(entry.name.as_str())
+                    .ok()
+                    .map(|name| (name, prepared.token))
+            })
+    }) {
         use binbook_fw::owner_book::{OwnerBookOpenClient, OwnerBookOpenUpdate};
         let cached_started = embassy_time::Instant::now().as_millis();
         if let Ok((mut open, mut request)) =

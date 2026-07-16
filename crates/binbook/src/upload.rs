@@ -153,6 +153,7 @@ where
             cleanup_confirmed,
         });
     }
+    progress.report(ProgressEvent::Publishing);
 
     let library_visible = if request.skip_library_wait {
         false

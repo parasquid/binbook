@@ -27,6 +27,7 @@ where
     FileTooFragmented,
     BadUploadOffset,
     UnexpectedEof,
+    UploadJournal,
 }
 
 pub struct FatDirectory;

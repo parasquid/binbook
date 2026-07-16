@@ -10,6 +10,7 @@ use crate::reader_state::{filename_hash, ReaderState};
 pub const MAX_LIBRARY_ENTRIES: usize = 200;
 pub const LIBRARY_VIEWPORT_CAPACITY: usize = 15;
 pub const INDEX_HEADER_SIZE: usize = 16;
+pub const INDEX_V2_HEADER_SIZE: usize = 20;
 pub const INDEX_RECORD_SIZE: usize = 18 + MAX_BINBOOK_NAME_BYTES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,6 +160,16 @@ impl LibraryViewport {
     }
 
     #[cfg(feature = "sd-storage")]
+    pub fn adopt_empty_cursor(&mut self, cursor: LibraryIndexCursor) {
+        debug_assert_eq!(cursor.entry_count(), 0);
+        self.start = 0;
+        self.total = 0;
+        self.entries.clear();
+        self.valid = true;
+        self.cursor = Some(cursor);
+    }
+
+    #[cfg(feature = "sd-storage")]
     pub(crate) fn begin(&mut self, start: usize) {
         self.start = start;
         self.total = 0;
@@ -195,6 +206,28 @@ pub struct RefreshOutcome {
     pub scan_status: LibraryStatus,
     pub adopted: bool,
     pub changed: bool,
+}
+
+#[must_use]
+pub const fn resolve_refreshed_selection(
+    previous_index: usize,
+    matching_index: Option<usize>,
+    new_total: usize,
+) -> Option<usize> {
+    if new_total == 0 {
+        None
+    } else {
+        Some(match matching_index {
+            Some(index) if index < new_total => index,
+            _ => {
+                if previous_index < new_total {
+                    previous_index
+                } else {
+                    new_total - 1
+                }
+            }
+        })
+    }
 }
 
 pub struct IncrementalLibraryScan<'a> {
@@ -288,11 +321,23 @@ pub enum LibraryIndexError {
     Extension,
     FilenameHash,
     DuplicateName,
+    Generation,
+    Ordering,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibraryIndexSlot {
+    A,
+    B,
+    Legacy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LibraryIndexCursor {
     entry_count: u16,
+    header_size: u16,
+    generation: u32,
+    slot: LibraryIndexSlot,
 }
 
 impl LibraryIndexCursor {
@@ -303,7 +348,59 @@ impl LibraryIndexCursor {
         validate_index_header(header, file_len)?;
         Ok(Self {
             entry_count: read_u16(header, 8),
+            header_size: INDEX_HEADER_SIZE as u16,
+            generation: 0,
+            slot: LibraryIndexSlot::Legacy,
         })
+    }
+
+    pub fn from_v2_header(
+        slot: LibraryIndexSlot,
+        header: &[u8; INDEX_V2_HEADER_SIZE],
+        file_len: usize,
+    ) -> Result<Self, LibraryIndexError> {
+        if slot == LibraryIndexSlot::Legacy {
+            return Err(LibraryIndexError::Version);
+        }
+        if &header[..4] != INDEX_MAGIC {
+            return Err(LibraryIndexError::Magic);
+        }
+        if read_u16(header, 4) != 2 {
+            return Err(LibraryIndexError::Version);
+        }
+        if usize::from(read_u16(header, 6)) != INDEX_V2_HEADER_SIZE {
+            return Err(LibraryIndexError::HeaderSize);
+        }
+        if header[10..12] != [0; 2] {
+            return Err(LibraryIndexError::Reserved);
+        }
+        let count = usize::from(read_u16(header, 8));
+        if count > MAX_LIBRARY_ENTRIES {
+            return Err(LibraryIndexError::TooManyEntries);
+        }
+        if file_len != INDEX_V2_HEADER_SIZE + count * INDEX_RECORD_SIZE {
+            return Err(LibraryIndexError::Length);
+        }
+        let generation = read_u32(header, 12);
+        if generation == 0 {
+            return Err(LibraryIndexError::Generation);
+        }
+        Ok(Self {
+            entry_count: count as u16,
+            header_size: INDEX_V2_HEADER_SIZE as u16,
+            generation,
+            slot,
+        })
+    }
+
+    #[must_use]
+    pub const fn slot(self) -> LibraryIndexSlot {
+        self.slot
+    }
+
+    #[must_use]
+    pub const fn generation(self) -> u32 {
+        self.generation
     }
 
     #[must_use]
@@ -311,11 +408,21 @@ impl LibraryIndexCursor {
         self.entry_count as usize
     }
 
+    #[must_use]
+    pub const fn header_size(self) -> usize {
+        self.header_size as usize
+    }
+
+    #[must_use]
+    pub const fn file_len(self) -> usize {
+        self.header_size() + self.entry_count() * INDEX_RECORD_SIZE
+    }
+
     pub fn record_range(self, index: usize) -> Result<Range<usize>, LibraryIndexError> {
         if index >= self.entry_count() {
             return Err(LibraryIndexError::RecordIndex);
         }
-        let start = INDEX_HEADER_SIZE + index * INDEX_RECORD_SIZE;
+        let start = self.header_size as usize + index * INDEX_RECORD_SIZE;
         Ok(start..start + INDEX_RECORD_SIZE)
     }
 
@@ -327,19 +434,76 @@ impl LibraryIndexCursor {
     }
 }
 
+#[must_use]
+pub fn select_library_index_cursor(
+    a: Option<LibraryIndexCursor>,
+    b: Option<LibraryIndexCursor>,
+    legacy: Option<LibraryIndexCursor>,
+) -> Option<LibraryIndexCursor> {
+    match (a, b) {
+        (Some(a), Some(b)) => {
+            let delta = b.generation.wrapping_sub(a.generation);
+            if delta != 0 && delta < 0x8000_0000 {
+                Some(b)
+            } else {
+                Some(a)
+            }
+        }
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => legacy,
+    }
+}
+
+pub fn validate_library_index_bytes(
+    slot: LibraryIndexSlot,
+    bytes: &[u8],
+) -> Result<LibraryIndexCursor, LibraryIndexError> {
+    let cursor = match slot {
+        LibraryIndexSlot::Legacy => {
+            let header: &[u8; INDEX_HEADER_SIZE] = bytes
+                .get(..INDEX_HEADER_SIZE)
+                .and_then(|header| header.try_into().ok())
+                .ok_or(LibraryIndexError::Length)?;
+            LibraryIndexCursor::from_header(header, bytes.len())?
+        }
+        LibraryIndexSlot::A | LibraryIndexSlot::B => {
+            let header: &[u8; INDEX_V2_HEADER_SIZE] = bytes
+                .get(..INDEX_V2_HEADER_SIZE)
+                .and_then(|header| header.try_into().ok())
+                .ok_or(LibraryIndexError::Length)?;
+            LibraryIndexCursor::from_v2_header(slot, header, bytes.len())?
+        }
+    };
+    let header_size = cursor.header_size as usize;
+    let mut validator = LibraryIndexCursorValidator::new(cursor, &bytes[..header_size]);
+    for record in bytes[header_size..].chunks_exact(INDEX_RECORD_SIZE) {
+        validator.push_record(record.try_into().unwrap())?;
+    }
+    validator.finish()?;
+    Ok(cursor)
+}
+
 pub struct LibraryIndexCursorValidator {
     cursor: LibraryIndexCursor,
     next_record: usize,
     stored_crc: u32,
     crc_state: u32,
+    previous_name: Option<String<MAX_BINBOOK_NAME_BYTES>>,
 }
 
 impl LibraryIndexCursorValidator {
     #[must_use]
-    pub fn new(cursor: LibraryIndexCursor, header: &[u8; INDEX_HEADER_SIZE]) -> Self {
+    pub fn new(cursor: LibraryIndexCursor, header: &[u8]) -> Self {
+        debug_assert_eq!(header.len(), cursor.header_size as usize);
+        let crc_offset = if cursor.slot == LibraryIndexSlot::Legacy {
+            INDEX_CRC_OFFSET
+        } else {
+            16
+        };
         let mut crc_state = u32::MAX;
         for (index, byte) in header.iter().copied().enumerate() {
-            let byte = if (INDEX_CRC_OFFSET..INDEX_CRC_OFFSET + 4).contains(&index) {
+            let byte = if (crc_offset..crc_offset + 4).contains(&index) {
                 0
             } else {
                 byte
@@ -349,8 +513,9 @@ impl LibraryIndexCursorValidator {
         Self {
             cursor,
             next_record: 0,
-            stored_crc: read_u32(header, INDEX_CRC_OFFSET),
+            stored_crc: read_u32(header, crc_offset),
             crc_state,
+            previous_name: None,
         }
     }
 
@@ -361,7 +526,17 @@ impl LibraryIndexCursorValidator {
         if self.next_record >= self.cursor.entry_count() {
             return Err(LibraryIndexError::Length);
         }
-        decode_index_entry(record)?;
+        let entry = decode_index_entry(record)?;
+        if let Some(previous) = &self.previous_name {
+            match ascii_casefold_order(previous, &entry.name) {
+                Ordering::Less => {}
+                Ordering::Equal if previous == &entry.name => {
+                    return Err(LibraryIndexError::DuplicateName)
+                }
+                Ordering::Equal | Ordering::Greater => return Err(LibraryIndexError::Ordering),
+            }
+        }
+        self.previous_name = Some(entry.name);
         for byte in record {
             self.crc_state = crate::crc32::update_byte(self.crc_state, *byte);
         }
@@ -553,6 +728,52 @@ impl Library {
         INDEX_HEADER_SIZE + self.entries.len() * INDEX_RECORD_SIZE
     }
 
+    pub fn index_v2_encoded_len(&self) -> usize {
+        INDEX_V2_HEADER_SIZE + self.entries.len() * INDEX_RECORD_SIZE
+    }
+
+    pub fn encode_index_v2(
+        &self,
+        generation: u32,
+        out: &mut [u8],
+    ) -> Result<usize, LibraryIndexError> {
+        let used = self.index_v2_encoded_len();
+        if out.len() < used {
+            return Err(LibraryIndexError::BufferTooSmall);
+        }
+        self.encode_index_v2_header(
+            generation,
+            (&mut out[..INDEX_V2_HEADER_SIZE]).try_into().unwrap(),
+        )?;
+        let mut record = [0; INDEX_RECORD_SIZE];
+        for index in 0..self.entries.len() {
+            let start = INDEX_V2_HEADER_SIZE + index * INDEX_RECORD_SIZE;
+            self.encode_index_record(index, &mut record)?;
+            out[start..start + INDEX_RECORD_SIZE].copy_from_slice(&record);
+        }
+        Ok(used)
+    }
+
+    pub fn encode_index_v2_header(
+        &self,
+        generation: u32,
+        out: &mut [u8; INDEX_V2_HEADER_SIZE],
+    ) -> Result<(), LibraryIndexError> {
+        self.validate_index_status()?;
+        if generation == 0 {
+            return Err(LibraryIndexError::Generation);
+        }
+        fill_index_v2_header(self.entries.len(), generation, out);
+        let mut crc_state = index_crc_update(u32::MAX, out);
+        let mut record = [0; INDEX_RECORD_SIZE];
+        for index in 0..self.entries.len() {
+            self.encode_index_record(index, &mut record)?;
+            crc_state = index_crc_update(crc_state, &record);
+        }
+        out[16..20].copy_from_slice(&(!crc_state).to_le_bytes());
+        Ok(())
+    }
+
     pub fn encode_index(&self, out: &mut [u8]) -> Result<usize, LibraryIndexError> {
         let used = self.index_encoded_len();
         if out.len() < used {
@@ -596,11 +817,7 @@ impl Library {
             .entries
             .get(index)
             .ok_or(LibraryIndexError::RecordIndex)?;
-        out.fill(0);
-        out[0] = entry.name.len() as u8;
-        out[2..10].copy_from_slice(&entry.size.to_le_bytes());
-        out[10..18].copy_from_slice(&entry.filename_hash.to_le_bytes());
-        out[18..18 + entry.name.len()].copy_from_slice(entry.name.as_bytes());
+        encode_index_entry(entry, out);
         Ok(())
     }
 
@@ -706,6 +923,33 @@ fn fill_index_header(count: usize, out: &mut [u8; INDEX_HEADER_SIZE]) {
     out[8..10].copy_from_slice(&(count as u16).to_le_bytes());
 }
 
+fn fill_index_v2_header(count: usize, generation: u32, out: &mut [u8; INDEX_V2_HEADER_SIZE]) {
+    out.fill(0);
+    out[..4].copy_from_slice(INDEX_MAGIC);
+    out[4..6].copy_from_slice(&2u16.to_le_bytes());
+    out[6..8].copy_from_slice(&(INDEX_V2_HEADER_SIZE as u16).to_le_bytes());
+    out[8..10].copy_from_slice(&(count as u16).to_le_bytes());
+    out[12..16].copy_from_slice(&generation.to_le_bytes());
+}
+
+#[cfg(feature = "sd-storage")]
+pub(crate) fn encode_v2_header_fields(
+    count: usize,
+    generation: u32,
+    crc: u32,
+    out: &mut [u8; INDEX_V2_HEADER_SIZE],
+) -> Result<(), LibraryIndexError> {
+    if count > MAX_LIBRARY_ENTRIES {
+        return Err(LibraryIndexError::TooManyEntries);
+    }
+    if generation == 0 {
+        return Err(LibraryIndexError::Generation);
+    }
+    fill_index_v2_header(count, generation, out);
+    out[16..20].copy_from_slice(&crc.to_le_bytes());
+    Ok(())
+}
+
 fn index_crc_update(mut state: u32, data: &[u8]) -> u32 {
     for byte in data {
         let byte = *byte;
@@ -740,7 +984,17 @@ fn validate_index_header(
     Ok(())
 }
 
-fn decode_index_entry(record: &[u8; INDEX_RECORD_SIZE]) -> Result<LibraryEntry, LibraryIndexError> {
+pub(crate) fn encode_index_entry(entry: &LibraryEntry, out: &mut [u8; INDEX_RECORD_SIZE]) {
+    out.fill(0);
+    out[0] = entry.name.len() as u8;
+    out[2..10].copy_from_slice(&entry.size.to_le_bytes());
+    out[10..18].copy_from_slice(&entry.filename_hash.to_le_bytes());
+    out[18..18 + entry.name.len()].copy_from_slice(entry.name.as_bytes());
+}
+
+pub(crate) fn decode_index_entry(
+    record: &[u8; INDEX_RECORD_SIZE],
+) -> Result<LibraryEntry, LibraryIndexError> {
     if record[1] != 0 {
         return Err(LibraryIndexError::Reserved);
     }
@@ -781,7 +1035,7 @@ fn read_u64(data: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap())
 }
 
-fn ascii_casefold_order(left: &str, right: &str) -> Ordering {
+pub(crate) fn ascii_casefold_order(left: &str, right: &str) -> Ordering {
     left.bytes()
         .map(ascii_lower)
         .cmp(right.bytes().map(ascii_lower))

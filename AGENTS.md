@@ -340,6 +340,12 @@ before responding to the user.
 ## Lessons Learned
 
 - Prefer empirical evidence over code analysis when debugging. Add diagnostics and run the code; tracing source files generates hypotheses, running confirms them.
+- Before concluding that a peripheral is missing, disconnected, or unavailable,
+  deploy the smallest firmware that directly initializes and exercises that
+  peripheral. Compare its observable result with the full application, exhaust
+  discriminating software, configuration, reset, power-state, and wiring
+  hypotheses, and declare an external hardware blocker only when the minimal
+  peripheral exercise independently supports that conclusion.
 - When something doesn't work, write a minimal test to confirm your theory rather than spending time analyzing source code. Empirical evidence beats theoretical analysis every time.
 - **Stop going in circles.** If you've been analyzing the same code path for more than two iterations without making a concrete change, you are in a loop. Break out by: (1) adding a diagnostic print, (2) flashing/coding, (3) running the code and observing the actual output. Never theorize about what "might" be wrong when you can test it. A 30-second flash+serial capture gives more signal than 5 minutes of reading source files.
 - When porting struct layouts between languages, verify the packed byte layout matches the encoder exactly. Off-by-N layout mismatches produce plausible-looking but wrong values.

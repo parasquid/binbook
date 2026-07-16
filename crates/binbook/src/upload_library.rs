@@ -1,5 +1,5 @@
 use binbook_diagnostic_protocol::{
-    decode_store_list_count, decode_store_list_entry, encode_store_list_request, Opcode,
+    decode_store_list_count, decode_store_list_entry, encode_store_list_request, Opcode, Status,
     StorageBackend, StoreListRequest, STORE_LIST_ENTRY_HEADER_BYTES,
 };
 
@@ -14,7 +14,7 @@ pub(crate) fn wait_for_library<T: UploadTransport>(
     size: u64,
     sequence: &mut Sequence,
 ) -> Result<bool, UploadError> {
-    for poll in 0..10 {
+    'polls: for poll in 0..10 {
         let mut start_index = 0u16;
         loop {
             let list_sequence = sequence.take();
@@ -25,9 +25,16 @@ pub(crate) fn wait_for_library<T: UploadTransport>(
             let frame = encode_request(list_sequence, Opcode::StoreList, |payload| {
                 encode_store_list_request(&request, payload)
             })?;
-            let response = transport
-                .exchange(&frame, Opcode::StoreList, list_sequence)
-                .map_err(|error| UploadError::LibraryWait(error.to_string()))?;
+            let response = match transport.exchange(&frame, Opcode::StoreList, list_sequence) {
+                Ok(response) => response,
+                Err(error) if is_transient_library_scan_error(&error) => {
+                    if poll != 9 {
+                        transport.wait_library_poll();
+                    }
+                    continue 'polls;
+                }
+                Err(error) => return Err(UploadError::LibraryWait(error.to_string())),
+            };
             let payload = checked_payload(&response, Opcode::StoreList, list_sequence)
                 .map_err(|error| UploadError::LibraryWait(error.to_string()))?;
             let count = decode_store_list_count(&payload)?;
@@ -51,4 +58,15 @@ pub(crate) fn wait_for_library<T: UploadTransport>(
         }
     }
     Ok(false)
+}
+
+pub(crate) fn is_transient_library_scan_error(error: &UploadError) -> bool {
+    matches!(
+        error,
+        UploadError::DeviceStatus {
+            opcode: Opcode::StoreList,
+            status: Status::Error,
+            ..
+        }
+    )
 }

@@ -1,10 +1,205 @@
 #![cfg(feature = "sd-storage")]
 
 use binbook_fw::library::{
+    resolve_refreshed_selection, select_library_index_cursor, validate_library_index_bytes,
     IncrementalLibraryScan, Library, LibraryIndexCursor, LibraryIndexCursorValidator,
-    LibraryIndexDecoder, LibraryIndexError, LibraryStatus, MountFileToken, ScanErrorKind,
-    INDEX_HEADER_SIZE, INDEX_RECORD_SIZE, MAX_LIBRARY_ENTRIES,
+    LibraryIndexDecoder, LibraryIndexError, LibraryIndexSlot, LibraryStatus, MountFileToken,
+    ScanErrorKind, INDEX_HEADER_SIZE, INDEX_RECORD_SIZE, INDEX_V2_HEADER_SIZE, MAX_LIBRARY_ENTRIES,
 };
+
+fn v2_header(count: u16, generation: u32, records: &[u8]) -> [u8; INDEX_V2_HEADER_SIZE] {
+    let mut header = [0u8; INDEX_V2_HEADER_SIZE];
+    header[..4].copy_from_slice(b"BBLI");
+    header[4..6].copy_from_slice(&2u16.to_le_bytes());
+    header[6..8].copy_from_slice(&(INDEX_V2_HEADER_SIZE as u16).to_le_bytes());
+    header[8..10].copy_from_slice(&count.to_le_bytes());
+    header[12..16].copy_from_slice(&generation.to_le_bytes());
+    let mut crc_input = Vec::from(header);
+    crc_input.extend_from_slice(records);
+    let crc = binbook_fw::crc32::iso_hdlc(&crc_input);
+    header[16..20].copy_from_slice(&crc.to_le_bytes());
+    header
+}
+
+#[test]
+fn version_two_header_layout_and_cursor_offsets_are_exact() {
+    let header = v2_header(1, 7, &[0; INDEX_RECORD_SIZE]);
+    assert_eq!(&header[..4], b"BBLI");
+    assert_eq!(&header[4..6], &2u16.to_le_bytes());
+    assert_eq!(&header[6..8], &(INDEX_V2_HEADER_SIZE as u16).to_le_bytes());
+    assert_eq!(&header[8..10], &1u16.to_le_bytes());
+    assert_eq!(&header[10..12], &[0, 0]);
+    assert_eq!(&header[12..16], &7u32.to_le_bytes());
+
+    let cursor = LibraryIndexCursor::from_v2_header(
+        LibraryIndexSlot::B,
+        &header,
+        INDEX_V2_HEADER_SIZE + INDEX_RECORD_SIZE,
+    )
+    .unwrap();
+    assert_eq!(cursor.slot(), LibraryIndexSlot::B);
+    assert_eq!(cursor.generation(), 7);
+    assert_eq!(cursor.entry_count(), 1);
+    assert_eq!(
+        cursor.record_range(0).unwrap(),
+        INDEX_V2_HEADER_SIZE..INDEX_V2_HEADER_SIZE + INDEX_RECORD_SIZE
+    );
+}
+
+#[test]
+fn version_two_rejects_zero_generation_reserved_bytes_and_wrong_length() {
+    let zero = v2_header(0, 0, &[]);
+    assert_eq!(
+        LibraryIndexCursor::from_v2_header(LibraryIndexSlot::A, &zero, INDEX_V2_HEADER_SIZE),
+        Err(LibraryIndexError::Generation)
+    );
+
+    let mut reserved = v2_header(0, 1, &[]);
+    reserved[10] = 1;
+    assert_eq!(
+        LibraryIndexCursor::from_v2_header(LibraryIndexSlot::A, &reserved, INDEX_V2_HEADER_SIZE),
+        Err(LibraryIndexError::Reserved)
+    );
+
+    let header = v2_header(1, 1, &[0; INDEX_RECORD_SIZE]);
+    assert_eq!(
+        LibraryIndexCursor::from_v2_header(
+            LibraryIndexSlot::A,
+            &header,
+            INDEX_V2_HEADER_SIZE + INDEX_RECORD_SIZE - 1
+        ),
+        Err(LibraryIndexError::Length)
+    );
+}
+
+#[test]
+fn slot_selection_is_wrapping_safe_and_deterministic() {
+    let cursor = |slot, generation| {
+        LibraryIndexCursor::from_v2_header(
+            slot,
+            &v2_header(0, generation, &[]),
+            INDEX_V2_HEADER_SIZE,
+        )
+        .unwrap()
+    };
+    let a = cursor(LibraryIndexSlot::A, u32::MAX);
+    let b = cursor(LibraryIndexSlot::B, 1);
+    assert_eq!(select_library_index_cursor(Some(a), Some(b), None), Some(b));
+
+    let a = cursor(LibraryIndexSlot::A, 9);
+    let b = cursor(LibraryIndexSlot::B, 9);
+    assert_eq!(select_library_index_cursor(Some(a), Some(b), None), Some(a));
+
+    let a = cursor(LibraryIndexSlot::A, 1);
+    let b = cursor(LibraryIndexSlot::B, 0x8000_0001);
+    assert_eq!(select_library_index_cursor(Some(a), Some(b), None), Some(a));
+    assert_eq!(select_library_index_cursor(None, Some(b), None), Some(b));
+}
+
+#[test]
+fn slot_selection_uses_only_fully_valid_candidates_and_legacy_last() {
+    let library = scan(&[("alpha.binbook", 1), ("beta.binbook", 2)]);
+    let encoded_v2 = |generation| {
+        let mut bytes = vec![0; library.index_v2_encoded_len()];
+        library.encode_index_v2(generation, &mut bytes).unwrap();
+        bytes
+    };
+    let mut legacy = vec![0; library.index_encoded_len()];
+    library.encode_index(&mut legacy).unwrap();
+    let legacy_cursor = validate_library_index_bytes(LibraryIndexSlot::Legacy, &legacy).unwrap();
+
+    let a_bytes = encoded_v2(4);
+    let b_bytes = encoded_v2(5);
+    let a = validate_library_index_bytes(LibraryIndexSlot::A, &a_bytes).ok();
+    let b = validate_library_index_bytes(LibraryIndexSlot::B, &b_bytes).ok();
+    assert_eq!(select_library_index_cursor(a, None, None), a);
+    assert_eq!(select_library_index_cursor(None, b, None), b);
+    assert_eq!(select_library_index_cursor(a, b, None), b);
+    assert_eq!(
+        select_library_index_cursor(None, None, Some(legacy_cursor)),
+        Some(legacy_cursor)
+    );
+    assert_eq!(select_library_index_cursor(a, None, Some(legacy_cursor)), a);
+
+    let mut corrupt_newer = b_bytes.clone();
+    *corrupt_newer.last_mut().unwrap() ^= 1;
+    let rejected = validate_library_index_bytes(LibraryIndexSlot::B, &corrupt_newer).ok();
+    assert_eq!(
+        select_library_index_cursor(a, rejected, Some(legacy_cursor)),
+        a
+    );
+
+    let mut corrupt_older = a_bytes;
+    corrupt_older[16] ^= 1;
+    let rejected = validate_library_index_bytes(LibraryIndexSlot::A, &corrupt_older).ok();
+    assert_eq!(
+        select_library_index_cursor(rejected, b, Some(legacy_cursor)),
+        b
+    );
+
+    let mut corrupt_b = b_bytes;
+    corrupt_b.truncate(corrupt_b.len() - 1);
+    assert_eq!(
+        select_library_index_cursor(
+            validate_library_index_bytes(LibraryIndexSlot::A, &corrupt_older).ok(),
+            validate_library_index_bytes(LibraryIndexSlot::B, &corrupt_b).ok(),
+            Some(legacy_cursor),
+        ),
+        Some(legacy_cursor)
+    );
+}
+
+#[test]
+fn version_two_stream_validator_checks_crc_order_and_duplicates() {
+    let library = scan(&[("alpha.binbook", 1), ("beta.binbook", 2)]);
+    let mut encoded = vec![0; library.index_v2_encoded_len()];
+    library.encode_index_v2(11, &mut encoded).unwrap();
+    let header: &[u8; INDEX_V2_HEADER_SIZE] = encoded[..INDEX_V2_HEADER_SIZE].try_into().unwrap();
+    let cursor =
+        LibraryIndexCursor::from_v2_header(LibraryIndexSlot::A, header, encoded.len()).unwrap();
+    let mut validator = LibraryIndexCursorValidator::new(cursor, header);
+    for record in encoded[INDEX_V2_HEADER_SIZE..].chunks_exact(INDEX_RECORD_SIZE) {
+        validator.push_record(record.try_into().unwrap()).unwrap();
+    }
+    validator.finish().unwrap();
+
+    let first = encoded[INDEX_V2_HEADER_SIZE..INDEX_V2_HEADER_SIZE + INDEX_RECORD_SIZE].to_vec();
+    let mut duplicate = Vec::from(*header);
+    duplicate.extend_from_slice(&first);
+    duplicate.extend_from_slice(&first);
+    let duplicate_header = v2_header(2, 12, &duplicate[INDEX_V2_HEADER_SIZE..]);
+    duplicate[..INDEX_V2_HEADER_SIZE].copy_from_slice(&duplicate_header);
+    let cursor =
+        LibraryIndexCursor::from_v2_header(LibraryIndexSlot::B, &duplicate_header, duplicate.len())
+            .unwrap();
+    let mut validator = LibraryIndexCursorValidator::new(cursor, &duplicate_header);
+    validator
+        .push_record(
+            duplicate[INDEX_V2_HEADER_SIZE..INDEX_V2_HEADER_SIZE + INDEX_RECORD_SIZE]
+                .try_into()
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        validator.push_record(
+            duplicate[INDEX_V2_HEADER_SIZE + INDEX_RECORD_SIZE..]
+                .try_into()
+                .unwrap()
+        ),
+        Err(LibraryIndexError::DuplicateName)
+    );
+
+    let mut corrupt_header = *header;
+    corrupt_header[16] ^= 1;
+    let cursor =
+        LibraryIndexCursor::from_v2_header(LibraryIndexSlot::B, &corrupt_header, encoded.len())
+            .unwrap();
+    let mut validator = LibraryIndexCursorValidator::new(cursor, &corrupt_header);
+    for record in encoded[INDEX_V2_HEADER_SIZE..].chunks_exact(INDEX_RECORD_SIZE) {
+        validator.push_record(record.try_into().unwrap()).unwrap();
+    }
+    assert_eq!(validator.finish(), Err(LibraryIndexError::Crc));
+}
 
 #[test]
 fn incremental_scan_builds_200_entries_in_eight_entry_batches_without_touching_cache() {
@@ -170,6 +365,15 @@ fn selection_restores_by_filename_hash_after_resort() {
         Some(1)
     );
     assert_eq!(library.index_for_filename_hash(123), None);
+}
+
+#[test]
+fn refreshed_selection_tracks_insertions_and_clamps_only_when_removed() {
+    assert_eq!(resolve_refreshed_selection(8, Some(10), 21), Some(10));
+    assert_eq!(resolve_refreshed_selection(8, Some(6), 21), Some(6));
+    assert_eq!(resolve_refreshed_selection(8, None, 21), Some(8));
+    assert_eq!(resolve_refreshed_selection(20, None, 19), Some(18));
+    assert_eq!(resolve_refreshed_selection(0, None, 0), None);
 }
 
 #[test]

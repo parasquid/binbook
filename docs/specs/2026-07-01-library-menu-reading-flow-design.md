@@ -54,16 +54,19 @@ The production design does not materialize all 200 filenames when the menu is
 entered. It separates three concerns that must not be collapsed into one large
 RAM cache:
 
-1. A persistent, sorted `/BINBOOK/BINBOOK.LIBRARY.INDEX` is the card-local
-   source for menu ordering. Its binary format has a 16-byte CRC-protected header followed
-   by fixed 139-byte records. Records contain the complete filename, size, and
-   filename hash. Mounted FAT handles and other process-local lookup tokens are
-   never persisted.
+1. The persistent, sorted `/BINBOOK/BINBOOK.A.INDEX` and
+   `/BINBOOK/BINBOOK.B.INDEX` slots are the card-local source for menu ordering.
+   Version 2 has a 20-byte CRC-protected header with a nonzero generation,
+   followed by fixed 139-byte records. The version-1
+   `/BINBOOK/BINBOOK.LIBRARY.INDEX` is a read-only migration fallback. Records
+   contain the complete filename, size, and filename hash. Mounted FAT handles
+   and other process-local lookup tokens are never persisted. See
+   `docs/specs/library-index-v2.md`.
 2. A validated file-backed `LibraryIndexCursor` provides random record access.
    Firmware streams the complete index through CRC and structural validation
    before publishing it, then retains only a 15-entry `LibraryViewport`: five
    visible rows plus bounded look-ahead/look-behind prefetch. The measured
-   viewport object is 2,432 bytes; menu RAM is therefore independent of the
+   viewport object is 2,304 bytes on the X4 target; menu RAM is therefore independent of the
    total book count.
 3. A small bounded mounted-file-session prefetch/LRU accelerates opening the
    selected and nearby records. Sessions are scoped to the current mount and
@@ -73,10 +76,12 @@ RAM cache:
    They are an optimization only; persistent identity remains the filename and
    hashes in the index.
 
-The persistent cache is therefore the SD-card index, not a 200-book RAM data
-structure. The cursor, 15-record viewport, and mounted sessions are working RAM
-only. Deep sleep/reset discards them; wake remounts the card, validates the
-index, reconstructs the viewport, and schedules a cooperative refresh.
+The persistent cache is therefore the transactional SD-card index, not a
+200-book RAM data structure. Refresh uses a 15-entry external-sort workspace
+and a non-authoritative scratch spool. The cursor, viewport, workspace, and
+mounted sessions are bounded working RAM. Deep sleep/reset discards them; wake
+remounts the card, selects and validates an exact slot, reconstructs the
+viewport, and schedules a cooperative refresh.
 
 The owner-path prototype proved the lookup optimization: retaining sessions for
 all 200 books cost 17,312 bytes, and an earlier active-plus-pending version cost

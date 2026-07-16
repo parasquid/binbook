@@ -17,6 +17,12 @@ fn name(value: &str) -> StorageName {
     StorageName::new(value).unwrap()
 }
 
+fn mounted_scratch() -> &'static mut embedded_sd_storage::MountedScratch {
+    Box::leak(Box::new(core::array::from_fn(|_| {
+        embedded_sd_storage::Block::new()
+    })))
+}
+
 #[derive(Debug, Clone)]
 struct MemoryBlockState {
     blocks: Vec<embedded_sd_storage::Block>,
@@ -102,7 +108,7 @@ fn mounted_owner_backend_executes_real_scan_read_upload_abort_and_delete() {
     storage
         .write_at("existing.binbook", 0, b"existing")
         .unwrap();
-    let mounted = storage.into_owned_mount().unwrap();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
     let mut owner = StorageOwner::new(MountedStorageOwnerBackend::new(&mounted));
     let mut buffers = Buffers([0; 4096]);
 
@@ -139,6 +145,7 @@ fn mounted_owner_backend_executes_real_scan_read_upload_abort_and_delete() {
             Request::UploadBegin {
                 name: name("state.bin"),
                 expected_size: 5,
+                expected_crc32: 0,
                 power_save: true,
             },
             &mut buffers,
@@ -191,6 +198,7 @@ fn mounted_owner_backend_executes_real_scan_read_upload_abort_and_delete() {
             Request::UploadBegin {
                 name: name("abort.bin"),
                 expected_size: 3,
+                expected_crc32: 0,
                 power_save: false,
             },
             &mut buffers,
@@ -230,6 +238,68 @@ fn mounted_owner_backend_executes_real_scan_read_upload_abort_and_delete() {
 }
 
 #[test]
+fn mounted_owner_reset_recovery_never_exposes_an_uncommitted_final_name() {
+    let storage =
+        embedded_sd_storage::SdStorage::from_block_device(MemoryBlocks::fat_fixture(), TestTime);
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
+    let mut buffers = Buffers([0; 4096]);
+    {
+        let mut owner = StorageOwner::new(MountedStorageOwnerBackend::new(&mounted));
+        let upload_id = match owner
+            .execute(
+                Request::UploadBegin {
+                    name: name("interrupted.binbook"),
+                    expected_size: 7,
+                    expected_crc32: 0x1234_5678,
+                    power_save: false,
+                },
+                &mut buffers,
+            )
+            .unwrap()
+        {
+            Response::UploadStarted(id) => id,
+            response => panic!("unexpected response {response:?}"),
+        };
+        buffers.0[..7].copy_from_slice(b"partial");
+        owner
+            .execute(
+                Request::UploadWrite {
+                    upload_id,
+                    offset: 0,
+                    buffer_offset: 0,
+                    len: 7,
+                    buffer: BufferSlot::State,
+                    power_save: false,
+                },
+                &mut buffers,
+            )
+            .unwrap();
+        assert!(owner
+            .execute(
+                Request::FileSize {
+                    name: name("interrupted.binbook")
+                },
+                &mut buffers,
+            )
+            .is_err());
+    }
+
+    let mut rebooted = StorageOwner::new(MountedStorageOwnerBackend::new(&mounted));
+    assert!(matches!(
+        rebooted.execute(Request::ScanStart, &mut buffers),
+        Ok(Response::ScanStarted(_))
+    ));
+    assert!(rebooted
+        .execute(
+            Request::FileSize {
+                name: name("interrupted.binbook")
+            },
+            &mut buffers,
+        )
+        .is_err());
+}
+
+#[test]
 fn mounted_owner_prefers_dedicated_library_index_and_falls_back_to_legacy_books() {
     use binbook_fw::storage_access::LIBRARY_INDEX_FILE;
 
@@ -237,7 +307,7 @@ fn mounted_owner_prefers_dedicated_library_index_and_falls_back_to_legacy_books(
         embedded_sd_storage::SdStorage::from_block_device(MemoryBlocks::fat_fixture(), TestTime);
     storage.create_or_truncate(LIBRARY_INDEX_FILE).unwrap();
     storage.write_at(LIBRARY_INDEX_FILE, 0, b"legacy").unwrap();
-    let mounted = storage.into_owned_mount().unwrap();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
 
     {
         let mut backend = MountedStorageOwnerBackend::new(&mounted);
@@ -261,6 +331,40 @@ fn mounted_owner_prefers_dedicated_library_index_and_falls_back_to_legacy_books(
 }
 
 #[test]
+fn mounted_metadata_cache_evicts_deterministically_across_all_five_slots() {
+    use binbook_fw::storage_access::{
+        LIBRARY_INDEX_FILE, LIBRARY_INDEX_SLOT_A, LIBRARY_INDEX_SLOT_B, STATE_SLOT_A, STATE_SLOT_B,
+    };
+
+    let storage =
+        embedded_sd_storage::SdStorage::from_block_device(MemoryBlocks::fat_fixture(), TestTime);
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
+    let files = [
+        (LIBRARY_INDEX_SLOT_A, 1u8),
+        (LIBRARY_INDEX_SLOT_B, 2),
+        (LIBRARY_INDEX_FILE, 3),
+        (STATE_SLOT_A, 4),
+        (STATE_SLOT_B, 5),
+    ];
+    for (filename, byte) in files {
+        mounted
+            .create_or_truncate_in_dir("BINBOOK", filename)
+            .unwrap();
+        mounted
+            .write_at_in_dir("BINBOOK", filename, 0, &[byte])
+            .unwrap();
+    }
+
+    let mut backend = MountedStorageOwnerBackend::new(&mounted);
+    for (filename, byte) in files.into_iter().chain(files.into_iter().rev()) {
+        let mut actual = [0];
+        assert_eq!(backend.file_size(filename).unwrap(), 1);
+        backend.read_at(filename, 0, &mut actual).unwrap();
+        assert_eq!(actual, [byte]);
+    }
+}
+
+#[test]
 fn mounted_owner_persists_a_decodable_library_index_in_metadata_directory() {
     use binbook_fw::{
         library::{IncrementalLibraryScan, Library},
@@ -269,7 +373,7 @@ fn mounted_owner_persists_a_decodable_library_index_in_metadata_directory() {
 
     let storage =
         embedded_sd_storage::SdStorage::from_block_device(MemoryBlocks::fat_fixture(), TestTime);
-    let mounted = storage.into_owned_mount().unwrap();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
     let mut library = Library::empty();
     let mut scan = IncrementalLibraryScan::begin(&mut library);
     scan.push("one.binbook", 123);
@@ -280,7 +384,7 @@ fn mounted_owner_persists_a_decodable_library_index_in_metadata_directory() {
     {
         let mut backend = MountedStorageOwnerBackend::new(&mounted);
         backend
-            .upload_begin(LIBRARY_INDEX_FILE, encoded.len() as u64)
+            .upload_begin(LIBRARY_INDEX_FILE, encoded.len() as u64, 0)
             .unwrap();
         backend
             .upload_write(LIBRARY_INDEX_FILE, 0, &encoded[..16])
@@ -303,6 +407,174 @@ fn mounted_owner_persists_a_decodable_library_index_in_metadata_directory() {
 }
 
 #[test]
+#[cfg(not(feature = "library-index-fault-after-first-record"))]
+fn mounted_owner_runs_bounded_refresh_and_publishes_a_valid_a_slot_end_to_end() {
+    use binbook_fw::{
+        library::{LibraryIndexSlot, LibraryStatus},
+        library_external_sort::LibraryRefreshWorkspace,
+        library_index_select::{LibraryIndexSelectClient, LibraryIndexSelectUpdate},
+        library_publication::{LibraryPublicationClient, LibraryPublicationUpdate},
+        library_run_generation::{LibraryRunGenerationClient, LibraryRunGenerationUpdate},
+        storage_access::LIBRARY_INDEX_SLOT_A,
+    };
+
+    let mut storage =
+        embedded_sd_storage::SdStorage::from_block_device(MemoryBlocks::fat_fixture(), TestTime);
+    for index in (0..21).rev() {
+        let filename = format!("catalog-{index:03}.binbook");
+        storage.create_or_truncate(&filename).unwrap();
+        storage.write_at(&filename, 0, &[index as u8]).unwrap();
+    }
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
+    let mut owner = StorageOwner::new(MountedStorageOwnerBackend::new(&mounted));
+    let mut buffers = Buffers([0; 4096]);
+    let mut workspace = LibraryRefreshWorkspace::new();
+
+    let (mut generation, mut request) =
+        LibraryRunGenerationClient::begin(&mut workspace, &[], 1).unwrap();
+    let generation_status = loop {
+        let sequence = request.sequence;
+        let result = owner.execute(request.request, &mut buffers);
+        let response = ResponseEnvelope {
+            client: StorageClient::Library,
+            sequence,
+            response: result.map_err(|_| CompletionError::Backend),
+        };
+        match generation.accept(response, Some(&mut buffers.0)).unwrap() {
+            LibraryRunGenerationUpdate::Request(next) => request = next,
+            LibraryRunGenerationUpdate::Complete(status) => break status,
+        }
+    };
+    drop(generation);
+    assert_eq!(generation_status, LibraryStatus::Ready);
+    assert_eq!(workspace.entry_count(), 21);
+
+    let (mut publication, mut request) =
+        LibraryPublicationClient::begin(&mut workspace, LibraryIndexSlot::A, 1, 100).unwrap();
+    let published = loop {
+        let sequence = request.sequence;
+        let result = owner.execute(request.request, &mut buffers);
+        let response = ResponseEnvelope {
+            client: StorageClient::Library,
+            sequence,
+            response: result.map_err(|_| CompletionError::Backend),
+        };
+        match publication.accept(response, Some(&mut buffers.0)).unwrap() {
+            LibraryPublicationUpdate::Request(next) => request = next,
+            LibraryPublicationUpdate::Complete(value) => break value,
+        }
+    };
+    drop(publication);
+    assert_eq!(published.book_count, 21);
+    assert_eq!(published.cursor.unwrap().slot(), LibraryIndexSlot::A);
+
+    let (mut selector, mut request) = LibraryIndexSelectClient::begin(1_000);
+    let selected = loop {
+        let sequence = request.sequence;
+        let result = owner.execute(request.request, &mut buffers);
+        let response = ResponseEnvelope {
+            client: StorageClient::Library,
+            sequence,
+            response: result.map_err(|_| CompletionError::Backend),
+        };
+        match selector.accept(response, Some(&buffers.0)).unwrap() {
+            LibraryIndexSelectUpdate::Request(next) => request = next,
+            LibraryIndexSelectUpdate::Complete(cursor) => break cursor,
+        }
+    };
+    let selected = selected.unwrap();
+    assert_eq!(selected.slot(), LibraryIndexSlot::A);
+    assert_eq!(selected.generation(), 1);
+    assert_eq!(selected.entry_count(), 21);
+    assert_eq!(
+        owner
+            .execute(
+                Request::FileSize {
+                    name: name(LIBRARY_INDEX_SLOT_A),
+                },
+                &mut buffers,
+            )
+            .unwrap(),
+        Response::FileSize(selected.file_len() as u64)
+    );
+    assert!(mounted.open_file_in_dir("TMP", "BBLIBRUN.TMP").is_err());
+}
+
+#[test]
+fn mounted_library_scratch_streams_beyond_the_owner_buffer_and_deletes() {
+    const SCRATCH_LEN: usize = 9_173;
+
+    let storage =
+        embedded_sd_storage::SdStorage::from_block_device(MemoryBlocks::fat_fixture(), TestTime);
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
+    let mut owner = StorageOwner::new(MountedStorageOwnerBackend::new(&mounted));
+    let mut buffers = Buffers([0; 4096]);
+    let expected: Vec<u8> = (0..SCRATCH_LEN)
+        .map(|offset| (offset.wrapping_mul(37) ^ (offset >> 3)) as u8)
+        .collect();
+
+    assert_eq!(
+        owner
+            .execute(Request::LibraryScratchCreate, &mut buffers)
+            .unwrap(),
+        Response::Ack
+    );
+    for (chunk_index, chunk) in expected.chunks(3071).enumerate() {
+        buffers.0[..chunk.len()].copy_from_slice(chunk);
+        assert_eq!(
+            owner
+                .execute(
+                    Request::LibraryScratchWrite {
+                        offset: (chunk_index * 3071) as u64,
+                        buffer_offset: 0,
+                        len: chunk.len() as u16,
+                        buffer: BufferSlot::LibraryIndex,
+                    },
+                    &mut buffers,
+                )
+                .unwrap(),
+            Response::Written(chunk.len() as u16)
+        );
+    }
+    assert_eq!(
+        owner
+            .execute(Request::LibraryScratchFlush, &mut buffers)
+            .unwrap(),
+        Response::Ack
+    );
+
+    let mut actual = vec![0; SCRATCH_LEN];
+    for offset in (0..SCRATCH_LEN).step_by(2039) {
+        let len = core::cmp::min(2039, SCRATCH_LEN - offset);
+        buffers.0.fill(0);
+        assert_eq!(
+            owner
+                .execute(
+                    Request::LibraryScratchRead {
+                        offset: offset as u64,
+                        buffer_offset: 11,
+                        len: len as u16,
+                        buffer: BufferSlot::LibraryIndex,
+                    },
+                    &mut buffers,
+                )
+                .unwrap(),
+            Response::Read(len as u16)
+        );
+        actual[offset..offset + len].copy_from_slice(&buffers.0[11..11 + len]);
+    }
+    assert_eq!(actual, expected);
+
+    assert_eq!(
+        owner
+            .execute(Request::LibraryScratchDelete, &mut buffers)
+            .unwrap(),
+        Response::Ack
+    );
+    assert!(mounted.open_file_in_dir("TMP", "BBLIBRUN.TMP").is_err());
+}
+
+#[test]
 fn mounted_owner_can_scan_after_reading_metadata_and_deleting_a_book() {
     use binbook_fw::storage_access::LIBRARY_INDEX_FILE;
 
@@ -310,7 +582,7 @@ fn mounted_owner_can_scan_after_reading_metadata_and_deleting_a_book() {
         embedded_sd_storage::SdStorage::from_block_device(MemoryBlocks::fat_fixture(), TestTime);
     storage.create_or_truncate("deleted.binbook").unwrap();
     storage.write_at("deleted.binbook", 0, b"book").unwrap();
-    let mounted = storage.into_owned_mount().unwrap();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
     mounted
         .create_or_truncate_in_dir("BINBOOK", LIBRARY_INDEX_FILE)
         .unwrap();
@@ -347,12 +619,12 @@ fn metadata_upload_keeps_the_selected_book_read_session_warm() {
     storage
         .write_at("selected.binbook", 0, &[0x5a; 1024])
         .unwrap();
-    let mounted = storage.into_owned_mount().unwrap();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
     let mut backend = MountedStorageOwnerBackend::new(&mounted);
     let mut byte = [0; 1];
 
     backend.read_at("selected.binbook", 0, &mut byte).unwrap();
-    backend.upload_begin(STATE_SLOT_A, 1).unwrap();
+    backend.upload_begin(STATE_SLOT_A, 1, 0).unwrap();
     backend.upload_write(STATE_SLOT_A, 0, &[7]).unwrap();
     backend.upload_commit(STATE_SLOT_A).unwrap();
 
@@ -372,12 +644,12 @@ fn committed_metadata_upload_is_read_back_through_the_same_file_session() {
 
     let blocks = MemoryBlocks::fat_fixture();
     let storage = embedded_sd_storage::SdStorage::from_block_device(blocks.clone(), TestTime);
-    let mounted = storage.into_owned_mount().unwrap();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
     let mut backend = MountedStorageOwnerBackend::new(&mounted);
     let expected = [0x3c; 292];
 
     backend
-        .upload_begin(STATE_SLOT_A, expected.len() as u64)
+        .upload_begin(STATE_SLOT_A, expected.len() as u64, 0)
         .unwrap();
     backend.upload_write(STATE_SLOT_A, 0, &expected).unwrap();
     backend.upload_commit(STATE_SLOT_A).unwrap();
@@ -403,7 +675,7 @@ fn completed_scan_token_can_reactivate_a_file_after_switching_away() {
         .unwrap();
     storage.create_or_truncate("other.binbook").unwrap();
     storage.write_at("other.binbook", 0, &[0x4a; 512]).unwrap();
-    let mounted = storage.into_owned_mount().unwrap();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
     let mut owner = StorageOwner::new(MountedStorageOwnerBackend::new(&mounted));
     let mut buffers = Buffers([0; 4096]);
     let scan = match owner.execute(Request::ScanStart, &mut buffers).unwrap() {
@@ -520,7 +792,7 @@ fn mounted_owner_retains_only_viewport_capacity_sessions() {
         storage.create_or_truncate(&filename).unwrap();
         storage.write_at(&filename, 0, &[index as u8]).unwrap();
     }
-    let mounted = storage.into_owned_mount().unwrap();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
     let mut owner = StorageOwner::new(MountedStorageOwnerBackend::new(&mounted));
     let mut buffers = Buffers([0; 4096]);
     let scan = match owner.execute(Request::ScanStart, &mut buffers).unwrap() {
@@ -581,7 +853,7 @@ fn library_index_save_client_roundtrips_through_mounted_owner() {
 
     let storage =
         embedded_sd_storage::SdStorage::from_block_device(MemoryBlocks::fat_fixture(), TestTime);
-    let mounted = storage.into_owned_mount().unwrap();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
     let mut library = Library::empty();
     let mut scan = IncrementalLibraryScan::begin(&mut library);
     for index in 0..29 {
@@ -635,7 +907,7 @@ fn owner_state_slots_save_verify_and_reload_through_mounted_owner() {
 
     let storage =
         embedded_sd_storage::SdStorage::from_block_device(MemoryBlocks::fat_fixture(), TestTime);
-    let mounted = storage.into_owned_mount().unwrap();
+    let mounted = storage.into_owned_mount(mounted_scratch()).unwrap();
     let mut owner = StorageOwner::new(MountedStorageOwnerBackend::new(&mounted));
     let mut state = ReaderState::empty();
     state
@@ -771,6 +1043,7 @@ fn owner_pump_keeps_an_upload_with_one_client_until_commit() {
         Request::UploadBegin {
             name: name("index"),
             expected_size: 1,
+            expected_crc32: 0,
             power_save: false,
         },
         None,
@@ -788,6 +1061,7 @@ fn owner_pump_keeps_an_upload_with_one_client_until_commit() {
             Request::UploadBegin {
                 name: name("state"),
                 expected_size: 1,
+                expected_crc32: 0,
                 power_save: true,
             },
             None,
@@ -859,6 +1133,8 @@ fn owned_request<'a>(
 struct FakeBackend {
     bytes: [u8; 16],
     upload: Vec<u8>,
+    library_scratch: Vec<u8>,
+    library_scratch_flushed: bool,
     scan_steps: usize,
     fail: bool,
 }
@@ -876,7 +1152,7 @@ impl OwnerBackend for FakeBackend {
         out.copy_from_slice(&self.bytes[start..start + out.len()]);
         Ok(())
     }
-    fn upload_begin(&mut self, _: &str, _: u64) -> Result<(), Self::Error> {
+    fn upload_begin(&mut self, _: &str, _: u64, _: u32) -> Result<(), Self::Error> {
         self.upload.clear();
         Ok(())
     }
@@ -894,6 +1170,34 @@ impl OwnerBackend for FakeBackend {
     fn delete(&mut self, _: &str) -> Result<(), Self::Error> {
         Ok(())
     }
+    fn library_scratch_create(&mut self) -> Result<(), Self::Error> {
+        self.library_scratch.clear();
+        self.library_scratch_flushed = false;
+        Ok(())
+    }
+    fn library_scratch_write(&mut self, offset: u64, data: &[u8]) -> Result<(), Self::Error> {
+        let offset = offset as usize;
+        self.library_scratch.resize(offset + data.len(), 0);
+        self.library_scratch[offset..offset + data.len()].copy_from_slice(data);
+        Ok(())
+    }
+    fn library_scratch_flush(&mut self) -> Result<(), Self::Error> {
+        self.library_scratch_flushed = true;
+        Ok(())
+    }
+    fn library_scratch_read(&mut self, offset: u64, out: &mut [u8]) -> Result<(), Self::Error> {
+        if !self.library_scratch_flushed {
+            return Err("scratch-not-flushed");
+        }
+        let offset = offset as usize;
+        out.copy_from_slice(&self.library_scratch[offset..offset + out.len()]);
+        Ok(())
+    }
+    fn library_scratch_delete(&mut self) -> Result<(), Self::Error> {
+        self.library_scratch.clear();
+        self.library_scratch_flushed = false;
+        Ok(())
+    }
     fn scan_start(&mut self) -> Result<(), Self::Error> {
         self.scan_steps = 0;
         Ok(())
@@ -907,6 +1211,7 @@ impl OwnerBackend for FakeBackend {
         Ok(ScanProgress {
             entries: budget,
             complete: self.scan_steps == 2,
+            unsupported_name: false,
         })
     }
     fn scan_finish(&mut self) -> Result<(), Self::Error> {
@@ -915,6 +1220,95 @@ impl OwnerBackend for FakeBackend {
     fn scan_cancel(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
+}
+
+#[test]
+fn library_scratch_requests_are_bounded_correlated_and_library_only() {
+    let mut owner = StorageOwner::new(FakeBackend::default());
+    let mut buffers = Buffers([0; 4096]);
+    assert_eq!(
+        owner
+            .execute(Request::LibraryScratchCreate, &mut buffers)
+            .unwrap(),
+        Response::Ack
+    );
+    buffers.0[..6].copy_from_slice(b"abcdef");
+    assert_eq!(
+        owner
+            .execute(
+                Request::LibraryScratchWrite {
+                    offset: 3,
+                    buffer_offset: 1,
+                    len: 4,
+                    buffer: BufferSlot::LibraryIndex,
+                },
+                &mut buffers,
+            )
+            .unwrap(),
+        Response::Written(4)
+    );
+    assert_eq!(
+        owner
+            .execute(Request::LibraryScratchFlush, &mut buffers)
+            .unwrap(),
+        Response::Ack
+    );
+    buffers.0.fill(0);
+    assert_eq!(
+        owner
+            .execute(
+                Request::LibraryScratchRead {
+                    offset: 3,
+                    buffer_offset: 7,
+                    len: 4,
+                    buffer: BufferSlot::LibraryIndex,
+                },
+                &mut buffers,
+            )
+            .unwrap(),
+        Response::Read(4)
+    );
+    assert_eq!(&buffers.0[7..11], b"bcde");
+
+    let response = owner.execute_owned(OwnedRequest {
+        envelope: RequestEnvelope {
+            client: StorageClient::Reader,
+            sequence: 99,
+            request: Request::LibraryScratchDelete,
+        },
+        buffer: None,
+    });
+    assert_eq!(response.envelope.client, StorageClient::Reader);
+    assert_eq!(response.envelope.sequence, 99);
+    assert_eq!(
+        response.envelope.response,
+        Err(CompletionError::Request(RequestError::Stale))
+    );
+
+    assert_eq!(
+        owner.execute(
+            Request::LibraryScratchRead {
+                offset: 0,
+                buffer_offset: 0,
+                len: 1,
+                buffer: BufferSlot::State,
+            },
+            &mut buffers,
+        ),
+        Err(OwnerError::Request(RequestError::Stale))
+    );
+    assert_eq!(
+        owner.execute(
+            Request::LibraryScratchWrite {
+                offset: 0,
+                buffer_offset: 4090,
+                len: 16,
+                buffer: BufferSlot::LibraryIndex,
+            },
+            &mut buffers,
+        ),
+        Err(OwnerError::BufferUnavailable)
+    );
 }
 
 struct Buffers([u8; 4096]);
@@ -961,6 +1355,7 @@ fn owner_executes_bounded_reads_uploads_and_scan_lifecycle() {
             Request::UploadBegin {
                 name: name("state"),
                 expected_size: 4,
+                expected_crc32: 0,
                 power_save: true,
             },
             &mut buffers,
@@ -998,14 +1393,16 @@ fn owner_executes_bounded_reads_uploads_and_scan_lifecycle() {
         owner.execute(Request::scan_step(token), &mut buffers),
         Ok(Response::ScanProgress(ScanProgress {
             entries: 8,
-            complete: false
+            complete: false,
+            unsupported_name: false,
         }))
     );
     assert_eq!(
         owner.execute(Request::scan_step(token), &mut buffers),
         Ok(Response::ScanProgress(ScanProgress {
             entries: 8,
-            complete: true
+            complete: true,
+            unsupported_name: false,
         }))
     );
     assert_eq!(
@@ -1241,6 +1638,7 @@ fn filesystem_backend_executes_real_read_upload_commit_abort_and_delete_paths() 
             Request::UploadBegin {
                 name: name("state"),
                 expected_size: 3,
+                expected_crc32: 0,
                 power_save: true,
             },
             &mut buffers,
@@ -1291,6 +1689,7 @@ fn filesystem_backend_executes_real_read_upload_commit_abort_and_delete_paths() 
             Request::UploadBegin {
                 name: name("temp"),
                 expected_size: 1,
+                expected_crc32: 0,
                 power_save: false,
             },
             &mut buffers,

@@ -37,12 +37,41 @@ pub enum ReadbackError {
     Empty(u32),
 }
 
+/// Convert the legacy storage-read path shape to the basename carried by a
+/// bulk SD open request. Bulk opens are intentionally scoped to `/BOOKS` and
+/// the wire codec rejects separators in its bounded storage name.
+pub fn sd_storage_name(path: &str) -> Result<&str, ReadbackError> {
+    let name = path
+        .strip_prefix("/BOOKS/")
+        .or_else(|| path.strip_prefix("BOOKS/"))
+        .unwrap_or(path);
+    if name.is_empty()
+        || name.contains('/')
+        || path.starts_with('/') && !path.starts_with("/BOOKS/")
+    {
+        return Err(ReadbackError::Protocol(format!(
+            "bulk SD readback requires a file directly under /BOOKS: {path}"
+        )));
+    }
+    Ok(name)
+}
+
 pub fn read_stream<T: ReadTransport, W: Write>(
     path: &str,
     transport: &mut T,
     output: &mut W,
 ) -> Result<u64, ReadbackError> {
     let window = transport.read_window()?.clamp(1, 2);
+    read_stream_with_window(path, window, transport, output)
+}
+
+pub fn read_stream_with_window<T: ReadTransport, W: Write>(
+    path: &str,
+    window: usize,
+    transport: &mut T,
+    output: &mut W,
+) -> Result<u64, ReadbackError> {
+    let window = window.clamp(1, 2);
     let mut offset = 0u32;
     let mut sequence = 1u16;
     loop {

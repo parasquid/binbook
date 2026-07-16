@@ -1,10 +1,27 @@
 mod args;
 mod atomic_output;
+mod bulk_readback;
+#[cfg(feature = "serial-device")]
+mod bulk_readback_io;
+#[cfg(feature = "serial-device")]
+pub mod bulk_readback_stream;
+#[cfg(feature = "serial-device")]
+mod bulk_readback_transport;
+#[cfg(feature = "serial-device")]
+pub mod bulk_serial;
+#[cfg(feature = "serial-device")]
+mod bulk_serial_readback;
+pub mod bulk_state;
+#[cfg(feature = "serial-device")]
+pub mod bulk_upload;
 mod decode;
 pub mod diag_protocol;
 mod diag_response;
 mod encode;
 mod error;
+pub mod frame_router;
+#[cfg(feature = "serial-device")]
+mod host_transfer_metrics;
 mod input;
 mod inspect;
 pub mod nav_burst;
@@ -13,6 +30,15 @@ pub mod partial_window_busy;
 #[cfg(feature = "serial-device")]
 pub mod progress;
 pub mod protocol;
+#[cfg(feature = "serial-device")]
+pub mod sd_write_trace_client;
+pub mod transfer_negotiation;
+#[cfg(feature = "serial-device")]
+pub mod transfer_probe;
+#[cfg(feature = "serial-device")]
+pub mod transfer_report;
+#[cfg(feature = "serial-device")]
+mod transfer_trace_client;
 
 #[cfg(feature = "serial-device")]
 pub mod diag_cli;
@@ -43,8 +69,8 @@ mod upload_types;
 
 pub use args::{
     Cli, Commands, DiagCommand, ExerciseCommand, FontChoice, InputFormat, PageAction, PixelFormat,
-    ProbeCommand, Profile, ProgressMode, RefreshModeAction, RefreshModeChoice, StorageCommand,
-    UploadArgs,
+    ProbeCommand, Profile, ProgressMode, RefreshModeAction, RefreshModeChoice,
+    RequestedTransferMode, RequestedTransferWindow, StorageCommand, UploadArgs,
 };
 pub use decode::run_decode;
 pub use encode::run_encode;

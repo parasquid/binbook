@@ -49,6 +49,27 @@ impl SerialSession {
     }
 }
 
+impl Read for SerialSession {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.port.read(buffer)
+    }
+}
+
+impl Write for SerialSession {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.port.write(buffer)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        // `serialport` implements this as `tcdrain(2)` on Unix. That call has
+        // no timeout and can block forever when a USB CDC endpoint stops
+        // consuming data, bypassing the bounded response timeout above. TTY
+        // writes are already ordered, so exchanges only need the bytes queued
+        // before beginning their read loop.
+        Ok(())
+    }
+}
+
 pub fn send_and_receive_io<T: Read + Write>(
     io: &mut T,
     request: &[u8],
