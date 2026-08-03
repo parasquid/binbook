@@ -2,13 +2,24 @@ use embedded_storage::nor_flash::ReadNorFlash;
 
 use crate::error::{FirmwareError, FirmwareResult};
 
-pub const STORAGE_OFFSET: u32 = 0x00FB_0000;
-pub const STORAGE_SIZE: u32 = 192 * 1024;
-pub const MAX_FILE_SIZE: u32 = 180 * 1024;
+pub const LITTLEFS_OFFSET: u32 = 0x00C9_0000;
+pub const LITTLEFS_SIZE: u32 = 0x0036_0000;
+pub const APP_SLOT_SIZE: u32 = 0x0064_0000;
+pub const STORAGE_OFFSET: u32 = LITTLEFS_OFFSET;
+pub const STORAGE_SIZE: u32 = LITTLEFS_SIZE;
+pub const MAX_FILE_SIZE: u32 = LITTLEFS_SIZE;
 pub const MAX_FILES: usize = 8;
 pub const FILE_ENTRY_SIZE: usize = 44;
 pub const CRASH_SECTOR_SIZE: u32 = 4096;
-pub const CRASH_SECTOR_OFFSET: u32 = STORAGE_OFFSET + STORAGE_SIZE - CRASH_SECTOR_SIZE;
+pub const CRASH_SECTOR_OFFSET: u32 = 0x00FF_0000;
+pub const LEGACY_STORAGE_OFFSET: u32 = 0x00FB_0000;
+pub const LEGACY_STORAGE_SIZE: u32 = 192 * 1024;
+pub const LEGACY_CRASH_SECTOR_OFFSET: u32 = 0x00FD_F000;
+
+#[must_use]
+pub const fn app_image_fits(image_bytes: u32) -> bool {
+    image_bytes <= APP_SLOT_SIZE
+}
 
 const FILE_TABLE_OFFSET: u32 = 0;
 const VALID_ENTRY: u8 = 0x00;
